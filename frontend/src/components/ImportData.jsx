@@ -72,7 +72,7 @@ export default function ImportData({ onClose }) {
           
           // Buscar empresa en nuestro sistema
           let companyId = companies[0]?.id || 'proquima';
-          const foundCompany = companies.find(c => c.name.toLowerCase() === companyRaw.toLowerCase() || c.id.toLowerCase() === companyRaw.toLowerCase());
+          const foundCompany = companies.find(c => (c.nombre_comercial && c.nombre_comercial.toLowerCase() === companyRaw.toLowerCase()) || c.id === Number(companyRaw) || (c.nit && c.nit.toLowerCase() === companyRaw.toLowerCase()));
           if (foundCompany) companyId = foundCompany.id;
 
           // Salarios (eliminar puntos de miles, cambiar coma por punto decimal)

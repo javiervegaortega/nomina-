@@ -15,10 +15,7 @@ export function DataProvider({ children }) {
     return saved ? JSON.parse(saved) : INITIAL_DEPARTMENTS;
   });
 
-  const [employees, setEmployees] = useState(() => {
-    const saved = localStorage.getItem('nomina-employees');
-    return saved ? JSON.parse(saved) : INITIAL_EMPLOYEES;
-  });
+  const [employees, setEmployees] = useState([]);
 
   const [bonuses, setBonuses] = useState(() => {
     const saved = localStorage.getItem('nomina-bonuses');
@@ -44,10 +41,6 @@ export function DataProvider({ children }) {
   useEffect(() => {
     localStorage.setItem('nomina-departments', JSON.stringify(departments));
   }, [departments]);
-
-  useEffect(() => {
-    localStorage.setItem('nomina-employees', JSON.stringify(employees));
-  }, [employees]);
 
   useEffect(() => {
     localStorage.setItem('nomina-bonuses', JSON.stringify(bonuses));

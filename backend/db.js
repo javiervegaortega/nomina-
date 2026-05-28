@@ -11,9 +11,9 @@ const sequelize = new Sequelize('nomina_db', 'root', '', {
 const testConnection = async () => {
   try {
     await sequelize.authenticate();
-    console.log('✅ Conectado exitosamente a la base de datos MySQL (nomina_db).');
+    console.log('Conectado exitosamente a la base de datos MySQL (nomina_db).');
   } catch (error) {
-    console.error('❌ Error al conectar con MySQL:', error);
+    console.error('Error al conectar con MySQL:', error);
   }
 };
 

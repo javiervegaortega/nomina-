@@ -1,32 +1,34 @@
 import React, { useState, useMemo, useContext } from 'react';
 import {
   Search, Plus, Edit2, Trash2, X, Eye, ChevronDown,
-  UserPlus, Filter, Download, Check, FileText,
-  User, FileSignature, Landmark, Calculator
+  UserPlus, Filter, Download, Check, FileText
 } from 'lucide-react';
 import { DataContext } from '../context/DataContext';
 import ImportData from '../components/ImportData';
+import EmployeeFormModal from '../components/EmployeeFormModal';
 import { formatQ, calculateMonthlyISR } from '../data/mockData';
+import {
+  Box, Typography, Button, TextField, MenuItem, Table, TableBody, TableCell,
+  TableContainer, TableHead, TableRow, Paper, IconButton, Dialog, DialogTitle,
+  DialogContent, DialogActions, Chip, InputAdornment, Tooltip, Avatar
+} from '@mui/material';
 
 export default function Employees() {
-  const { employees, setAllEmployees, addEmployee, updateEmployee, deleteEmployee, companies, departments } = useContext(DataContext);
+  const { employees, addEmployee, updateEmployee, deleteEmployee, companies, departments } = useContext(DataContext);
   
   const INITIAL_FORM = {
-    name: '', role: '', hierarchy: 'Operativa', dept: departments.length > 0 ? departments[0] : '', company: companies.length > 0 ? companies[0].name : '',
-    base: '', bonus: '', status: 'active',
-    bankAccount: '', bankName: '', igssNumber: '',
-    contractType: 'Indefinido', hireDate: new Date().toISOString().split('T')[0],
+    estado: 'Activo',
+    moneda: 'GTQ',
     dist: companies.reduce((acc, c) => ({ ...acc, [c.id]: 0 }), {})
   };
+
   const [showImport, setShowImport] = useState(false);
   const [search, setSearch] = useState('');
   const [filterDept, setFilterDept] = useState('ALL');
   const [filterStatus, setFilterStatus] = useState('ALL');
   const [showModal, setShowModal] = useState(false);
   const [modalMode, setModalMode] = useState('add'); // add | edit | view
-  const [modalTab, setModalTab] = useState('personal'); // personal | bank | salary
   const [currentEmp, setCurrentEmp] = useState(null);
-  const [form, setForm] = useState(INITIAL_FORM);
   const [showFilters, setShowFilters] = useState(false);
   
   // Offboarding modal state
@@ -35,34 +37,27 @@ export default function Employees() {
   // Finiquito modal state
   const [finiquitoState, setFiniquitoState] = useState({ show: false, emp: null, calculation: null });
 
+  const getFullName = (e) => `${e.primer_nombre || ''} ${e.primer_apellido || ''}`.trim() || 'Sin Nombre';
+
   const filtered = useMemo(() => {
     return employees.filter(e => {
-      const matchSearch = e.name.toLowerCase().includes(search.toLowerCase()) ||
-                          e.role.toLowerCase().includes(search.toLowerCase());
-      const matchDept = filterDept === 'ALL' || e.dept === filterDept;
-      const matchStatus = filterStatus === 'ALL' || e.status === filterStatus;
+      const fullName = getFullName(e);
+      const matchSearch = fullName.toLowerCase().includes(search.toLowerCase()) ||
+                          (e.puesto || '').toLowerCase().includes(search.toLowerCase());
+      const matchDept = filterDept === 'ALL' || e.departamento_laboral === filterDept;
+      const matchStatus = filterStatus === 'ALL' || e.estado === filterStatus || (filterStatus === 'active' && e.estado === 'Activo');
       return matchSearch && matchDept && matchStatus;
     });
   }, [employees, search, filterDept, filterStatus]);
 
   const openAdd = () => {
     setModalMode('add');
-    setModalTab('personal');
-    setForm(INITIAL_FORM);
     setCurrentEmp(null);
     setShowModal(true);
   };
 
   const openEdit = (emp) => {
     setModalMode('edit');
-    setModalTab('personal');
-    setForm({
-      name: emp.name, role: emp.role, hierarchy: emp.hierarchy || 'Operativa', dept: emp.dept, company: emp.company,
-      base: emp.base, bonus: emp.bonus, status: emp.status,
-      bankAccount: emp.bankAccount || '', bankName: emp.bankName || '', igssNumber: emp.igssNumber || '',
-      contractType: emp.contractType || 'Indefinido', hireDate: emp.hireDate || new Date().toISOString().split('T')[0],
-      dist: { ...emp.dist }
-    });
     setCurrentEmp(emp);
     setShowModal(true);
   };
@@ -73,27 +68,11 @@ export default function Employees() {
     setShowModal(true);
   };
 
-  const handleSave = () => {
+  const handleSave = (formData) => {
     if (modalMode === 'add') {
-      const newEmp = {
-        ...form,
-        base: Number(form.base),
-        bonus: Number(form.bonus),
-        days: 30,
-        deductions: { isr: calculateMonthlyISR(Number(form.base), Number(form.bonus)), bank: 0, cell: 0, cafe: 0, product: 0, insurance: 0, other: 0, shoes: 0, uniform: 0 },
-        extras: { simplesQty: 0, simplesVal: 0, doblesQty: 0, doblesVal: 0, comisiones: 0, otrosIngresos: 0 }
-      };
-      addEmployee(newEmp);
+      addEmployee(formData);
     } else if (modalMode === 'edit' && currentEmp) {
-      updateEmployee(currentEmp.id, { 
-        ...form, 
-        base: Number(form.base), 
-        bonus: Number(form.bonus),
-        deductions: {
-          ...currentEmp.deductions,
-          isr: calculateMonthlyISR(Number(form.base), Number(form.bonus)) // Auto-update ISR on base change
-        }
-      });
+      updateEmployee(currentEmp.id, formData);
     }
     setShowModal(false);
   };
@@ -106,608 +85,373 @@ export default function Employees() {
 
   const handleOffboard = () => {
     updateEmployee(offboardState.empId, { 
-      status: 'inactive', 
-      terminationReason: offboardState.reason,
-      terminationDate: offboardState.date
+      estado: 'Inactivo', 
+      motivo_baja: offboardState.reason,
+      fecha_baja: offboardState.date
     });
     setOffboardState({ show: false, empId: null, reason: '', date: '' });
   };
 
   const handleGenerateFiniquito = (emp) => {
-    // Basic mock calculation for Finiquito
-    const baseTotal = emp.base + emp.bonus;
+    const baseTotal = Number(emp.sueldo_ordinario || 0) + Number(emp.bon_incentivo || 0);
     const calc = {
-      indemnizacion: baseTotal * 1.5, // Mock 1.5 years
-      aguinaldoProp: (baseTotal / 12) * 4, // 4 months
-      bono14Prop: (baseTotal / 12) * 2, // 2 months
-      vacaciones: (baseTotal / 30) * 15 * 0.5, // half year unused
+      indemnizacion: baseTotal * 1.5,
+      aguinaldoProp: (baseTotal / 12) * 4,
+      bono14Prop: (baseTotal / 12) * 2,
+      vacaciones: (baseTotal / 30) * 15 * 0.5,
     };
     calc.total = calc.indemnizacion + calc.aguinaldoProp + calc.bono14Prop + calc.vacaciones;
     setFiniquitoState({ show: true, emp, calculation: calc });
   };
 
-  const distTotal = Object.values(form.dist).reduce((a, b) => a + b, 0);
-
   return (
-    <>
-      <div className="page-header">
-        <div className="page-header-left" style={{ display: 'flex', alignItems: 'center' }}>
-          <div>
-            <h1>Directorio de Empleados</h1>
-            <p>Gestión de personal y distribución de costos · {employees.length} registros</p>
-          </div>
-        </div>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <button className="btn btn-secondary btn-sm" onClick={() => setShowImport(true)}>
-            <Download size={14} style={{ transform: 'rotate(180deg)' }} /> Importar CSV
-          </button>
-          <button className="btn btn-primary btn-sm" onClick={openAdd}>
-            <UserPlus size={14} /> Nuevo Empleado
-          </button>
-        </div>
-      </div>
+    <Box sx={{ p: { xs: 2, md: 4 } }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4, flexWrap: 'wrap', gap: 2 }}>
+        <Box>
+          <Typography variant="h4" fontWeight={800} gutterBottom>
+            Directorio de Empleados
+          </Typography>
+          <Typography variant="body1" color="text.secondary">
+            Gestión de personal y distribución de costos · {employees.length} registros
+          </Typography>
+        </Box>
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          <Button 
+            variant="outlined" 
+            color="secondary" 
+            startIcon={<Download size={16} style={{ transform: 'rotate(180deg)' }} />} 
+            onClick={() => setShowImport(true)}
+            sx={{ borderRadius: 2 }}
+          >
+            Importar CSV
+          </Button>
+          <Button 
+            variant="contained" 
+            color="primary" 
+            startIcon={<UserPlus size={16} />} 
+            onClick={openAdd}
+            sx={{ borderRadius: 2 }}
+          >
+            Nuevo Empleado
+          </Button>
+        </Box>
+      </Box>
 
-      <div className="page-content">
-        <div className="card animate-slide-up stagger-1" style={{ padding: '1rem 1.25rem', marginBottom: '1.25rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-            <div className="search-wrapper">
-              <Search size={15} className="search-icon" />
-              <input
-                className="input-field"
-                placeholder="Buscar por nombre o puesto..."
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-              />
-            </div>
-            
-            <button className={`btn btn-ghost btn-sm ${showFilters ? 'active' : ''}`} onClick={() => setShowFilters(!showFilters)}>
-              <Filter size={14} /> Filtros {showFilters ? '▲' : '▼'}
-            </button>
-            
-            {(filterDept !== 'ALL' || filterStatus !== 'ALL') && (
-              <button className="btn btn-ghost btn-sm" onClick={() => { setFilterDept('ALL'); setFilterStatus('ALL'); }}>
-                <X size={14} /> Limpiar
-              </button>
-            )}
-          </div>
-
-          {/* Expandable filters */}
-          {showFilters && (
-            <div style={{
-              display: 'flex', gap: '1rem', marginTop: '1rem', paddingTop: '1rem',
-              borderTop: '1px solid var(--border)', flexWrap: 'wrap',
-              animation: 'slideUp 0.3s ease forwards'
-            }}>
-              <div className="form-group" style={{ minWidth: 200 }}>
-                <label className="form-label">Departamento</label>
-                <select className="input-field" value={filterDept} onChange={e => setFilterDept(e.target.value)}>
-                  <option value="ALL">Todos los departamentos</option>
-                  {departments.map(d => <option key={d} value={d}>{d}</option>)}
-                </select>
-              </div>
-              <div className="form-group" style={{ minWidth: 150 }}>
-                <label className="form-label">Estado</label>
-                <select className="input-field" value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
-                  <option value="ALL">Todos los estados</option>
-                  <option value="active">Activo</option>
-                  <option value="inactive">Inactivo</option>
-                </select>
-              </div>
-            </div>
+      <Paper sx={{ p: 2, mb: 3, borderRadius: 3, border: '1px solid', borderColor: 'divider' }} elevation={0}>
+        <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
+          <TextField
+            placeholder="Buscar por nombre o puesto..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            size="small"
+            sx={{ flex: 1, minWidth: '250px' }}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <Search size={18} />
+                </InputAdornment>
+              ),
+            }}
+          />
+          <Button 
+            variant={showFilters ? "contained" : "outlined"} 
+            color="inherit" 
+            startIcon={<Filter size={16} />} 
+            onClick={() => setShowFilters(!showFilters)}
+            sx={{ borderRadius: 2 }}
+          >
+            Filtros {showFilters ? '▲' : '▼'}
+          </Button>
+          {(filterDept !== 'ALL' || filterStatus !== 'ALL') && (
+            <Button 
+              variant="text" 
+              color="inherit" 
+              startIcon={<X size={16} />} 
+              onClick={() => { setFilterDept('ALL'); setFilterStatus('ALL'); }}
+            >
+              Limpiar
+            </Button>
           )}
-        </div>
+        </Box>
 
-        {/* Employee Table */}
-        <div className="table-wrap animate-slide-up stagger-2">
-          <table className="table">
-            <thead>
-              <tr>
-                <th style={{ width: 50 }}>#</th>
-                <th>Empleado</th>
-                <th>Departamento / Empresa</th>
-                <th>Salario Base</th>
-                <th>Distribución</th>
-                <th>Estado</th>
-                <th style={{ textAlign: 'right', minWidth: '140px' }}>Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((emp, i) => (
-                <tr key={emp.id}>
-                  <td style={{ color: 'var(--text-tertiary)', fontSize: '0.75rem', fontWeight: 600 }}>{emp.id}</td>
-                  <td>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                      <div style={{
-                        width: 32, height: 32, borderRadius: 'var(--radius-sm)',
-                        background: 'var(--bg-elevated)', display: 'flex',
-                        alignItems: 'center', justifyContent: 'center',
-                        color: 'var(--text-primary)', fontWeight: 700, fontSize: '0.75rem',
-                        border: '1px solid var(--border)', flexShrink: 0
-                      }}>
-                        {emp.name.split(' ').slice(0, 2).map(n => n[0]).join('')}
-                      </div>
-                      <div>
-                        <div className="font-semibold text-primary" style={{ cursor: 'pointer', fontSize: '0.85rem' }} onClick={() => openView(emp)}>
-                          {emp.name}
-                        </div>
-                        <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>{emp.role}</div>
-                      </div>
-                    </div>
-                  </td>
-                  <td>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', alignItems: 'flex-start' }}>
-                      <span className="dept-tag">{emp.dept}</span>
-                      <span className="badge badge-neutral" style={{ fontSize: '0.65rem' }}>{emp.company}</span>
-                    </div>
-                  </td>
-                  <td className="font-mono font-semibold text-gold">{formatQ(emp.base)}</td>
-                  <td>
-                    <div className="tooltip-wrap">
-                      <div className="dist-bar-group">
-                        {companies.map(c => {
-                          const pct = emp.dist[c.id] || 0;
-                          return pct > 0 ? (
-                            <div key={c.id} className="dist-bar-segment" style={{ width: `${pct}%`, background: c.gradient || c.color }} />
-                          ) : null;
-                        })}
-                      </div>
-                      <span className="tooltip-text">
-                        {companies.filter(c => (emp.dist[c.id] || 0) > 0).map(c => `${c.name}: ${emp.dist[c.id]}%`).join(' · ')}
-                      </span>
-                    </div>
-                  </td>
-                  <td>
-                    <span className={`badge ${emp.status === 'active' ? 'badge-success' : 'badge-warning'}`}>
-                      {emp.status === 'active' ? 'Activo' : 'Inactivo'}
-                    </span>
-                  </td>
-                  <td>
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.25rem' }}>
-                      <button className="btn-icon" title="Ver detalle" onClick={() => openView(emp)}><Eye size={16} /></button>
-                      <button className="btn-icon" title="Editar" onClick={() => openEdit(emp)}><Edit2 size={16} /></button>
-                      {emp.status === 'active' && (
-                        <button className="btn-icon" title="Dar de Baja" style={{ color: 'var(--warning)' }} onClick={() => setOffboardState({ show: true, empId: emp.id, reason: '', date: new Date().toISOString().split('T')[0] })}><X size={16} /></button>
-                      )}
-                      {emp.status === 'inactive' && (
-                        <button className="btn-icon" title="Generar Finiquito" style={{ color: 'var(--accent)' }} onClick={() => handleGenerateFiniquito(emp)}><FileText size={16} /></button>
-                      )}
-                      <button className="btn-icon" title="Eliminar (Permanente)" style={{ color: 'var(--danger)' }} onClick={() => handleDelete(emp.id)}><Trash2 size={16} /></button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {filtered.length === 0 && (
-                <tr>
-                  <td colSpan="7" style={{ textAlign: 'center', padding: '4rem', color: 'var(--text-tertiary)' }}>
+        {/* Expandable filters */}
+        {showFilters && (
+          <Box sx={{ display: 'flex', gap: 2, mt: 2, pt: 2, borderTop: '1px solid', borderColor: 'divider', flexWrap: 'wrap' }}>
+            <TextField
+              select
+              label="Departamento"
+              value={filterDept}
+              onChange={e => setFilterDept(e.target.value)}
+              size="small"
+              sx={{ minWidth: 200 }}
+            >
+              <MenuItem value="ALL">Todos los departamentos</MenuItem>
+              {departments.map(d => <MenuItem key={d} value={d}>{d}</MenuItem>)}
+            </TextField>
+            <TextField
+              select
+              label="Estado"
+              value={filterStatus}
+              onChange={e => setFilterStatus(e.target.value)}
+              size="small"
+              sx={{ minWidth: 150 }}
+            >
+              <MenuItem value="ALL">Todos los estados</MenuItem>
+              <MenuItem value="Activo">Activo</MenuItem>
+              <MenuItem value="Inactivo">Inactivo</MenuItem>
+            </TextField>
+          </Box>
+        )}
+      </Paper>
+
+      <TableContainer component={Paper} elevation={0} sx={{ borderRadius: 3, border: '1px solid', borderColor: 'divider' }}>
+        <Table sx={{ minWidth: 800 }}>
+          <TableHead sx={{ backgroundColor: 'background.default' }}>
+            <TableRow>
+              <TableCell sx={{ fontWeight: 600, color: 'text.secondary', width: 50 }}>#</TableCell>
+              <TableCell sx={{ fontWeight: 600, color: 'text.secondary' }}>Empleado</TableCell>
+              <TableCell sx={{ fontWeight: 600, color: 'text.secondary' }}>Departamento / Empresa</TableCell>
+              <TableCell sx={{ fontWeight: 600, color: 'text.secondary' }}>Salario Base</TableCell>
+              <TableCell sx={{ fontWeight: 600, color: 'text.secondary' }}>Distribución</TableCell>
+              <TableCell sx={{ fontWeight: 600, color: 'text.secondary' }}>Estado</TableCell>
+              <TableCell align="right" sx={{ fontWeight: 600, color: 'text.secondary' }}>Acciones</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {filtered.map((emp) => {
+              const fullName = getFullName(emp);
+              const companyName = companies.find(c => c.id === emp.companyId)?.nombre_comercial || 'Sin Asignar';
+              
+              return (
+              <TableRow key={emp.id} hover>
+                <TableCell>
+                  <Typography variant="caption" fontWeight={600} color="text.secondary">{emp.id}</Typography>
+                </TableCell>
+                <TableCell>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                    <Avatar sx={{ width: 36, height: 36, bgcolor: 'primary.main', fontSize: '0.85rem', fontWeight: 700 }}>
+                      {fullName.split(' ').slice(0, 2).map(n => n?.[0] || '').join('')}
+                    </Avatar>
+                    <Box>
+                      <Typography variant="body2" fontWeight={600} color="primary.main" sx={{ cursor: 'pointer' }} onClick={() => openView(emp)}>
+                        {fullName}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {emp.puesto || 'Sin Puesto'}
+                      </Typography>
+                    </Box>
+                  </Box>
+                </TableCell>
+                <TableCell>
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, alignItems: 'flex-start' }}>
+                    <Chip label={emp.departamento_laboral || 'N/A'} size="small" variant="outlined" color="primary" />
+                    <Chip label={companyName} size="small" />
+                  </Box>
+                </TableCell>
+                <TableCell>
+                  <Typography variant="body2" fontFamily="monospace" fontWeight={600} color="secondary.main">
+                    {formatQ(emp.sueldo_ordinario || 0)}
+                  </Typography>
+                </TableCell>
+                <TableCell>
+                  <Tooltip title={companies.filter(c => (emp.dist?.[c.id] || 0) > 0).map(c => `${c.nombre_comercial || c.nit}: ${emp.dist?.[c.id]}%`).join(' · ')}>
+                    <Box sx={{ width: 120, height: 8, borderRadius: 4, display: 'flex', overflow: 'hidden', backgroundColor: 'action.hover' }}>
+                      {companies.map(c => {
+                        const pct = emp.dist?.[c.id] || 0;
+                        return pct > 0 ? (
+                          <Box key={c.id} sx={{ width: `${pct}%`, backgroundColor: c.color || 'primary.main' }} />
+                        ) : null;
+                      })}
+                    </Box>
+                  </Tooltip>
+                </TableCell>
+                <TableCell>
+                  <Chip 
+                    label={emp.estado} 
+                    size="small" 
+                    color={emp.estado === 'Activo' ? 'success' : 'warning'} 
+                    sx={{ fontWeight: 600 }}
+                  />
+                </TableCell>
+                <TableCell align="right">
+                  <IconButton color="primary" size="small" onClick={() => openView(emp)} title="Ver detalle">
+                    <Eye size={18} />
+                  </IconButton>
+                  <IconButton color="secondary" size="small" onClick={() => openEdit(emp)} title="Editar">
+                    <Edit2 size={18} />
+                  </IconButton>
+                  {emp.estado === 'Activo' && (
+                    <IconButton color="warning" size="small" onClick={() => setOffboardState({ show: true, empId: emp.id, reason: '', date: new Date().toISOString().split('T')[0] })} title="Dar de Baja">
+                      <X size={18} />
+                    </IconButton>
+                  )}
+                  {emp.estado === 'Inactivo' && (
+                    <IconButton color="info" size="small" onClick={() => handleGenerateFiniquito(emp)} title="Generar Finiquito">
+                      <FileText size={18} />
+                    </IconButton>
+                  )}
+                  <IconButton color="error" size="small" onClick={() => handleDelete(emp.id)} title="Eliminar (Permanente)">
+                    <Trash2 size={18} />
+                  </IconButton>
+                </TableCell>
+              </TableRow>
+            )})}
+            {filtered.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={7} align="center" sx={{ py: 8 }}>
+                  <Typography variant="body1" color="text.secondary">
                     No se encontraron empleados con los criterios de búsqueda.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* ===================== MODAL ===================== */}
-      {showModal && (
-        <div className="modal-overlay" onClick={() => setShowModal(false)}>
-          <div className="modal-panel" onClick={e => e.stopPropagation()} style={{ maxWidth: modalMode === 'view' ? '600px' : '850px', padding: 0, overflow: 'hidden' }}>
-            
-            {/* VIEW MODE */}
-            {modalMode === 'view' && currentEmp ? (
-              <>
-                <div className="modal-header" style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid var(--border)' }}>
-                  <h2>Expediente del Empleado</h2>
-                  <button className="btn-icon" onClick={() => setShowModal(false)}><X size={18} /></button>
-                </div>
-                <div className="modal-body" style={{ padding: '1.5rem' }}>
-                  <ViewEmployeeDetail emp={currentEmp} companies={companies} />
-                </div>
-              </>
-            ) : (
-              /* ADD/EDIT MODE (Premium Split Layout) */
-              <div style={{ display: 'flex', height: '600px', maxHeight: '85vh' }}>
-                
-                {/* Sidebar Navigation */}
-                <div style={{ width: '240px', background: 'var(--bg-elevated)', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column' }}>
-                  <div style={{ padding: '1.5rem 1.25rem' }}>
-                    <h2 style={{ fontSize: '1.1rem', margin: 0 }}>
-                      {modalMode === 'add' ? 'Nuevo Empleado' : 'Editar Empleado'}
-                    </h2>
-                    <p style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.25rem', marginBottom: 0 }}>
-                      Complete la información requerida
-                    </p>
-                  </div>
-                  
-                  <div style={{ flex: 1, padding: '0 0.75rem' }}>
-                    <SidebarTab 
-                      icon={User} label="Datos Personales" active={modalTab === 'personal'} 
-                      onClick={() => setModalTab('personal')} 
-                    />
-                    <SidebarTab 
-                      icon={FileSignature} label="Contrato" active={modalTab === 'contract'} 
-                      onClick={() => setModalTab('contract')} 
-                    />
-                    <SidebarTab 
-                      icon={Landmark} label="Legales & Bancarios" active={modalTab === 'bank'} 
-                      onClick={() => setModalTab('bank')} 
-                    />
-                    <SidebarTab 
-                      icon={Calculator} label="Salario & Distribución" active={modalTab === 'salary'} 
-                      onClick={() => setModalTab('salary')} 
-                    />
-                  </div>
-                </div>
-
-                {/* Form Content Area */}
-                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: 'var(--bg-base)' }}>
-                  <div className="modal-header" style={{ padding: '1.25rem 2rem', borderBottom: 'none' }}>
-                    <div style={{ flex: 1 }}></div>
-                    <button className="btn-icon" onClick={() => setShowModal(false)}><X size={18} /></button>
-                  </div>
-                  
-                  <div className="modal-body" style={{ padding: '0 2rem 2rem 2rem', overflowY: 'auto', flex: 1 }}>
-                    {modalTab === 'personal' && (
-                      <div className="animate-fade">
-                        <h3 style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '1.25rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Información Básica</h3>
-                      <div className="form-group-row" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                        <div className="form-group" style={{ gridColumn: '1 / -1' }}>
-                          <label className="form-label">Nombre Completo</label>
-                          <input className="input-field" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Ej: García López María Fernanda" />
-                        </div>
-                        <div className="form-group">
-                          <label className="form-label">Puesto</label>
-                          <input className="input-field" value={form.role} onChange={e => setForm({ ...form, role: e.target.value })} placeholder="Ej: Analista" />
-                        </div>
-                        <div className="form-group">
-                          <label className="form-label">Jerarquía / Rol</label>
-                          <select className="input-field" value={form.hierarchy} onChange={e => setForm({ ...form, hierarchy: e.target.value })}>
-                            <option value="Operativa">Operativa</option>
-                            <option value="Administrativa">Administrativa</option>
-                            <option value="Gerencia General">Gerencia General</option>
-                          </select>
-                        </div>
-                        <div className="form-group">
-                          <label className="form-label">Departamento</label>
-                          <select className="input-field" value={form.dept} onChange={e => setForm({ ...form, dept: e.target.value })}>
-                            {departments.map(d => <option key={d} value={d}>{d}</option>)}
-                          </select>
-                        </div>
-                        <div className="form-group">
-                          <label className="form-label">Empresa Principal</label>
-                          <select className="input-field" value={form.company} onChange={e => setForm({ ...form, company: e.target.value })}>
-                            {companies.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
-                          </select>
-                        </div>
-                        <div className="form-group">
-                          <label className="form-label">Estado</label>
-                          <select className="input-field" value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>
-                            <option value="active">Activo</option>
-                            <option value="inactive">Inactivo</option>
-                          </select>
-                        </div>
-                      </div>
-                      </div>
-                    )}
-
-                    {modalTab === 'contract' && (
-                      <div className="animate-fade">
-                        <h3 style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '1.25rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Detalles de Contratación</h3>
-                      <div className="form-group-row" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                        <div className="form-group">
-                          <label className="form-label">Tipo de Contrato</label>
-                          <select className="input-field" value={form.contractType} onChange={e => setForm({ ...form, contractType: e.target.value })}>
-                            <option value="Indefinido">Indefinido</option>
-                            <option value="Temporal">Temporal / Plazo Fijo</option>
-                            <option value="Servicios Profesionales">Servicios Profesionales</option>
-                            <option value="Practicante">Practicante</option>
-                          </select>
-                        </div>
-                        <div className="form-group">
-                          <label className="form-label">Fecha de Inicio de Labores</label>
-                          <input type="date" className="input-field" value={form.hireDate} onChange={e => setForm({ ...form, hireDate: e.target.value })} />
-                        </div>
-                      </div>
-                      </div>
-                    )}
-
-                    {modalTab === 'bank' && (
-                      <div className="animate-fade">
-                        <h3 style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '1.25rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Registros Legales y Cuentas</h3>
-                      <div className="form-group-row" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                        <div className="form-group">
-                          <label className="form-label">Número de Afiliación (IGSS)</label>
-                          <input className="input-field" value={form.igssNumber} onChange={e => setForm({ ...form, igssNumber: e.target.value })} placeholder="Ej: 12345678" />
-                        </div>
-                        <div className="form-group">
-                          <label className="form-label">Banco</label>
-                          <select className="input-field" value={form.bankName} onChange={e => setForm({ ...form, bankName: e.target.value })}>
-                            <option value="">Seleccione un banco...</option>
-                            <option value="PROMERICA">Promerica</option>
-                            <option value="INDUSTRIAL">Industrial</option>
-                            <option value="BANTRAB">Bantrab</option>
-                            <option value="BAM">BAM</option>
-                            <option value="RURAL">Banrural</option>
-                            <option value="GYT">G&T Continental</option>
-                          </select>
-                        </div>
-                        <div className="form-group" style={{ gridColumn: '1 / -1' }}>
-                          <label className="form-label">Número de Cuenta</label>
-                          <input className="input-field" value={form.bankAccount} onChange={e => setForm({ ...form, bankAccount: e.target.value })} placeholder="Ej: 4510765" />
-                        </div>
-                      </div>
-                      </div>
-                    )}
-
-                    {modalTab === 'salary' && (
-                      <div className="animate-fade">
-                        <h3 style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '1.25rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Compensación</h3>
-                        <div className="form-group-row" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                          <div className="form-group">
-                            <label className="form-label">Salario Base Ordinario (Q)</label>
-                            <input type="number" className="input-field" value={form.base} onChange={e => setForm({ ...form, base: e.target.value })} placeholder="0.00" />
-                          </div>
-                          <div className="form-group">
-                            <label className="form-label">Bono Decreto (Q)</label>
-                            <input type="number" className="input-field" value={form.bonus} onChange={e => setForm({ ...form, bonus: e.target.value })} placeholder="250.00" />
-                          </div>
-                        </div>
-
-                        {/* Distribution Sliders */}
-                        <div style={{ marginTop: '1.5rem', padding: '1.25rem', borderRadius: 'var(--radius-md)', background: 'var(--bg-elevated)' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                            <span className="form-label" style={{ margin: 0 }}>Distribución por Empresa</span>
-                            <span className={`badge ${distTotal === 100 ? 'badge-success' : 'badge-danger'}`}>
-                              {distTotal === 100 ? <Check size={12} /> : null}
-                              {distTotal}%
-                            </span>
-                          </div>
-                          {companies.map(c => (
-                            <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
-                              <div style={{ width: 8, height: 8, borderRadius: '50%', background: c.gradient || c.color, flexShrink: 0 }} />
-                              <span style={{ width: '110px', fontSize: '0.78rem', fontWeight: 500, flexShrink: 0 }}>{c.name}</span>
-                              <input
-                                type="range"
-                                min="0" max="100" step="5"
-                                value={form.dist[c.id] || 0}
-                                onChange={e => setForm({ ...form, dist: { ...form.dist, [c.id]: Number(e.target.value) } })}
-                                style={{ flex: 1, accentColor: c.color, cursor: 'pointer' }}
-                              />
-                              <span className="font-mono" style={{ width: '40px', textAlign: 'right', fontSize: '0.8rem', fontWeight: 600 }}>{form.dist[c.id] || 0}%</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="modal-footer" style={{ borderTop: '1px solid var(--border)', padding: '1.25rem 2rem' }}>
-                    <button className="btn btn-ghost" onClick={() => setShowModal(false)}>Cancelar</button>
-                    <button className="btn btn-primary" onClick={handleSave} disabled={!form.name || distTotal !== 100}>
-                      <Check size={14} />
-                      {modalMode === 'add' ? 'Crear Registro' : 'Guardar Cambios'}
-                    </button>
-                  </div>
-                </div>
-              </div>
+                  </Typography>
+                </TableCell>
+              </TableRow>
             )}
-          </div>
-        </div>
+          </TableBody>
+        </Table>
+      </TableContainer>
+
+      {showModal && (modalMode === 'add' || modalMode === 'edit') && (
+        <EmployeeFormModal 
+          mode={modalMode} 
+          initialData={currentEmp || INITIAL_FORM} 
+          onClose={() => setShowModal(false)} 
+          onSave={handleSave} 
+          companies={companies} 
+          departments={departments} 
+        />
+      )}
+
+      {/* VIEW MODAL */}
+      {showModal && modalMode === 'view' && currentEmp && (
+        <Dialog open={true} onClose={() => setShowModal(false)} maxWidth="sm" fullWidth>
+          <DialogTitle>
+            <Box display="flex" justifyContent="space-between" alignItems="center">
+              Expediente del Empleado
+              <IconButton onClick={() => setShowModal(false)} size="small">
+                <X size={20} />
+              </IconButton>
+            </Box>
+          </DialogTitle>
+          <DialogContent dividers>
+            <Typography variant="h6" fontWeight={700} gutterBottom>{getFullName(currentEmp)}</Typography>
+            <Typography variant="body1" sx={{ mb: 1 }}><strong>Puesto:</strong> {currentEmp.puesto}</Typography>
+            <Typography variant="body1" sx={{ mb: 1 }}><strong>Empresa:</strong> {companies.find(c => c.id === currentEmp.companyId)?.nombre_comercial}</Typography>
+            <Typography variant="body1" sx={{ mb: 2 }}><strong>Sueldo:</strong> {formatQ(currentEmp.sueldo_ordinario)}</Typography>
+            <Typography variant="body2" color="text.secondary">
+              Haz clic en editar para ver y modificar todos los detalles.
+            </Typography>
+          </DialogContent>
+        </Dialog>
       )}
 
       {showImport && <ImportData onClose={() => setShowImport(false)} />}
 
       {/* OFFBOARDING MODAL */}
-      {offboardState.show && (
-        <div className="modal-overlay" onClick={() => setOffboardState({ show: false, empId: null, reason: '', date: '' })} style={{ zIndex: 10000 }}>
-          <div className="modal-panel" onClick={e => e.stopPropagation()} style={{ maxWidth: '400px' }}>
-            <div className="modal-header">
-              <h2>Dar de Baja</h2>
-              <button className="btn-icon" onClick={() => setOffboardState({ show: false, empId: null, reason: '', date: '' })}><X size={18} /></button>
-            </div>
-            <div className="modal-body">
-              <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-                El empleado pasará a estado Inactivo y ya no aparecerá en nóminas futuras, pero su historial se mantendrá intacto.
-              </p>
-              <div className="form-group" style={{ marginBottom: '1rem' }}>
-                <label className="form-label">Fecha de Baja</label>
-                <input type="date" className="input-field" value={offboardState.date} onChange={e => setOffboardState({ ...offboardState, date: e.target.value })} />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Motivo / Observaciones</label>
-                <textarea className="input-field" rows={3} value={offboardState.reason} onChange={e => setOffboardState({ ...offboardState, reason: e.target.value })} placeholder="Ej: Renuncia voluntaria, fin de contrato, despido justificado..." />
-              </div>
-            </div>
-            <div className="modal-footer">
-              <button className="btn btn-ghost" onClick={() => setOffboardState({ show: false, empId: null, reason: '', date: '' })}>Cancelar</button>
-              <button className="btn btn-primary" style={{ background: 'var(--warning)', color: '#fff' }} onClick={handleOffboard} disabled={!offboardState.reason}>Confirmar Baja</button>
-            </div>
-          </div>
-        </div>
-      )}
+      <Dialog open={offboardState.show} onClose={() => setOffboardState({ show: false, empId: null, reason: '', date: '' })} maxWidth="sm" fullWidth>
+        <DialogTitle>
+          <Box display="flex" justifyContent="space-between" alignItems="center">
+            Dar de Baja
+            <IconButton onClick={() => setOffboardState({ show: false, empId: null, reason: '', date: '' })} size="small">
+              <X size={20} />
+            </IconButton>
+          </Box>
+        </DialogTitle>
+        <DialogContent dividers>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+            El empleado pasará a estado Inactivo y ya no aparecerá en nóminas futuras, pero su historial se mantendrá intacto.
+          </Typography>
+          <TextField
+            label="Fecha de Baja"
+            type="date"
+            fullWidth
+            value={offboardState.date}
+            onChange={e => setOffboardState({ ...offboardState, date: e.target.value })}
+            sx={{ mb: 3 }}
+            InputLabelProps={{ shrink: true }}
+          />
+          <TextField
+            label="Motivo / Observaciones"
+            multiline
+            rows={3}
+            fullWidth
+            value={offboardState.reason}
+            onChange={e => setOffboardState({ ...offboardState, reason: e.target.value })}
+            placeholder="Ej: Renuncia voluntaria, fin de contrato, despido justificado..."
+          />
+        </DialogContent>
+        <DialogActions sx={{ p: 2 }}>
+          <Button onClick={() => setOffboardState({ show: false, empId: null, reason: '', date: '' })} color="inherit">
+            Cancelar
+          </Button>
+          <Button onClick={handleOffboard} disabled={!offboardState.reason} variant="contained" color="warning">
+            Confirmar Baja
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {/* FINIQUITO MODAL */}
-      {finiquitoState.show && finiquitoState.calculation && (
-        <div className="modal-overlay" onClick={() => setFiniquitoState({ show: false, emp: null, calculation: null })} style={{ zIndex: 10000 }}>
-          <div className="modal-panel" onClick={e => e.stopPropagation()} style={{ maxWidth: '550px' }}>
-            <div className="modal-header">
-              <h2>Cálculo de Finiquito (Liquidación)</h2>
-              <button className="btn-icon" onClick={() => setFiniquitoState({ show: false, emp: null, calculation: null })}><X size={18} /></button>
-            </div>
-            <div className="modal-body">
-              <div style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                <div style={{ flex: 1 }}>
-                  <div className="font-semibold text-primary">{finiquitoState.emp.name}</div>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{finiquitoState.emp.role}</div>
-                </div>
-                <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>Salario Base Computable</div>
-                  <div className="font-mono text-primary font-bold">{formatQ(finiquitoState.emp.base + finiquitoState.emp.bonus)}</div>
-                </div>
-              </div>
+      <Dialog open={finiquitoState.show && Boolean(finiquitoState.calculation)} onClose={() => setFiniquitoState({ show: false, emp: null, calculation: null })} maxWidth="sm" fullWidth>
+        {finiquitoState.calculation && (
+          <>
+            <DialogTitle>
+              <Box display="flex" justifyContent="space-between" alignItems="center">
+                Cálculo de Finiquito (Liquidación)
+                <IconButton onClick={() => setFiniquitoState({ show: false, emp: null, calculation: null })} size="small">
+                  <X size={20} />
+                </IconButton>
+              </Box>
+            </DialogTitle>
+            <DialogContent dividers>
+              <Box sx={{ mb: 3, display: 'flex', alignItems: 'center', gap: 2 }}>
+                <Box sx={{ flex: 1 }}>
+                  <Typography variant="subtitle1" fontWeight={700} color="primary.main">{getFullName(finiquitoState.emp)}</Typography>
+                  <Typography variant="body2" color="text.secondary">{finiquitoState.emp?.puesto}</Typography>
+                </Box>
+                <Box textAlign="right">
+                  <Typography variant="caption" color="text.secondary">Salario Base Computable</Typography>
+                  <Typography variant="body1" fontFamily="monospace" fontWeight={700} color="primary.main">
+                    {formatQ(Number(finiquitoState.emp?.sueldo_ordinario || 0) + Number(finiquitoState.emp?.bon_incentivo || 0))}
+                  </Typography>
+                </Box>
+              </Box>
 
-              <div className="table-wrap">
-                <table className="table">
-                  <tbody>
-                    <tr>
-                      <td>Indemnización por Tiempo Servido</td>
-                      <td style={{ textAlign: 'right' }} className="font-mono text-primary">{formatQ(finiquitoState.calculation.indemnizacion)}</td>
-                    </tr>
-                    <tr>
-                      <td>Aguinaldo Proporcional</td>
-                      <td style={{ textAlign: 'right' }} className="font-mono text-primary">{formatQ(finiquitoState.calculation.aguinaldoProp)}</td>
-                    </tr>
-                    <tr>
-                      <td>Bono 14 Proporcional</td>
-                      <td style={{ textAlign: 'right' }} className="font-mono text-primary">{formatQ(finiquitoState.calculation.bono14Prop)}</td>
-                    </tr>
-                    <tr>
-                      <td>Vacaciones Pendientes de Goce</td>
-                      <td style={{ textAlign: 'right' }} className="font-mono text-primary">{formatQ(finiquitoState.calculation.vacaciones)}</td>
-                    </tr>
-                    <tr style={{ background: 'var(--bg-elevated)' }}>
-                      <td className="font-bold text-primary">GRAN TOTAL A RECIBIR</td>
-                      <td style={{ textAlign: 'right' }} className="font-mono font-bold text-gold" style={{ fontSize: '1.2rem' }}>{formatQ(finiquitoState.calculation.total)}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-            <div className="modal-footer" style={{ marginTop: '1.5rem' }}>
-              <button className="btn btn-ghost" onClick={() => setFiniquitoState({ show: false, emp: null, calculation: null })}>Cerrar</button>
-              <button className="btn btn-primary" onClick={() => { alert('Generando PDF del Finiquito...'); setFiniquitoState({ show: false, emp: null, calculation: null }); }}>
-                <FileText size={16} /> Imprimir Constancia
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </>
-  );
-}
-
-function ViewEmployeeDetail({ emp, companies }) {
-  const totalGross = emp.base + emp.bonus + emp.extras.simplesVal + emp.extras.doblesVal + emp.extras.comisiones + emp.extras.otrosIngresos;
-  const totalDed = Object.values(emp.deductions).reduce((a, b) => a + b, 0);
-
-  return (
-    <div>
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem' }}>
-        <div style={{
-          width: 48, height: 48, borderRadius: 'var(--radius-sm)',
-          background: 'var(--accent-gradient)', display: 'flex',
-          alignItems: 'center', justifyContent: 'center',
-          color: '#fff', fontWeight: 700, fontSize: '1rem',
-          boxShadow: 'var(--shadow-glow)'
-        }}>
-          {emp.name.split(' ').slice(0, 2).map(n => n[0]).join('')}
-        </div>
-        <div>
-          <div style={{ fontSize: '1.05rem', fontWeight: 700 }}>{emp.name}</div>
-          <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-            {emp.role} {emp.hierarchy && `(${emp.hierarchy})`} · <span className="text-primary">{emp.dept}</span>
-          </div>
-          {emp.contractType && (
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.25rem' }}>
-              Contrato: {emp.contractType} | Inicio: {emp.hireDate}
-            </div>
-          )}
-        </div>
-        <span className={`badge ${emp.status === 'active' ? 'badge-success' : 'badge-danger'}`} style={{ marginLeft: 'auto' }}>
-          {emp.status === 'active' ? 'Activo' : 'Inactivo'}
-        </span>
-      </div>
-
-      {emp.status === 'inactive' && emp.terminationReason && (
-        <div style={{ background: 'var(--danger-bg)', padding: '1rem', borderRadius: 'var(--radius-sm)', border: '1px solid rgba(220, 38, 38, 0.2)', marginBottom: '1.5rem' }}>
-          <div className="form-label" style={{ color: 'var(--danger)' }}>Motivo de Baja ({emp.terminationDate})</div>
-          <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.85rem' }}>{emp.terminationReason}</p>
-        </div>
-      )}
-
-      {/* Summary cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.75rem', marginBottom: '1.5rem' }}>
-        <MiniStat label="Salario Base" value={formatQ(emp.base)} />
-        <MiniStat label="Bono Decreto" value={formatQ(emp.bonus)} />
-        <MiniStat label="Neto Estimado" value={formatQ(totalGross - totalDed)} accent />
-      </div>
-
-      {/* Distribution Visual */}
-      <div style={{ padding: '1.25rem', borderRadius: 'var(--radius-md)', background: 'var(--bg-elevated)', border: '1px solid var(--border)', marginBottom: '1rem' }}>
-        <div className="form-label" style={{ marginBottom: '0.75rem' }}>Distribución de Costo</div>
-        <div style={{ display: 'flex', gap: '2px', height: 8, borderRadius: 'var(--radius-full)', overflow: 'hidden', marginBottom: '0.75rem' }}>
-          {companies.map(c => {
-            const pct = emp.dist[c.id] || 0;
-            return pct > 0 ? <div key={c.id} style={{ width: `${pct}%`, background: c.gradient || c.color, transition: 'width 0.8s var(--ease-spring)' }} /> : null;
-          })}
-        </div>
-        <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-          {companies.filter(c => (emp.dist[c.id] || 0) > 0).map(c => (
-            <span key={c.id} style={{ fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-              <span style={{ width: 6, height: 6, borderRadius: '50%', background: c.gradient || c.color, display: 'inline-block' }} />
-              {c.name}: <strong className="font-mono">{emp.dist[c.id]}%</strong>
-            </span>
-          ))}
-        </div>
-      </div>
-
-      {/* Deductions */}
-      {totalDed > 0 && (
-        <div style={{ padding: '1.25rem', borderRadius: 'var(--radius-md)', background: 'var(--bg-base)', border: '1px solid var(--border)' }}>
-          <div className="form-label" style={{ marginBottom: '0.75rem' }}>Deducciones Históricas Mensuales</div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
-            {Object.entries(emp.deductions).filter(([, v]) => v > 0).map(([k, v]) => (
-              <div key={k} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem' }}>
-                <span style={{ color: 'var(--text-secondary)', textTransform: 'capitalize' }}>{k}</span>
-                <span className="font-mono font-semibold text-danger">{formatQ(v)}</span>
-              </div>
-            ))}
-          </div>
-          <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', fontWeight: 700 }}>
-            <span>Total Deducciones</span>
-            <span className="font-mono text-danger">{formatQ(totalDed)}</span>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function MiniStat({ label, value, accent }) {
-  return (
-    <div style={{
-      padding: '0.75rem 1rem', borderRadius: 'var(--radius-md)',
-      background: 'var(--bg-base)', border: '1px solid var(--border)',
-      textAlign: 'center'
-    }}>
-      <div style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.2rem' }}>{label}</div>
-      <div className={`font-mono ${accent ? 'text-gold' : 'text-primary'}`} style={{ fontSize: '1.05rem', fontWeight: 700 }}>{value}</div>
-    </div>
-  );
-}
-
-// Helper component for the new Sidebar
-function SidebarTab({ icon: Icon, label, active, onClick }) {
-  return (
-    <div 
-      onClick={onClick}
-      style={{
-        display: 'flex', alignItems: 'center', gap: '0.75rem',
-        padding: '0.85rem 1rem', borderRadius: 'var(--radius-md)',
-        cursor: 'pointer', marginBottom: '0.5rem',
-        background: active ? 'var(--bg-hover)' : 'transparent',
-        color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
-        borderLeft: active ? '3px solid var(--accent)' : '3px solid transparent',
-        transition: 'all 0.2s ease',
-        fontWeight: active ? 600 : 500,
-        fontSize: '0.85rem'
-      }}
-      onMouseOver={e => { if (!active) e.currentTarget.style.background = 'var(--bg-hover)'; }}
-      onMouseOut={e => { if (!active) e.currentTarget.style.background = 'transparent'; }}
-    >
-      <Icon size={18} style={{ color: active ? 'var(--accent)' : 'inherit' }} />
-      {label}
-    </div>
+              <TableContainer component={Paper} elevation={0} sx={{ border: '1px solid', borderColor: 'divider' }}>
+                <Table size="small">
+                  <TableBody>
+                    <TableRow>
+                      <TableCell>Indemnización por Tiempo Servido</TableCell>
+                      <TableCell align="right"><Typography fontFamily="monospace" color="primary.main">{formatQ(finiquitoState.calculation.indemnizacion)}</Typography></TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell>Aguinaldo Proporcional</TableCell>
+                      <TableCell align="right"><Typography fontFamily="monospace" color="primary.main">{formatQ(finiquitoState.calculation.aguinaldoProp)}</Typography></TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell>Bono 14 Proporcional</TableCell>
+                      <TableCell align="right"><Typography fontFamily="monospace" color="primary.main">{formatQ(finiquitoState.calculation.bono14Prop)}</Typography></TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell>Vacaciones Pendientes de Goce</TableCell>
+                      <TableCell align="right"><Typography fontFamily="monospace" color="primary.main">{formatQ(finiquitoState.calculation.vacaciones)}</Typography></TableCell>
+                    </TableRow>
+                    <TableRow sx={{ backgroundColor: 'action.hover' }}>
+                      <TableCell><Typography fontWeight={700} color="primary.main">GRAN TOTAL A RECIBIR</Typography></TableCell>
+                      <TableCell align="right"><Typography fontFamily="monospace" fontWeight={700} color="secondary.main" fontSize="1.2rem">{formatQ(finiquitoState.calculation.total)}</Typography></TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            </DialogContent>
+            <DialogActions sx={{ p: 2 }}>
+              <Button onClick={() => setFiniquitoState({ show: false, emp: null, calculation: null })} color="inherit">
+                Cerrar
+              </Button>
+              <Button onClick={() => { alert('Generando PDF del Finiquito...'); setFiniquitoState({ show: false, emp: null, calculation: null }); }} variant="contained" color="primary" startIcon={<FileText size={16} />}>
+                Imprimir Constancia
+              </Button>
+            </DialogActions>
+          </>
+        )}
+      </Dialog>
+    </Box>
   );
 }

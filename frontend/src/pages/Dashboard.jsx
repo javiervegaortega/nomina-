@@ -4,9 +4,9 @@ import {
   Building2, Clock, CheckCircle, AlertTriangle, BarChart3,
   Briefcase, PieChart
 } from 'lucide-react';
-import { AppContext } from '../App';
 import { DataContext } from '../context/DataContext';
 import { formatQ } from '../data/mockData';
+import { Box, Typography, Button, Paper, Grid, Avatar } from '@mui/material';
 
 export default function Dashboard() {
   const { employees, companies, payrollHistory } = useContext(DataContext);
@@ -16,15 +16,16 @@ export default function Dashboard() {
 
   // Computed stats
   const totalEmployees = EMPLOYEES.length;
-  const activeEmployees = EMPLOYEES.filter(e => e.status === 'active' || e.status === 'ACTIVO').length;
-  const totalGrossPayroll = EMPLOYEES.reduce((s, e) => s + e.base + e.bonus, 0);
-  const totalDeductions = EMPLOYEES.reduce((s, e) => s + Object.values(e.deductions || {}).reduce((a, b) => a + b, 0), 0);
+  const activeEmployees = EMPLOYEES.filter(e => e.status === 'active' || e.status === 'ACTIVO' || e.estado === 'Activo').length;
+  const totalGrossPayroll = EMPLOYEES.reduce((s, e) => s + (Number(e.sueldo_ordinario) || 0) + (Number(e.bon_incentivo) || 0), 0);
+  const totalDeductions = EMPLOYEES.reduce((s, e) => s + (Number(e.total_igss) || 0) + (Number(e.isr) || 0), 0);
   const totalNetPay = totalGrossPayroll - totalDeductions;
 
   const companyDistribution = COMPANIES.map(c => {
     const total = EMPLOYEES.reduce((s, e) => {
       const pct = (e.dist?.[c.id] || 0) / 100;
-      return s + (e.base + e.bonus) * pct;
+      const base = (Number(e.sueldo_ordinario) || 0) + (Number(e.bon_incentivo) || 0);
+      return s + (base * pct);
     }, 0);
     return { ...c, total };
   }).sort((a, b) => b.total - a.total);
@@ -32,225 +33,256 @@ export default function Dashboard() {
 
   const deptGroups = {};
   EMPLOYEES.forEach(e => {
-    if (!deptGroups[e.dept]) deptGroups[e.dept] = { count: 0, cost: 0 };
-    deptGroups[e.dept].count++;
-    deptGroups[e.dept].cost += e.base + e.bonus;
+    const dept = e.departamento_laboral || 'Sin Depto';
+    if (!deptGroups[dept]) deptGroups[dept] = { count: 0, cost: 0 };
+    deptGroups[dept].count++;
+    deptGroups[dept].cost += (Number(e.sueldo_ordinario) || 0) + (Number(e.bon_incentivo) || 0);
   });
   const deptList = Object.entries(deptGroups).sort((a, b) => b[1].cost - a[1].cost).slice(0, 6);
   const maxDeptCost = deptList.length ? deptList[0][1].cost : 1;
 
   return (
-    <>
-      <div className="page-header">
-        <div className="page-header-left" style={{ display: 'flex', alignItems: 'center' }}>
-          <div>
-            <h1>Dashboard</h1>
-            <p>Resumen general de nómina y costos operativos</p>
-          </div>
-        </div>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <button className="btn btn-ghost btn-sm"><Clock size={14} /> Período</button>
-          <button className="btn btn-primary btn-sm"><BarChart3 size={14} /> Reporte</button>
-        </div>
-      </div>
+    <Box sx={{ p: { xs: 2, md: 4 } }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4, flexWrap: 'wrap', gap: 2 }}>
+        <Box>
+          <Typography variant="h4" fontWeight={800} gutterBottom>
+            Dashboard
+          </Typography>
+          <Typography variant="body1" color="text.secondary">
+            Resumen general de nómina y costos operativos
+          </Typography>
+        </Box>
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          <Button variant="outlined" color="inherit" startIcon={<Clock size={16} />} sx={{ borderRadius: 2 }}>
+            Período
+          </Button>
+          <Button variant="contained" color="primary" startIcon={<BarChart3 size={16} />} sx={{ borderRadius: 2 }}>
+            Reporte
+          </Button>
+        </Box>
+      </Box>
 
-      <div className="page-content">
-        {/* KPIs */}
-        <div className="kpi-grid" style={{ marginBottom: '1.25rem' }}>
+      {/* KPIs */}
+      <Grid container spacing={3} sx={{ mb: 4 }}>
+        <Grid item xs={12} sm={6} md={3}>
           <KpiCard
-            icon={<DollarSign size={20} />}
-            iconBg="var(--gold-glow)"
-            iconColor="var(--gold-light)"
+            icon={<DollarSign size={24} />}
+            iconBg="rgba(255, 184, 0, 0.15)"
+            iconColor="#FFB800"
             label="Costo Bruto Nómina"
             value={formatQ(totalGrossPayroll)}
             trend="+2.4%" trendDir="up"
-            delay={1}
           />
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
           <KpiCard
-            icon={<TrendingUp size={20} />}
-            iconBg="var(--success-bg)"
-            iconColor="var(--success)"
+            icon={<TrendingUp size={24} />}
+            iconBg="rgba(16, 185, 129, 0.15)"
+            iconColor="#10B981"
             label="Neto a Pagar"
             value={formatQ(totalNetPay)}
             trend="+1.8%" trendDir="up"
-            delay={2}
           />
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
           <KpiCard
-            icon={<Users size={20} />}
-            iconBg="var(--accent-subtle)"
-            iconColor="var(--accent-light)"
+            icon={<Users size={24} />}
+            iconBg="rgba(59, 130, 246, 0.15)"
+            iconColor="#3B82F6"
             label="Total Empleados"
             value={totalEmployees}
             trend={`${activeEmployees} activos`} trendDir="up"
-            delay={3}
           />
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
           <KpiCard
-            icon={<AlertTriangle size={20} />}
-            iconBg="var(--danger-bg)"
-            iconColor="var(--danger)"
+            icon={<AlertTriangle size={24} />}
+            iconBg="rgba(239, 68, 68, 0.15)"
+            iconColor="#EF4444"
             label="Total Deducciones"
             value={formatQ(totalDeductions)}
             trend="−0.5%" trendDir="down"
-            delay={4}
           />
-        </div>
+        </Grid>
+      </Grid>
 
-        {/* Charts Row */}
-        <div className="charts-grid">
-          {/* Company Distribution */}
-          <div className="card animate-slide-up stagger-3">
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
-              <h3 style={{ margin: 0, fontSize: '0.92rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <Building2 size={16} style={{ color: 'var(--accent-light)' }} />
+      {/* Charts Row */}
+      <Grid container spacing={3} sx={{ mb: 4 }}>
+        {/* Company Distribution */}
+        <Grid item xs={12} md={6}>
+          <Paper sx={{ p: 3, borderRadius: 3, height: '100%', border: '1px solid', borderColor: 'divider' }} elevation={0}>
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3 }}>
+              <Typography variant="subtitle1" fontWeight={700} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Building2 size={18} style={{ color: '#3B82F6' }} />
                 Distribución por Empresa
-              </h3>
-              <span style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)' }}>{COMPANIES.length} empresas</span>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              </Typography>
+              <Typography variant="caption" color="text.secondary">{COMPANIES.length} empresas</Typography>
+            </Box>
+            
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
               {companyDistribution.map((c, i) => (
-                <div key={c.id}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      <div style={{ width: 8, height: 8, borderRadius: '50%', background: c.gradient || c.color || 'var(--accent)', boxShadow: `0 0 6px ${c.color || 'var(--accent)'}40` }} />
-                      <span style={{ fontSize: '0.82rem', fontWeight: 600 }}>{c.name}</span>
-                    </div>
-                    <span className="font-mono" style={{ fontSize: '0.82rem', color: 'var(--gold-light)', fontWeight: 600 }}>
+                <Box key={c.id}>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 0.5 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: c.color || 'primary.main', boxShadow: `0 0 8px ${c.color || '#3B82F6'}60` }} />
+                      <Typography variant="body2" fontWeight={600}>{c.nombre_comercial || c.nit}</Typography>
+                    </Box>
+                    <Typography variant="body2" fontFamily="monospace" fontWeight={700} color="secondary.main">
                       {formatQ(c.total)}
-                    </span>
-                  </div>
-                  <div className="progress-bar">
-                    <div
-                      className="progress-bar-fill"
-                      style={{
+                    </Typography>
+                  </Box>
+                  <Box sx={{ height: 6, borderRadius: 3, bgcolor: 'action.hover', overflow: 'hidden' }}>
+                    <Box 
+                      sx={{ 
+                        height: '100%', 
+                        bgcolor: c.color || 'primary.main',
                         width: `${maxCompanyTotal > 0 ? (c.total / maxCompanyTotal) * 100 : 0}%`,
-                        background: c.gradient || c.color || 'var(--accent-gradient)',
-                        animationDelay: `${i * 0.12}s`
-                      }}
+                        transition: 'width 1s ease-out'
+                      }} 
                     />
-                  </div>
-                </div>
+                  </Box>
+                </Box>
               ))}
-            </div>
-          </div>
+            </Box>
+          </Paper>
+        </Grid>
 
-          {/* Department Cost */}
-          <div className="card animate-slide-up stagger-4">
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
-              <h3 style={{ margin: 0, fontSize: '0.92rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <Briefcase size={16} style={{ color: 'var(--accent-light)' }} />
+        {/* Department Cost */}
+        <Grid item xs={12} md={6}>
+          <Paper sx={{ p: 3, borderRadius: 3, height: '100%', border: '1px solid', borderColor: 'divider' }} elevation={0}>
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3 }}>
+              <Typography variant="subtitle1" fontWeight={700} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Briefcase size={18} style={{ color: '#3B82F6' }} />
                 Costo por Departamento
-              </h3>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              </Typography>
+            </Box>
+
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
               {deptList.map(([dept, data], i) => (
-                <div key={dept} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                  <div style={{
-                    width: 26, height: 26, borderRadius: 'var(--radius-xs, 6px)',
-                    background: 'var(--bg-elevated)', display: 'flex', alignItems: 'center',
-                    justifyContent: 'center', fontSize: '0.65rem', fontWeight: 700, color: 'var(--text-tertiary)',
-                    flexShrink: 0, border: '1px solid var(--border)'
-                  }}>
+                <Box key={dept} sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                  <Avatar variant="rounded" sx={{ width: 32, height: 32, bgcolor: 'background.default', color: 'text.secondary', border: '1px solid', borderColor: 'divider', fontSize: '0.8rem', fontWeight: 700 }}>
                     {data.count}
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
-                      <span style={{ fontSize: '0.78rem', fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{dept}</span>
-                      <span className="font-mono" style={{ fontSize: '0.72rem', color: 'var(--gold-light)', flexShrink: 0, fontWeight: 600 }}>{formatQ(data.cost)}</span>
-                    </div>
-                    <div className="progress-bar" style={{ height: 3 }}>
-                      <div className="progress-bar-fill" style={{ width: `${(data.cost / maxDeptCost) * 100}%` }} />
-                    </div>
-                  </div>
-                </div>
+                  </Avatar>
+                  <Box sx={{ flex: 1, minWidth: 0 }}>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+                      <Typography variant="body2" fontWeight={600} noWrap>{dept}</Typography>
+                      <Typography variant="caption" fontFamily="monospace" fontWeight={700} color="secondary.main">{formatQ(data.cost)}</Typography>
+                    </Box>
+                    <Box sx={{ height: 4, borderRadius: 2, bgcolor: 'action.hover', overflow: 'hidden' }}>
+                      <Box sx={{ height: '100%', bgcolor: 'primary.light', width: `${(data.cost / maxDeptCost) * 100}%` }} />
+                    </Box>
+                  </Box>
+                </Box>
               ))}
-            </div>
-          </div>
-        </div>
+            </Box>
+          </Paper>
+        </Grid>
+      </Grid>
 
-        {/* Recent Activity + Quick Stats */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
-          <div className="card animate-slide-up stagger-5">
-            <h3 style={{ margin: '0 0 1rem 0', fontSize: '0.92rem' }}>Actividad Reciente</h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
+      {/* Recent Activity + Quick Stats */}
+      <Grid container spacing={3}>
+        <Grid item xs={12} md={6}>
+          <Paper sx={{ p: 3, borderRadius: 3, height: '100%', border: '1px solid', borderColor: 'divider' }} elevation={0}>
+            <Typography variant="subtitle1" fontWeight={700} mb={2}>Actividad Reciente</Typography>
+            <Box sx={{ display: 'flex', flexDirection: 'column' }}>
               {[
-                { icon: <CheckCircle size={14} />, color: 'var(--success)', text: 'Nómina 2da Quincena cerrada y aprobada', time: 'Hace 2 horas' },
-                { icon: <Users size={14} />, color: 'var(--info)', text: 'Ajuste de distribución — Presidencia', time: 'Hace 5 horas' },
-                { icon: <AlertTriangle size={14} />, color: 'var(--warning)', text: 'Horas extras pendientes — Control de Calidad', time: 'Ayer' },
-                { icon: <DollarSign size={14} />, color: 'var(--accent-light)', text: 'Nuevo empleado registrado en el sistema', time: 'Hace 3 días' },
+                { icon: <CheckCircle size={16} />, color: '#10B981', text: 'Nómina 2da Quincena cerrada y aprobada', time: 'Hace 2 horas' },
+                { icon: <Users size={16} />, color: '#3B82F6', text: 'Ajuste de distribución — Presidencia', time: 'Hace 5 horas' },
+                { icon: <AlertTriangle size={16} />, color: '#F59E0B', text: 'Horas extras pendientes — Control de Calidad', time: 'Ayer' },
+                { icon: <DollarSign size={16} />, color: '#8B5CF6', text: 'Nuevo empleado registrado en el sistema', time: 'Hace 3 días' },
               ].map((item, i) => (
-                <div key={i} style={{
-                  display: 'flex', alignItems: 'center', gap: '0.75rem',
-                  padding: '0.7rem 0',
-                  borderBottom: i < 3 ? '1px solid var(--border)' : 'none'
+                <Box key={i} sx={{
+                  display: 'flex', alignItems: 'center', gap: 2,
+                  py: 1.5,
+                  borderBottom: i < 3 ? '1px solid' : 'none',
+                  borderColor: 'divider'
                 }}>
-                  <div style={{
-                    width: 28, height: 28, borderRadius: '6px',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    color: item.color,
-                    background: `${item.color}12`,
-                    flexShrink: 0
-                  }}>
+                  <Avatar sx={{ width: 32, height: 32, bgcolor: `${item.color}15`, color: item.color }}>
                     {item.icon}
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: '0.8rem', fontWeight: 500 }}>{item.text}</div>
-                    <div style={{ fontSize: '0.68rem', color: 'var(--text-tertiary)' }}>{item.time}</div>
-                  </div>
-                </div>
+                  </Avatar>
+                  <Box sx={{ flex: 1 }}>
+                    <Typography variant="body2" fontWeight={600}>{item.text}</Typography>
+                    <Typography variant="caption" color="text.secondary">{item.time}</Typography>
+                  </Box>
+                </Box>
               ))}
-            </div>
-          </div>
+            </Box>
+          </Paper>
+        </Grid>
 
-          {/* Quick Stats */}
-          <div className="card animate-slide-up stagger-5">
-            <h3 style={{ margin: '0 0 1rem 0', fontSize: '0.92rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <PieChart size={16} style={{ color: 'var(--accent-light)' }} />
+        <Grid item xs={12} md={6}>
+          <Paper sx={{ p: 3, borderRadius: 3, height: '100%', border: '1px solid', borderColor: 'divider' }} elevation={0}>
+            <Typography variant="subtitle1" fontWeight={700} sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+              <PieChart size={18} style={{ color: '#3B82F6' }} />
               Resumen Rápido
-            </h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+            </Typography>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
               {[
                 { label: 'Salario promedio', value: formatQ(totalEmployees > 0 ? totalGrossPayroll / totalEmployees : 0) },
                 { label: 'Costo patronal estimado', value: formatQ(totalGrossPayroll * 0.1267) },
-                { label: 'Nóminas procesadas', value: payrollHistory.length },
+                { label: 'Nóminas procesadas', value: payrollHistory?.length || 0 },
                 { label: 'Empresas activas', value: COMPANIES.length },
               ].map((item, i) => (
-                <div key={i} style={{
+                <Box key={i} sx={{
                   display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                  padding: '0.55rem 0.75rem',
-                  background: 'var(--bg-base)',
-                  borderRadius: '8px',
-                  border: '1px solid var(--border)'
+                  p: 1.5,
+                  bgcolor: 'background.default',
+                  borderRadius: 2,
+                  border: '1px solid',
+                  borderColor: 'divider'
                 }}>
-                  <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>{item.label}</span>
-                  <span className="font-mono" style={{ fontSize: '0.82rem', fontWeight: 700, color: typeof item.value === 'string' && item.value.includes('Q') ? 'var(--gold-light)' : 'var(--text-primary)' }}>
+                  <Typography variant="body2" color="text.secondary">{item.label}</Typography>
+                  <Typography variant="body2" fontFamily="monospace" fontWeight={700} color={typeof item.value === 'string' && item.value.includes('Q') ? 'secondary.main' : 'text.primary'}>
                     {item.value}
-                  </span>
-                </div>
+                  </Typography>
+                </Box>
               ))}
-            </div>
-          </div>
-        </div>
-      </div>
-    </>
+            </Box>
+          </Paper>
+        </Grid>
+      </Grid>
+    </Box>
   );
 }
 
-function KpiCard({ icon, iconBg, iconColor, label, value, trend, trendDir, delay }) {
+function KpiCard({ icon, iconBg, iconColor, label, value, trend, trendDir }) {
   return (
-    <div className={`card card-glow animate-slide-up stagger-${delay}`} style={{ cursor: 'default' }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-        <div>
-          <div className="kpi-label">{label}</div>
-          <div className="kpi-value" style={{ color: typeof value === 'string' && value.includes('Q') ? 'var(--gold-light)' : 'var(--text-primary)' }}>{value}</div>
-          <div className={`kpi-trend ${trendDir}`}>
-            {trendDir === 'up' ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
-            {trend}
-          </div>
-        </div>
-        <div className="kpi-icon-wrap" style={{ background: iconBg, color: iconColor }}>
-          {icon}
-        </div>
-      </div>
-    </div>
+    <Paper 
+      sx={{ 
+        p: 3, 
+        borderRadius: 3, 
+        border: '1px solid', 
+        borderColor: 'divider',
+        display: 'flex',
+        alignItems: 'flex-start',
+        justifyContent: 'space-between',
+        height: '100%',
+        position: 'relative',
+        overflow: 'hidden',
+        '&::before': {
+          content: '""',
+          position: 'absolute',
+          top: 0, left: 0, width: '100%', height: '2px',
+          background: `linear-gradient(90deg, ${iconColor}, transparent)`
+        }
+      }} 
+      elevation={0}
+    >
+      <Box>
+        <Typography variant="caption" color="text.secondary" fontWeight={600} sx={{ textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+          {label}
+        </Typography>
+        <Typography variant="h5" fontWeight={800} sx={{ my: 1, color: typeof value === 'string' && value.includes('Q') ? 'secondary.main' : 'text.primary' }}>
+          {value}
+        </Typography>
+        <Typography variant="caption" fontWeight={600} sx={{ display: 'flex', alignItems: 'center', gap: 0.5, color: trendDir === 'up' ? 'success.main' : 'error.main' }}>
+          {trendDir === 'up' ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
+          {trend}
+        </Typography>
+      </Box>
+      <Avatar sx={{ bgcolor: iconBg, color: iconColor, width: 48, height: 48 }}>
+        {icon}
+      </Avatar>
+    </Paper>
   );
 }

@@ -219,13 +219,13 @@ const startServer = async () => {
   try {
     // Sincronizar modelos con la base de datos (Crea las tablas si no existen)
     await sequelize.sync({ alter: true });
-    console.log('✅ Base de datos sincronizada correctamente.');
+    console.log('Base de datos sincronizada correctamente.');
     
     app.listen(PORT, () => {
-      console.log(`🚀 Servidor Node.js corriendo en http://localhost:${PORT}`);
+      console.log(`Servidor Node.js corriendo en http://localhost:${PORT}`);
     });
   } catch (error) {
-    console.error('❌ Error al iniciar el servidor:', error);
+    console.error('Error al iniciar el servidor:', error);
   }
 };
 
