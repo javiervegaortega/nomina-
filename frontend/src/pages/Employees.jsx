@@ -8,10 +8,14 @@ import ImportData from '../components/ImportData';
 import EmployeeFormModal from '../components/EmployeeFormModal';
 import { formatQ, calculateMonthlyISR } from '../data/mockData';
 import {
-  Box, Typography, Button, TextField, MenuItem, Table, TableBody, TableCell,
-  TableContainer, TableHead, TableRow, Paper, IconButton, Dialog, DialogTitle,
-  DialogContent, DialogActions, Chip, InputAdornment, Tooltip, Avatar
-} from '@mui/material';
+  Box, Flex, Heading, Text, Button, Input, Select,
+  Table, Thead, Tbody, Tr, Th, Td, TableContainer,
+  IconButton, Badge, Avatar, Tooltip, HStack, VStack,
+  InputGroup, InputLeftElement, useColorModeValue,
+  Modal, ModalOverlay, ModalContent, ModalHeader, ModalBody,
+  ModalFooter, ModalCloseButton, FormControl, FormLabel,
+  Textarea, Collapse
+} from '@chakra-ui/react';
 
 export default function Employees() {
   const { employees, addEmployee, updateEmployee, deleteEmployee, companies, departments } = useContext(DataContext);
@@ -36,6 +40,20 @@ export default function Employees() {
   
   // Finiquito modal state
   const [finiquitoState, setFiniquitoState] = useState({ show: false, emp: null, calculation: null });
+
+  // Theme-aware colors
+  const cardBg = useColorModeValue('white', 'gray.800');
+  const borderColor = useColorModeValue('gray.200', 'gray.700');
+  const subtleBg = useColorModeValue('gray.50', 'gray.900');
+  const hoverBg = useColorModeValue('gray.50', 'gray.700');
+  const textSecondary = useColorModeValue('gray.500', 'gray.400');
+  const textPrimary = useColorModeValue('gray.800', 'white');
+  const brandColor = useColorModeValue('brand.600', 'brand.300');
+  const accentColor = useColorModeValue('accent.600', 'accent.300');
+  const theadBg = useColorModeValue('gray.50', 'gray.900');
+  const distBarBg = useColorModeValue('gray.100', 'gray.600');
+  const modalBg = useColorModeValue('white', 'gray.800');
+  const finiquitoRowBg = useColorModeValue('gray.50', 'gray.700');
 
   const getFullName = (e) => `${e.primer_nombre || ''} ${e.primer_apellido || ''}`.trim() || 'Sin Nombre';
 
@@ -105,210 +123,340 @@ export default function Employees() {
   };
 
   return (
-    <Box sx={{ p: { xs: 2, md: 4 } }}>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4, flexWrap: 'wrap', gap: 2 }}>
+    <Box p={{ base: 4, md: 6 }}>
+      {/* HEADER */}
+      <Flex
+        justify="space-between"
+        align="center"
+        mb={6}
+        flexWrap="wrap"
+        gap={4}
+      >
         <Box>
-          <Typography variant="h4" fontWeight={800} gutterBottom>
+          <Heading size="lg" fontWeight={800} mb={1}>
             Directorio de Empleados
-          </Typography>
-          <Typography variant="body1" color="text.secondary">
+          </Heading>
+          <Text color={textSecondary} fontSize="md">
             Gestión de personal y distribución de costos · {employees.length} registros
-          </Typography>
+          </Text>
         </Box>
-        <Box sx={{ display: 'flex', gap: 1 }}>
-          <Button 
-            variant="outlined" 
-            color="secondary" 
-            startIcon={<Download size={16} style={{ transform: 'rotate(180deg)' }} />} 
+        <HStack spacing={3}>
+          <Button
+            variant="outline"
+            leftIcon={<Download size={16} style={{ transform: 'rotate(180deg)' }} />}
             onClick={() => setShowImport(true)}
-            sx={{ borderRadius: 2 }}
+            borderRadius="lg"
+            transition="all 0.3s"
+            _hover={{ transform: 'translateY(-1px)', shadow: 'md' }}
           >
             Importar CSV
           </Button>
-          <Button 
-            variant="contained" 
-            color="primary" 
-            startIcon={<UserPlus size={16} />} 
+          <Button
+            colorScheme="brand"
+            leftIcon={<UserPlus size={16} />}
             onClick={openAdd}
-            sx={{ borderRadius: 2 }}
+            borderRadius="lg"
+            transition="all 0.3s"
+            _hover={{ transform: 'translateY(-1px)', shadow: 'lg' }}
           >
             Nuevo Empleado
           </Button>
-        </Box>
-      </Box>
+        </HStack>
+      </Flex>
 
-      <Paper sx={{ p: 2, mb: 3, borderRadius: 3, border: '1px solid', borderColor: 'divider' }} elevation={0}>
-        <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
-          <TextField
-            placeholder="Buscar por nombre o puesto..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            size="small"
-            sx={{ flex: 1, minWidth: '250px' }}
-            InputProps={{
-              startAdornment: (
-                <InputAdornment position="start">
-                  <Search size={18} />
-                </InputAdornment>
-              ),
-            }}
-          />
-          <Button 
-            variant={showFilters ? "contained" : "outlined"} 
-            color="inherit" 
-            startIcon={<Filter size={16} />} 
+      {/* SEARCH / FILTER BAR */}
+      <Box
+        bg={cardBg}
+        p={4}
+        mb={5}
+        borderRadius="xl"
+        border="1px solid"
+        borderColor={borderColor}
+        boxShadow="sm"
+      >
+        <Flex gap={3} align="center" flexWrap="wrap">
+          <InputGroup flex={1} minW="250px">
+            <InputLeftElement pointerEvents="none">
+              <Search size={18} color="gray" />
+            </InputLeftElement>
+            <Input
+              placeholder="Buscar por nombre o puesto..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              borderRadius="lg"
+            />
+          </InputGroup>
+          <Button
+            variant={showFilters ? 'solid' : 'outline'}
+            leftIcon={<Filter size={16} />}
             onClick={() => setShowFilters(!showFilters)}
-            sx={{ borderRadius: 2 }}
+            borderRadius="lg"
+            transition="all 0.3s"
           >
             Filtros {showFilters ? '▲' : '▼'}
           </Button>
           {(filterDept !== 'ALL' || filterStatus !== 'ALL') && (
-            <Button 
-              variant="text" 
-              color="inherit" 
-              startIcon={<X size={16} />} 
+            <Button
+              variant="ghost"
+              leftIcon={<X size={16} />}
               onClick={() => { setFilterDept('ALL'); setFilterStatus('ALL'); }}
             >
               Limpiar
             </Button>
           )}
-        </Box>
+        </Flex>
 
         {/* Expandable filters */}
-        {showFilters && (
-          <Box sx={{ display: 'flex', gap: 2, mt: 2, pt: 2, borderTop: '1px solid', borderColor: 'divider', flexWrap: 'wrap' }}>
-            <TextField
-              select
-              label="Departamento"
-              value={filterDept}
-              onChange={e => setFilterDept(e.target.value)}
-              size="small"
-              sx={{ minWidth: 200 }}
-            >
-              <MenuItem value="ALL">Todos los departamentos</MenuItem>
-              {departments.map(d => <MenuItem key={d} value={d}>{d}</MenuItem>)}
-            </TextField>
-            <TextField
-              select
-              label="Estado"
-              value={filterStatus}
-              onChange={e => setFilterStatus(e.target.value)}
-              size="small"
-              sx={{ minWidth: 150 }}
-            >
-              <MenuItem value="ALL">Todos los estados</MenuItem>
-              <MenuItem value="Activo">Activo</MenuItem>
-              <MenuItem value="Inactivo">Inactivo</MenuItem>
-            </TextField>
-          </Box>
-        )}
-      </Paper>
+        <Collapse in={showFilters} animateOpacity>
+          <Flex
+            gap={3}
+            mt={4}
+            pt={4}
+            borderTop="1px solid"
+            borderColor={borderColor}
+            flexWrap="wrap"
+          >
+            <FormControl minW="200px" maxW="280px">
+              <FormLabel fontSize="sm" color={textSecondary}>Departamento</FormLabel>
+              <Select
+                value={filterDept}
+                onChange={e => setFilterDept(e.target.value)}
+                borderRadius="lg"
+                size="sm"
+              >
+                <option value="ALL">Todos los departamentos</option>
+                {departments.map(d => <option key={d} value={d}>{d}</option>)}
+              </Select>
+            </FormControl>
+            <FormControl minW="150px" maxW="220px">
+              <FormLabel fontSize="sm" color={textSecondary}>Estado</FormLabel>
+              <Select
+                value={filterStatus}
+                onChange={e => setFilterStatus(e.target.value)}
+                borderRadius="lg"
+                size="sm"
+              >
+                <option value="ALL">Todos los estados</option>
+                <option value="Activo">Activo</option>
+                <option value="Inactivo">Inactivo</option>
+              </Select>
+            </FormControl>
+          </Flex>
+        </Collapse>
+      </Box>
 
-      <TableContainer component={Paper} elevation={0} sx={{ borderRadius: 3, border: '1px solid', borderColor: 'divider' }}>
-        <Table sx={{ minWidth: 800 }}>
-          <TableHead sx={{ backgroundColor: 'background.default' }}>
-            <TableRow>
-              <TableCell sx={{ fontWeight: 600, color: 'text.secondary', width: 50 }}>#</TableCell>
-              <TableCell sx={{ fontWeight: 600, color: 'text.secondary' }}>Empleado</TableCell>
-              <TableCell sx={{ fontWeight: 600, color: 'text.secondary' }}>Departamento / Empresa</TableCell>
-              <TableCell sx={{ fontWeight: 600, color: 'text.secondary' }}>Salario Base</TableCell>
-              <TableCell sx={{ fontWeight: 600, color: 'text.secondary' }}>Distribución</TableCell>
-              <TableCell sx={{ fontWeight: 600, color: 'text.secondary' }}>Estado</TableCell>
-              <TableCell align="right" sx={{ fontWeight: 600, color: 'text.secondary' }}>Acciones</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {filtered.map((emp) => {
-              const fullName = getFullName(emp);
-              const companyName = companies.find(c => c.id === emp.companyId)?.nombre_comercial || 'Sin Asignar';
-              
-              return (
-              <TableRow key={emp.id} hover>
-                <TableCell>
-                  <Typography variant="caption" fontWeight={600} color="text.secondary">{emp.id}</Typography>
-                </TableCell>
-                <TableCell>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                    <Avatar sx={{ width: 36, height: 36, bgcolor: 'primary.main', fontSize: '0.85rem', fontWeight: 700 }}>
-                      {fullName.split(' ').slice(0, 2).map(n => n?.[0] || '').join('')}
-                    </Avatar>
-                    <Box>
-                      <Typography variant="body2" fontWeight={600} color="primary.main" sx={{ cursor: 'pointer' }} onClick={() => openView(emp)}>
-                        {fullName}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {emp.puesto || 'Sin Puesto'}
-                      </Typography>
-                    </Box>
-                  </Box>
-                </TableCell>
-                <TableCell>
-                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, alignItems: 'flex-start' }}>
-                    <Chip label={emp.departamento_laboral || 'N/A'} size="small" variant="outlined" color="primary" />
-                    <Chip label={companyName} size="small" />
-                  </Box>
-                </TableCell>
-                <TableCell>
-                  <Typography variant="body2" fontFamily="monospace" fontWeight={600} color="secondary.main">
-                    {formatQ(emp.sueldo_ordinario || 0)}
-                  </Typography>
-                </TableCell>
-                <TableCell>
-                  <Tooltip title={companies.filter(c => (emp.dist?.[c.id] || 0) > 0).map(c => `${c.nombre_comercial || c.nit}: ${emp.dist?.[c.id]}%`).join(' · ')}>
-                    <Box sx={{ width: 120, height: 8, borderRadius: 4, display: 'flex', overflow: 'hidden', backgroundColor: 'action.hover' }}>
-                      {companies.map(c => {
-                        const pct = emp.dist?.[c.id] || 0;
-                        return pct > 0 ? (
-                          <Box key={c.id} sx={{ width: `${pct}%`, backgroundColor: c.color || 'primary.main' }} />
-                        ) : null;
-                      })}
-                    </Box>
-                  </Tooltip>
-                </TableCell>
-                <TableCell>
-                  <Chip 
-                    label={emp.estado} 
-                    size="small" 
-                    color={emp.estado === 'Activo' ? 'success' : 'warning'} 
-                    sx={{ fontWeight: 600 }}
-                  />
-                </TableCell>
-                <TableCell align="right">
-                  <IconButton color="primary" size="small" onClick={() => openView(emp)} title="Ver detalle">
-                    <Eye size={18} />
-                  </IconButton>
-                  <IconButton color="secondary" size="small" onClick={() => openEdit(emp)} title="Editar">
-                    <Edit2 size={18} />
-                  </IconButton>
-                  {emp.estado === 'Activo' && (
-                    <IconButton color="warning" size="small" onClick={() => setOffboardState({ show: true, empId: emp.id, reason: '', date: new Date().toISOString().split('T')[0] })} title="Dar de Baja">
-                      <X size={18} />
-                    </IconButton>
-                  )}
-                  {emp.estado === 'Inactivo' && (
-                    <IconButton color="info" size="small" onClick={() => handleGenerateFiniquito(emp)} title="Generar Finiquito">
-                      <FileText size={18} />
-                    </IconButton>
-                  )}
-                  <IconButton color="error" size="small" onClick={() => handleDelete(emp.id)} title="Eliminar (Permanente)">
-                    <Trash2 size={18} />
-                  </IconButton>
-                </TableCell>
-              </TableRow>
-            )})}
-            {filtered.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={7} align="center" sx={{ py: 8 }}>
-                  <Typography variant="body1" color="text.secondary">
-                    No se encontraron empleados con los criterios de búsqueda.
-                  </Typography>
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </TableContainer>
+      {/* EMPLOYEE TABLE */}
+      <Box
+        bg={cardBg}
+        borderRadius="xl"
+        border="1px solid"
+        borderColor={borderColor}
+        boxShadow="sm"
+        overflow="hidden"
+      >
+        <TableContainer>
+          <Table variant="simple" size="md">
+            <Thead bg={theadBg}>
+              <Tr>
+                <Th fontWeight={600} color={textSecondary} w="50px">#</Th>
+                <Th fontWeight={600} color={textSecondary}>Empleado</Th>
+                <Th fontWeight={600} color={textSecondary}>Departamento / Empresa</Th>
+                <Th fontWeight={600} color={textSecondary}>Salario Base</Th>
+                <Th fontWeight={600} color={textSecondary}>Distribución</Th>
+                <Th fontWeight={600} color={textSecondary}>Estado</Th>
+                <Th fontWeight={600} color={textSecondary} textAlign="right">Acciones</Th>
+              </Tr>
+            </Thead>
+            <Tbody>
+              {filtered.map((emp) => {
+                const fullName = getFullName(emp);
+                const companyName = companies.find(c => c.id === emp.companyId)?.nombre_comercial || 'Sin Asignar';
+                
+                return (
+                  <Tr
+                    key={emp.id}
+                    transition="all 0.2s"
+                    _hover={{ bg: hoverBg }}
+                  >
+                    <Td>
+                      <Text fontSize="xs" fontWeight={600} color={textSecondary}>{emp.id}</Text>
+                    </Td>
+                    <Td>
+                      <HStack spacing={3}>
+                        <Avatar
+                          size="sm"
+                          name={fullName}
+                          bg="brand.500"
+                          color="white"
+                          fontSize="0.75rem"
+                          fontWeight={700}
+                        />
+                        <Box>
+                          <Text
+                            fontSize="sm"
+                            fontWeight={600}
+                            color={brandColor}
+                            cursor="pointer"
+                            onClick={() => openView(emp)}
+                            _hover={{ textDecoration: 'underline' }}
+                            transition="all 0.2s"
+                          >
+                            {fullName}
+                          </Text>
+                          <Text fontSize="xs" color={textSecondary}>
+                            {emp.puesto || 'Sin Puesto'}
+                          </Text>
+                        </Box>
+                      </HStack>
+                    </Td>
+                    <Td>
+                      <VStack spacing={1} align="flex-start">
+                        <Badge
+                          variant="outline"
+                          colorScheme="brand"
+                          fontSize="xs"
+                          borderRadius="md"
+                          px={2}
+                        >
+                          {emp.departamento_laboral || 'N/A'}
+                        </Badge>
+                        <Badge
+                          variant="subtle"
+                          colorScheme="gray"
+                          fontSize="xs"
+                          borderRadius="md"
+                          px={2}
+                        >
+                          {companyName}
+                        </Badge>
+                      </VStack>
+                    </Td>
+                    <Td>
+                      <Text fontSize="sm" fontFamily="mono" fontWeight={600} color={accentColor}>
+                        {formatQ(emp.sueldo_ordinario || 0)}
+                      </Text>
+                    </Td>
+                    <Td>
+                      <Tooltip
+                        label={companies.filter(c => (emp.dist?.[c.id] || 0) > 0).map(c => `${c.nombre_comercial || c.nit}: ${emp.dist?.[c.id]}%`).join(' · ')}
+                        placement="top"
+                        hasArrow
+                        borderRadius="md"
+                      >
+                        <Flex
+                          w="120px"
+                          h="8px"
+                          borderRadius="full"
+                          overflow="hidden"
+                          bg={distBarBg}
+                        >
+                          {companies.map(c => {
+                            const pct = emp.dist?.[c.id] || 0;
+                            return pct > 0 ? (
+                              <Box
+                                key={c.id}
+                                w={`${pct}%`}
+                                bg={c.color || 'brand.500'}
+                                transition="width 0.3s"
+                              />
+                            ) : null;
+                          })}
+                        </Flex>
+                      </Tooltip>
+                    </Td>
+                    <Td>
+                      <Badge
+                        colorScheme={emp.estado === 'Activo' ? 'green' : 'orange'}
+                        fontWeight={600}
+                        borderRadius="full"
+                        px={3}
+                        py={1}
+                        fontSize="xs"
+                      >
+                        {emp.estado}
+                      </Badge>
+                    </Td>
+                    <Td textAlign="right">
+                      <HStack spacing={1} justify="flex-end">
+                        <Tooltip label="Ver detalle" hasArrow>
+                          <IconButton
+                            aria-label="Ver detalle"
+                            icon={<Eye size={18} />}
+                            size="sm"
+                            variant="ghost"
+                            colorScheme="brand"
+                            onClick={() => openView(emp)}
+                            transition="all 0.3s"
+                          />
+                        </Tooltip>
+                        <Tooltip label="Editar" hasArrow>
+                          <IconButton
+                            aria-label="Editar"
+                            icon={<Edit2 size={18} />}
+                            size="sm"
+                            variant="ghost"
+                            colorScheme="accent"
+                            onClick={() => openEdit(emp)}
+                            transition="all 0.3s"
+                          />
+                        </Tooltip>
+                        {emp.estado === 'Activo' && (
+                          <Tooltip label="Dar de Baja" hasArrow>
+                            <IconButton
+                              aria-label="Dar de Baja"
+                              icon={<X size={18} />}
+                              size="sm"
+                              variant="ghost"
+                              colorScheme="orange"
+                              onClick={() => setOffboardState({ show: true, empId: emp.id, reason: '', date: new Date().toISOString().split('T')[0] })}
+                              transition="all 0.3s"
+                            />
+                          </Tooltip>
+                        )}
+                        {emp.estado === 'Inactivo' && (
+                          <Tooltip label="Generar Finiquito" hasArrow>
+                            <IconButton
+                              aria-label="Generar Finiquito"
+                              icon={<FileText size={18} />}
+                              size="sm"
+                              variant="ghost"
+                              colorScheme="blue"
+                              onClick={() => handleGenerateFiniquito(emp)}
+                              transition="all 0.3s"
+                            />
+                          </Tooltip>
+                        )}
+                        <Tooltip label="Eliminar (Permanente)" hasArrow>
+                          <IconButton
+                            aria-label="Eliminar"
+                            icon={<Trash2 size={18} />}
+                            size="sm"
+                            variant="ghost"
+                            colorScheme="red"
+                            onClick={() => handleDelete(emp.id)}
+                            transition="all 0.3s"
+                          />
+                        </Tooltip>
+                      </HStack>
+                    </Td>
+                  </Tr>
+                );
+              })}
+              {filtered.length === 0 && (
+                <Tr>
+                  <Td colSpan={7} textAlign="center" py={16}>
+                    <Text color={textSecondary} fontSize="md">
+                      No se encontraron empleados con los criterios de búsqueda.
+                    </Text>
+                  </Td>
+                </Tr>
+              )}
+            </Tbody>
+          </Table>
+        </TableContainer>
+      </Box>
 
+      {/* EMPLOYEE FORM MODAL (add/edit) */}
       {showModal && (modalMode === 'add' || modalMode === 'edit') && (
         <EmployeeFormModal 
           mode={modalMode} 
@@ -321,137 +469,203 @@ export default function Employees() {
       )}
 
       {/* VIEW MODAL */}
-      {showModal && modalMode === 'view' && currentEmp && (
-        <Dialog open={true} onClose={() => setShowModal(false)} maxWidth="sm" fullWidth>
-          <DialogTitle>
-            <Box display="flex" justifyContent="space-between" alignItems="center">
-              Expediente del Empleado
-              <IconButton onClick={() => setShowModal(false)} size="small">
-                <X size={20} />
-              </IconButton>
-            </Box>
-          </DialogTitle>
-          <DialogContent dividers>
-            <Typography variant="h6" fontWeight={700} gutterBottom>{getFullName(currentEmp)}</Typography>
-            <Typography variant="body1" sx={{ mb: 1 }}><strong>Puesto:</strong> {currentEmp.puesto}</Typography>
-            <Typography variant="body1" sx={{ mb: 1 }}><strong>Empresa:</strong> {companies.find(c => c.id === currentEmp.companyId)?.nombre_comercial}</Typography>
-            <Typography variant="body1" sx={{ mb: 2 }}><strong>Sueldo:</strong> {formatQ(currentEmp.sueldo_ordinario)}</Typography>
-            <Typography variant="body2" color="text.secondary">
-              Haz clic en editar para ver y modificar todos los detalles.
-            </Typography>
-          </DialogContent>
-        </Dialog>
-      )}
+      <Modal isOpen={showModal && modalMode === 'view' && !!currentEmp} onClose={() => setShowModal(false)} size="md" isCentered>
+        <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(4px)" />
+        <ModalContent borderRadius="xl" bg={modalBg} boxShadow="2xl">
+          <ModalHeader fontWeight={700} pb={2}>
+            Expediente del Empleado
+          </ModalHeader>
+          <ModalCloseButton />
+          <ModalBody pb={6}>
+            {currentEmp && (
+              <>
+                <Heading size="md" fontWeight={700} mb={3}>{getFullName(currentEmp)}</Heading>
+                <Text mb={1}><Text as="span" fontWeight={700}>Puesto:</Text> {currentEmp.puesto}</Text>
+                <Text mb={1}><Text as="span" fontWeight={700}>Empresa:</Text> {companies.find(c => c.id === currentEmp.companyId)?.nombre_comercial}</Text>
+                <Text mb={4}><Text as="span" fontWeight={700}>Sueldo:</Text> {formatQ(currentEmp.sueldo_ordinario)}</Text>
+                <Text fontSize="sm" color={textSecondary}>
+                  Haz clic en editar para ver y modificar todos los detalles.
+                </Text>
+              </>
+            )}
+          </ModalBody>
+        </ModalContent>
+      </Modal>
 
+      {/* IMPORT DATA */}
       {showImport && <ImportData onClose={() => setShowImport(false)} />}
 
       {/* OFFBOARDING MODAL */}
-      <Dialog open={offboardState.show} onClose={() => setOffboardState({ show: false, empId: null, reason: '', date: '' })} maxWidth="sm" fullWidth>
-        <DialogTitle>
-          <Box display="flex" justifyContent="space-between" alignItems="center">
+      <Modal
+        isOpen={offboardState.show}
+        onClose={() => setOffboardState({ show: false, empId: null, reason: '', date: '' })}
+        size="md"
+        isCentered
+      >
+        <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(4px)" />
+        <ModalContent borderRadius="xl" bg={modalBg} boxShadow="2xl">
+          <ModalHeader fontWeight={700} pb={2}>
             Dar de Baja
-            <IconButton onClick={() => setOffboardState({ show: false, empId: null, reason: '', date: '' })} size="small">
-              <X size={20} />
-            </IconButton>
-          </Box>
-        </DialogTitle>
-        <DialogContent dividers>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-            El empleado pasará a estado Inactivo y ya no aparecerá en nóminas futuras, pero su historial se mantendrá intacto.
-          </Typography>
-          <TextField
-            label="Fecha de Baja"
-            type="date"
-            fullWidth
-            value={offboardState.date}
-            onChange={e => setOffboardState({ ...offboardState, date: e.target.value })}
-            sx={{ mb: 3 }}
-            InputLabelProps={{ shrink: true }}
-          />
-          <TextField
-            label="Motivo / Observaciones"
-            multiline
-            rows={3}
-            fullWidth
-            value={offboardState.reason}
-            onChange={e => setOffboardState({ ...offboardState, reason: e.target.value })}
-            placeholder="Ej: Renuncia voluntaria, fin de contrato, despido justificado..."
-          />
-        </DialogContent>
-        <DialogActions sx={{ p: 2 }}>
-          <Button onClick={() => setOffboardState({ show: false, empId: null, reason: '', date: '' })} color="inherit">
-            Cancelar
-          </Button>
-          <Button onClick={handleOffboard} disabled={!offboardState.reason} variant="contained" color="warning">
-            Confirmar Baja
-          </Button>
-        </DialogActions>
-      </Dialog>
+          </ModalHeader>
+          <ModalCloseButton />
+          <ModalBody>
+            <Text fontSize="sm" color={textSecondary} mb={5}>
+              El empleado pasará a estado Inactivo y ya no aparecerá en nóminas futuras, pero su historial se mantendrá intacto.
+            </Text>
+            <FormControl mb={5}>
+              <FormLabel fontSize="sm" fontWeight={600}>Fecha de Baja</FormLabel>
+              <Input
+                type="date"
+                value={offboardState.date}
+                onChange={e => setOffboardState({ ...offboardState, date: e.target.value })}
+                borderRadius="lg"
+              />
+            </FormControl>
+            <FormControl>
+              <FormLabel fontSize="sm" fontWeight={600}>Motivo / Observaciones</FormLabel>
+              <Textarea
+                value={offboardState.reason}
+                onChange={e => setOffboardState({ ...offboardState, reason: e.target.value })}
+                placeholder="Ej: Renuncia voluntaria, fin de contrato, despido justificado..."
+                rows={3}
+                borderRadius="lg"
+              />
+            </FormControl>
+          </ModalBody>
+          <ModalFooter pt={4}>
+            <Button
+              variant="ghost"
+              mr={3}
+              onClick={() => setOffboardState({ show: false, empId: null, reason: '', date: '' })}
+            >
+              Cancelar
+            </Button>
+            <Button
+              colorScheme="orange"
+              onClick={handleOffboard}
+              isDisabled={!offboardState.reason}
+              transition="all 0.3s"
+            >
+              Confirmar Baja
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
 
       {/* FINIQUITO MODAL */}
-      <Dialog open={finiquitoState.show && Boolean(finiquitoState.calculation)} onClose={() => setFiniquitoState({ show: false, emp: null, calculation: null })} maxWidth="sm" fullWidth>
-        {finiquitoState.calculation && (
-          <>
-            <DialogTitle>
-              <Box display="flex" justifyContent="space-between" alignItems="center">
+      <Modal
+        isOpen={finiquitoState.show && Boolean(finiquitoState.calculation)}
+        onClose={() => setFiniquitoState({ show: false, emp: null, calculation: null })}
+        size="lg"
+        isCentered
+      >
+        <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(4px)" />
+        <ModalContent borderRadius="xl" bg={modalBg} boxShadow="2xl">
+          {finiquitoState.calculation && (
+            <>
+              <ModalHeader fontWeight={700} pb={2}>
                 Cálculo de Finiquito (Liquidación)
-                <IconButton onClick={() => setFiniquitoState({ show: false, emp: null, calculation: null })} size="small">
-                  <X size={20} />
-                </IconButton>
-              </Box>
-            </DialogTitle>
-            <DialogContent dividers>
-              <Box sx={{ mb: 3, display: 'flex', alignItems: 'center', gap: 2 }}>
-                <Box sx={{ flex: 1 }}>
-                  <Typography variant="subtitle1" fontWeight={700} color="primary.main">{getFullName(finiquitoState.emp)}</Typography>
-                  <Typography variant="body2" color="text.secondary">{finiquitoState.emp?.puesto}</Typography>
-                </Box>
-                <Box textAlign="right">
-                  <Typography variant="caption" color="text.secondary">Salario Base Computable</Typography>
-                  <Typography variant="body1" fontFamily="monospace" fontWeight={700} color="primary.main">
-                    {formatQ(Number(finiquitoState.emp?.sueldo_ordinario || 0) + Number(finiquitoState.emp?.bon_incentivo || 0))}
-                  </Typography>
-                </Box>
-              </Box>
+              </ModalHeader>
+              <ModalCloseButton />
+              <ModalBody>
+                {/* Employee info header */}
+                <Flex mb={5} align="center" gap={4}>
+                  <Box flex={1}>
+                    <Text fontSize="md" fontWeight={700} color={brandColor}>
+                      {getFullName(finiquitoState.emp)}
+                    </Text>
+                    <Text fontSize="sm" color={textSecondary}>
+                      {finiquitoState.emp?.puesto}
+                    </Text>
+                  </Box>
+                  <Box textAlign="right">
+                    <Text fontSize="xs" color={textSecondary}>Salario Base Computable</Text>
+                    <Text fontFamily="mono" fontWeight={700} color={brandColor}>
+                      {formatQ(Number(finiquitoState.emp?.sueldo_ordinario || 0) + Number(finiquitoState.emp?.bon_incentivo || 0))}
+                    </Text>
+                  </Box>
+                </Flex>
 
-              <TableContainer component={Paper} elevation={0} sx={{ border: '1px solid', borderColor: 'divider' }}>
-                <Table size="small">
-                  <TableBody>
-                    <TableRow>
-                      <TableCell>Indemnización por Tiempo Servido</TableCell>
-                      <TableCell align="right"><Typography fontFamily="monospace" color="primary.main">{formatQ(finiquitoState.calculation.indemnizacion)}</Typography></TableCell>
-                    </TableRow>
-                    <TableRow>
-                      <TableCell>Aguinaldo Proporcional</TableCell>
-                      <TableCell align="right"><Typography fontFamily="monospace" color="primary.main">{formatQ(finiquitoState.calculation.aguinaldoProp)}</Typography></TableCell>
-                    </TableRow>
-                    <TableRow>
-                      <TableCell>Bono 14 Proporcional</TableCell>
-                      <TableCell align="right"><Typography fontFamily="monospace" color="primary.main">{formatQ(finiquitoState.calculation.bono14Prop)}</Typography></TableCell>
-                    </TableRow>
-                    <TableRow>
-                      <TableCell>Vacaciones Pendientes de Goce</TableCell>
-                      <TableCell align="right"><Typography fontFamily="monospace" color="primary.main">{formatQ(finiquitoState.calculation.vacaciones)}</Typography></TableCell>
-                    </TableRow>
-                    <TableRow sx={{ backgroundColor: 'action.hover' }}>
-                      <TableCell><Typography fontWeight={700} color="primary.main">GRAN TOTAL A RECIBIR</Typography></TableCell>
-                      <TableCell align="right"><Typography fontFamily="monospace" fontWeight={700} color="secondary.main" fontSize="1.2rem">{formatQ(finiquitoState.calculation.total)}</Typography></TableCell>
-                    </TableRow>
-                  </TableBody>
-                </Table>
-              </TableContainer>
-            </DialogContent>
-            <DialogActions sx={{ p: 2 }}>
-              <Button onClick={() => setFiniquitoState({ show: false, emp: null, calculation: null })} color="inherit">
-                Cerrar
-              </Button>
-              <Button onClick={() => { alert('Generando PDF del Finiquito...'); setFiniquitoState({ show: false, emp: null, calculation: null }); }} variant="contained" color="primary" startIcon={<FileText size={16} />}>
-                Imprimir Constancia
-              </Button>
-            </DialogActions>
-          </>
-        )}
-      </Dialog>
+                {/* Finiquito calculation table */}
+                <Box
+                  borderRadius="xl"
+                  border="1px solid"
+                  borderColor={borderColor}
+                  overflow="hidden"
+                >
+                  <Table size="sm" variant="simple">
+                    <Tbody>
+                      <Tr>
+                        <Td fontSize="sm">Indemnización por Tiempo Servido</Td>
+                        <Td textAlign="right">
+                          <Text fontFamily="mono" color={brandColor} fontWeight={600}>
+                            {formatQ(finiquitoState.calculation.indemnizacion)}
+                          </Text>
+                        </Td>
+                      </Tr>
+                      <Tr>
+                        <Td fontSize="sm">Aguinaldo Proporcional</Td>
+                        <Td textAlign="right">
+                          <Text fontFamily="mono" color={brandColor} fontWeight={600}>
+                            {formatQ(finiquitoState.calculation.aguinaldoProp)}
+                          </Text>
+                        </Td>
+                      </Tr>
+                      <Tr>
+                        <Td fontSize="sm">Bono 14 Proporcional</Td>
+                        <Td textAlign="right">
+                          <Text fontFamily="mono" color={brandColor} fontWeight={600}>
+                            {formatQ(finiquitoState.calculation.bono14Prop)}
+                          </Text>
+                        </Td>
+                      </Tr>
+                      <Tr>
+                        <Td fontSize="sm">Vacaciones Pendientes de Goce</Td>
+                        <Td textAlign="right">
+                          <Text fontFamily="mono" color={brandColor} fontWeight={600}>
+                            {formatQ(finiquitoState.calculation.vacaciones)}
+                          </Text>
+                        </Td>
+                      </Tr>
+                      <Tr bg={finiquitoRowBg}>
+                        <Td>
+                          <Text fontWeight={700} color={brandColor}>GRAN TOTAL A RECIBIR</Text>
+                        </Td>
+                        <Td textAlign="right">
+                          <Text fontFamily="mono" fontWeight={700} color={accentColor} fontSize="lg">
+                            {formatQ(finiquitoState.calculation.total)}
+                          </Text>
+                        </Td>
+                      </Tr>
+                    </Tbody>
+                  </Table>
+                </Box>
+              </ModalBody>
+              <ModalFooter pt={4}>
+                <Button
+                  variant="ghost"
+                  mr={3}
+                  onClick={() => setFiniquitoState({ show: false, emp: null, calculation: null })}
+                >
+                  Cerrar
+                </Button>
+                <Button
+                  colorScheme="brand"
+                  leftIcon={<FileText size={16} />}
+                  onClick={() => {
+                    alert('Generando PDF del Finiquito...');
+                    setFiniquitoState({ show: false, emp: null, calculation: null });
+                  }}
+                  transition="all 0.3s"
+                  _hover={{ transform: 'translateY(-1px)', shadow: 'lg' }}
+                >
+                  Imprimir Constancia
+                </Button>
+              </ModalFooter>
+            </>
+          )}
+        </ModalContent>
+      </Modal>
     </Box>
   );
 }

@@ -3,15 +3,45 @@ import { DataContext } from '../context/DataContext';
 import { Plus, Edit2, Trash2, Eye } from 'lucide-react';
 import CompanyFormModal from '../components/CompanyFormModal';
 import {
-  Box, Typography, Button, Table, TableBody, TableCell,
-  TableContainer, TableHead, TableRow, Paper, IconButton
-} from '@mui/material';
+  Box,
+  Flex,
+  Heading,
+  Text,
+  Button,
+  Table,
+  Thead,
+  Tbody,
+  Tr,
+  Th,
+  Td,
+  IconButton,
+  Badge,
+  Tooltip,
+  useColorModeValue,
+} from '@chakra-ui/react';
 
 export default function Companies() {
   const { companies, addCompany, updateCompany, deleteCompany } = useContext(DataContext);
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [editingData, setEditingData] = useState(null);
+
+  // Color mode values
+  const tableBorderColor = useColorModeValue('gray.200', 'whiteAlpha.100');
+  const tableContainerBg = useColorModeValue('white', 'rgba(15, 23, 42, 0.8)');
+  const subtitleColor = useColorModeValue('gray.600', 'gray.400');
+  const nitColor = useColorModeValue('gray.500', 'gray.400');
+  const nameColor = useColorModeValue('gray.800', 'white');
+  const razonColor = useColorModeValue('gray.500', 'gray.400');
+  const emptyTextColor = useColorModeValue('gray.500', 'gray.500');
+  const badgeBg = useColorModeValue('brand.50', 'brand.900');
+  const badgeColor = useColorModeValue('brand.700', 'brand.200');
+  const viewHoverBg = useColorModeValue('brand.50', 'whiteAlpha.100');
+  const editHoverBg = useColorModeValue('accent.50', 'whiteAlpha.100');
+  const deleteHoverBg = useColorModeValue('red.50', 'whiteAlpha.100');
+  const viewIconColor = useColorModeValue('brand.500', 'brand.300');
+  const editIconColor = useColorModeValue('accent.600', 'accent.300');
+  const deleteIconColor = useColorModeValue('red.500', 'red.300');
 
   const openAdd = () => {
     setEditingId(null);
@@ -35,88 +65,186 @@ export default function Companies() {
   };
 
   return (
-    <Box sx={{ p: { xs: 2, md: 4 } }}>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4 }}>
+    <Box p={{ base: 4, md: 6, lg: 8 }}>
+      {/* Header */}
+      <Flex
+        justify="space-between"
+        align={{ base: 'flex-start', md: 'center' }}
+        direction={{ base: 'column', md: 'row' }}
+        gap={4}
+        mb={6}
+      >
         <Box>
-          <Typography variant="h4" fontWeight={800} gutterBottom>
+          <Heading
+            as="h1"
+            size="lg"
+            fontWeight={800}
+            mb={1}
+            letterSpacing="-0.02em"
+          >
             Directorio de Empresas
-          </Typography>
-          <Typography variant="body1" color="text.secondary">
-            Gestión de empresas y centros de costo · {companies.length} registros
-          </Typography>
+          </Heading>
+          <Flex align="center" gap={2}>
+            <Text fontSize="sm" color={subtitleColor}>
+              Gestión de empresas y centros de costo
+            </Text>
+            <Badge
+              bg={badgeBg}
+              color={badgeColor}
+              fontSize="xs"
+              fontWeight={600}
+              px={2}
+              py={0.5}
+              borderRadius="full"
+            >
+              {companies.length} registros
+            </Badge>
+          </Flex>
         </Box>
-        <Button 
-          variant="contained" 
-          color="primary" 
-          startIcon={<Plus size={18} />} 
+        <Button
+          colorScheme="brand"
+          leftIcon={<Plus size={18} />}
           onClick={openAdd}
-          sx={{ borderRadius: 2 }}
+          size="md"
+          borderRadius="lg"
+          transition="all 0.3s"
+          _hover={{
+            transform: 'translateY(-1px)',
+            boxShadow: 'lg',
+          }}
         >
           Nueva Empresa
         </Button>
+      </Flex>
+
+      {/* Table Container */}
+      <Box
+        bg={tableContainerBg}
+        border="1px solid"
+        borderColor={tableBorderColor}
+        borderRadius="xl"
+        overflow="hidden"
+        boxShadow="sm"
+        transition="all 0.3s"
+        _hover={{
+          boxShadow: 'md',
+        }}
+      >
+        <Box overflowX="auto">
+          <Table variant="modern" minW="650px">
+            <Thead>
+              <Tr>
+                <Th>NIT</Th>
+                <Th>Nombre Comercial</Th>
+                <Th>Razón Social</Th>
+                <Th textAlign="right">Acciones</Th>
+              </Tr>
+            </Thead>
+            <Tbody>
+              {companies.map((c, i) => (
+                <Tr key={c.id || i} transition="all 0.2s">
+                  <Td>
+                    <Text
+                      fontSize="sm"
+                      fontFamily="mono"
+                      color={nitColor}
+                    >
+                      {c.nit || 'S/N'}
+                    </Text>
+                  </Td>
+                  <Td>
+                    <Text
+                      fontSize="sm"
+                      fontWeight={500}
+                      color={nameColor}
+                    >
+                      {c.nombre_comercial || 'Sin Nombre'}
+                    </Text>
+                  </Td>
+                  <Td>
+                    <Text
+                      fontSize="sm"
+                      color={razonColor}
+                    >
+                      {c.razon_social || '-'}
+                    </Text>
+                  </Td>
+                  <Td textAlign="right">
+                    <Flex justify="flex-end" gap={1}>
+                      <Tooltip label="Ver detalles" hasArrow>
+                        <IconButton
+                          aria-label="Ver empresa"
+                          icon={<Eye size={16} />}
+                          size="sm"
+                          variant="ghost"
+                          color={viewIconColor}
+                          borderRadius="lg"
+                          transition="all 0.3s"
+                          _hover={{
+                            bg: viewHoverBg,
+                            transform: 'translateY(-1px)',
+                          }}
+                          onClick={() => openEdit(c)}
+                        />
+                      </Tooltip>
+                      <Tooltip label="Editar" hasArrow>
+                        <IconButton
+                          aria-label="Editar empresa"
+                          icon={<Edit2 size={16} />}
+                          size="sm"
+                          variant="ghost"
+                          color={editIconColor}
+                          borderRadius="lg"
+                          transition="all 0.3s"
+                          _hover={{
+                            bg: editHoverBg,
+                            transform: 'translateY(-1px)',
+                          }}
+                          onClick={() => openEdit(c)}
+                        />
+                      </Tooltip>
+                      <Tooltip label="Eliminar" hasArrow>
+                        <IconButton
+                          aria-label="Eliminar empresa"
+                          icon={<Trash2 size={16} />}
+                          size="sm"
+                          variant="ghost"
+                          color={deleteIconColor}
+                          borderRadius="lg"
+                          transition="all 0.3s"
+                          _hover={{
+                            bg: deleteHoverBg,
+                            transform: 'translateY(-1px)',
+                          }}
+                          onClick={() => {
+                            if (window.confirm(`¿Seguro que desea eliminar ${c.nombre_comercial || c.nit}?`)) deleteCompany(c.id);
+                          }}
+                        />
+                      </Tooltip>
+                    </Flex>
+                  </Td>
+                </Tr>
+              ))}
+              {companies.length === 0 && (
+                <Tr>
+                  <Td colSpan={4} textAlign="center" py={12}>
+                    <Text fontSize="sm" color={emptyTextColor}>
+                      No hay empresas registradas en el sistema.
+                    </Text>
+                  </Td>
+                </Tr>
+              )}
+            </Tbody>
+          </Table>
+        </Box>
       </Box>
 
-      <TableContainer component={Paper} elevation={0} sx={{ borderRadius: 3, border: '1px solid', borderColor: 'divider' }}>
-        <Table sx={{ minWidth: 650 }}>
-          <TableHead sx={{ backgroundColor: 'background.default' }}>
-            <TableRow>
-              <TableCell sx={{ fontWeight: 600, color: 'text.secondary' }}>NIT</TableCell>
-              <TableCell sx={{ fontWeight: 600, color: 'text.secondary' }}>Nombre Comercial</TableCell>
-              <TableCell sx={{ fontWeight: 600, color: 'text.secondary' }}>Razón Social</TableCell>
-              <TableCell align="right" sx={{ fontWeight: 600, color: 'text.secondary' }}>Acciones</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {companies.map((c, i) => (
-              <TableRow key={c.id || i} hover sx={{ '&:last-child td, &:last-child th': { border: 0 } }}>
-                <TableCell>
-                  <Typography variant="body2" fontFamily="monospace" color="text.secondary">
-                    {c.nit || 'S/N'}
-                  </Typography>
-                </TableCell>
-                <TableCell>
-                  <Typography variant="body1" fontWeight={500}>
-                    {c.nombre_comercial || 'Sin Nombre'}
-                  </Typography>
-                </TableCell>
-                <TableCell>
-                  <Typography variant="body2" color="text.secondary">
-                    {c.razon_social || '-'}
-                  </Typography>
-                </TableCell>
-                <TableCell align="right">
-                  <IconButton color="primary" onClick={() => openEdit(c)} size="small" sx={{ mr: 1 }}>
-                    <Eye size={18} />
-                  </IconButton>
-                  <IconButton color="secondary" onClick={() => openEdit(c)} size="small" sx={{ mr: 1 }}>
-                    <Edit2 size={18} />
-                  </IconButton>
-                  <IconButton color="error" size="small" onClick={() => {
-                    if (window.confirm(`¿Seguro que desea eliminar ${c.nombre_comercial || c.nit}?`)) deleteCompany(c.id);
-                  }}>
-                    <Trash2 size={18} />
-                  </IconButton>
-                </TableCell>
-              </TableRow>
-            ))}
-            {companies.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={4} align="center" sx={{ py: 6 }}>
-                  <Typography variant="body1" color="text.secondary">
-                    No hay empresas registradas en el sistema.
-                  </Typography>
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </TableContainer>
-
-      <CompanyFormModal 
-        isOpen={showModal} 
-        onClose={() => setShowModal(false)} 
-        onSave={handleSave} 
-        initialData={editingData} 
+      {/* Company Form Modal */}
+      <CompanyFormModal
+        isOpen={showModal}
+        onClose={() => setShowModal(false)}
+        onSave={handleSave}
+        initialData={editingData}
       />
     </Box>
   );

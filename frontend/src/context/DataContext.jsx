@@ -66,17 +66,17 @@ export function DataProvider({ children }) {
         
         if (compRes.ok) {
           const apiCompanies = await compRes.json();
-          if (apiCompanies.length > 0) setCompanies(apiCompanies);
+          if (Array.isArray(apiCompanies)) setCompanies(apiCompanies);
         }
         
         if (empRes.ok) {
           const apiEmployees = await empRes.json();
-          if (apiEmployees.length > 0) setEmployees(apiEmployees);
+          if (Array.isArray(apiEmployees)) setEmployees(apiEmployees);
         }
 
         if (histRes.ok) {
           const apiHistory = await histRes.json();
-          if (apiHistory.length > 0) setPayrollHistory(apiHistory);
+          if (Array.isArray(apiHistory)) setPayrollHistory(apiHistory);
         }
       } catch (err) {
         console.log('⚠️ Backend no disponible o en desarrollo, usando LocalStorage/MockData');

@@ -4,6 +4,21 @@ import { Mail, Lock, ArrowRight } from 'lucide-react';
 import AuthSidePanel from './AuthSidePanel';
 import { AuthContext } from '../../context/AuthContext';
 import { AppContext } from '../../App';
+import {
+  Box,
+  Flex,
+  Heading,
+  Text,
+  Button,
+  FormControl,
+  FormLabel,
+  Input,
+  InputGroup,
+  InputLeftElement,
+  useColorModeValue,
+  Link as ChakraLink,
+  VStack,
+} from '@chakra-ui/react';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -11,6 +26,12 @@ export default function Login() {
   const { login } = useContext(AuthContext);
   const { showToast } = useContext(AppContext);
   const navigate = useNavigate();
+
+  const bgPanel = useColorModeValue('white', 'gray.900');
+  const textColor = useColorModeValue('gray.800', 'white');
+  const mutedColor = useColorModeValue('gray.500', 'gray.400');
+  const inputBg = useColorModeValue('white', 'gray.800');
+  const borderColor = useColorModeValue('gray.200', 'gray.700');
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -22,55 +43,104 @@ export default function Login() {
       showToast(result.error, 'error');
     }
   };
+
   return (
-    <div className="auth-split-layout">
-      <AuthSidePanel />
-      
-      <div className="auth-form-panel animate-fade">
-        <div className="auth-form-container">
-          <div className="auth-header" style={{ textAlign: 'center' }}>
-            <h1 style={{ fontSize: '2rem', fontWeight: 800, margin: '0 0 0.5rem 0', letterSpacing: '-0.02em' }}>
-              Iniciar Sesión
-            </h1>
-            <p style={{ color: 'var(--text-tertiary)', fontSize: '0.95rem', margin: 0 }}>
-              Bienvenido de nuevo, por favor ingresa tus credenciales.
-            </p>
-          </div>
+    <Flex h="100vh" w="100vw" overflow="hidden" bg={bgPanel}>
+      {/* Left Side Panel (hidden on small screens) */}
+      <Box display={{ base: 'none', lg: 'block' }} w="50%">
+        <AuthSidePanel />
+      </Box>
 
-          <form className="auth-form" onSubmit={handleLogin}>
-            <div className="form-group">
-              <label className="form-label">Correo Electrónico</label>
-              <div className="input-with-icon">
-                <Mail size={18} className="input-icon" />
-                <input type="email" className="input-field pl-icon" placeholder="tu@empresa.com" required value={email} onChange={e => setEmail(e.target.value)} />
-              </div>
-            </div>
+      {/* Right Side - Login Form */}
+      <Flex w={{ base: '100%', lg: '50%' }} align="center" justify="center" p={8}>
+        <Box w="100%" maxW="md">
+          <VStack spacing={8} align="stretch">
+            <Box textAlign="center">
+              <Heading as="h1" size="xl" fontWeight={800} color={textColor} mb={2} letterSpacing="-0.02em">
+                Iniciar Sesión
+              </Heading>
+              <Text color={mutedColor} fontSize="md">
+                Bienvenido de nuevo, por favor ingresa tus credenciales.
+              </Text>
+            </Box>
 
-            <div className="form-group">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                <label className="form-label" style={{ marginBottom: 0 }}>Contraseña</label>
-                <Link to="/forgot-password" style={{ fontSize: '0.8rem', color: 'var(--accent-light)', textDecoration: 'none', fontWeight: 600 }}>
-                  ¿Olvidaste tu contraseña?
-                </Link>
-              </div>
-              <div className="input-with-icon">
-                <Lock size={18} className="input-icon" />
-                <input type="password" className="input-field pl-icon" placeholder="••••••••" required value={password} onChange={e => setPassword(e.target.value)} />
-              </div>
-            </div>
+            <form onSubmit={handleLogin}>
+              <VStack spacing={5}>
+                <FormControl isRequired>
+                  <FormLabel fontSize="sm" fontWeight={600} color={textColor}>
+                    Correo Electrónico o Usuario
+                  </FormLabel>
+                  <InputGroup size="lg">
+                    <InputLeftElement pointerEvents="none" color={mutedColor}>
+                      <Mail size={20} />
+                    </InputLeftElement>
+                    <Input
+                      type="text"
+                      placeholder="tu@empresa.com o tu usuario"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      bg={inputBg}
+                      borderColor={borderColor}
+                      _hover={{ borderColor: 'brand.400' }}
+                      _focus={{ borderColor: 'brand.500', boxShadow: '0 0 0 1px var(--chakra-colors-brand-500)' }}
+                      borderRadius="xl"
+                    />
+                  </InputGroup>
+                </FormControl>
 
-            <button type="submit" className="btn btn-primary" style={{ width: '100%', padding: '0.85rem', marginTop: '0.5rem', justifyContent: 'center', fontSize: '0.95rem' }}>
-              Iniciar Sesión <ArrowRight size={18} style={{ marginLeft: '0.5rem' }} />
-            </button>
-          </form>
+                <FormControl isRequired>
+                  <Flex justify="space-between" align="center" mb={2}>
+                    <FormLabel fontSize="sm" fontWeight={600} color={textColor} m={0}>
+                      Contraseña
+                    </FormLabel>
+                    {/* El usuario solicitó quitar "Olvidaste tu contraseña" */}
+                  </Flex>
+                  <InputGroup size="lg">
+                    <InputLeftElement pointerEvents="none" color={mutedColor}>
+                      <Lock size={20} />
+                    </InputLeftElement>
+                    <Input
+                      type="password"
+                      placeholder="••••••••"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      bg={inputBg}
+                      borderColor={borderColor}
+                      _hover={{ borderColor: 'brand.400' }}
+                      _focus={{ borderColor: 'brand.500', boxShadow: '0 0 0 1px var(--chakra-colors-brand-500)' }}
+                      borderRadius="xl"
+                    />
+                  </InputGroup>
+                </FormControl>
 
-          <div style={{ marginTop: '2.5rem', textAlign: 'center' }}>
-            <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', margin: 0 }}>
-              ¿No tienes cuenta? <Link to="/register" style={{ color: 'var(--accent-light)', fontWeight: 600, textDecoration: 'none' }}>Crea una gratis</Link>
-            </p>
-          </div>
-        </div>
-      </div>
-    </div>
+                <Button
+                  type="submit"
+                  colorScheme="brand"
+                  size="lg"
+                  w="100%"
+                  mt={4}
+                  borderRadius="xl"
+                  fontWeight={600}
+                  rightIcon={<ArrowRight size={20} />}
+                  _hover={{ transform: 'translateY(-2px)', boxShadow: 'lg' }}
+                  transition="all 0.3s"
+                >
+                  Iniciar Sesión
+                </Button>
+              </VStack>
+            </form>
+
+            <Box textAlign="center" mt={6}>
+              <Text fontSize="sm" color={mutedColor}>
+                ¿No tienes cuenta?{' '}
+                <ChakraLink as={Link} to="/register" color="brand.500" fontWeight={600}>
+                  Crea una gratis
+                </ChakraLink>
+              </Text>
+            </Box>
+          </VStack>
+        </Box>
+      </Flex>
+    </Flex>
   );
 }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useContext } from 'react';
+import React, { useState, useMemo, useContext } from 'react';
 import {
   Save, Download, FileText, Check, X, Edit3,
   ChevronRight, AlertCircle, DollarSign, Clock,
@@ -7,7 +7,14 @@ import {
 import { AppContext } from '../App';
 import { DataContext } from '../context/DataContext';
 import { CUOTA_PATRONAL_RATE, CUOTA_LABORAL_RATE, formatQ } from '../data/mockData';
-import { Box, Typography, Button, Paper, Grid, Avatar, IconButton, Dialog, DialogTitle, DialogContent, DialogActions, TextField, MenuItem, Tabs, Tab, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Tooltip, Chip, Divider } from '@mui/material';
+import {
+  Box, Flex, Text, Heading, Button, SimpleGrid, Avatar, IconButton,
+  Modal, ModalOverlay, ModalContent, ModalHeader, ModalBody, ModalFooter, ModalCloseButton,
+  FormControl, FormLabel, Input, Select,
+  Tabs, TabList, Tab,
+  Table, Thead, Tbody, Tr, Th, Td, TableContainer,
+  Badge, Divider, useColorModeValue, Center, Tag, HStack, VStack,
+} from '@chakra-ui/react';
 
 const TABS = [
   { id: 'income', label: 'Ingresos Variables', icon: DollarSign },
@@ -45,127 +52,159 @@ function PayrollHub({ onSelectDraft }) {
     onSelectDraft(newId);
   };
 
+  const cardBg = useColorModeValue('white', 'gray.800');
+  const borderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
+
   return (
-    <Box sx={{ p: { xs: 2, md: 4 } }}>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4, flexWrap: 'wrap', gap: 2 }}>
+    <Box p={{ base: 4, md: 6 }}>
+      <Flex justify="space-between" align="center" mb={6} wrap="wrap" gap={4}>
         <Box>
-          <Typography variant="h4" fontWeight={800} gutterBottom>
+          <Heading size="lg" fontWeight={800} mb={1}>
             Nóminas en Progreso
-          </Typography>
-          <Typography variant="body1" color="text.secondary">
+          </Heading>
+          <Text color="gray.500">
             Borradores activos que aún no han sido procesados definitivamente.
-          </Typography>
+          </Text>
         </Box>
-        <Box sx={{ display: 'flex', gap: 1 }}>
-          <Button variant="contained" color="primary" startIcon={<Plus size={16} />} sx={{ borderRadius: 2 }} onClick={() => {
+        <Button 
+          colorScheme="brand" 
+          leftIcon={<Plus size={16} />} 
+          borderRadius="lg" 
+          onClick={() => {
             setTitle('');
             setSelectedCompany('');
             setShowModal(true);
-          }}>
-            Nueva Nómina
-          </Button>
-        </Box>
-      </Box>
+          }}
+        >
+          Nueva Nómina
+        </Button>
+      </Flex>
 
-      <Grid container spacing={3}>
+      <SimpleGrid columns={{ base: 1, sm: 2, md: 3 }} spacing={6}>
         {activePayrolls.map(draft => (
-          <Grid item xs={12} sm={6} md={4} key={draft.id}>
-            <Paper sx={{ p: 3, borderRadius: 3, position: 'relative', border: '1px solid', borderColor: 'divider', transition: 'transform 0.2s, box-shadow 0.2s', '&:hover': { transform: 'translateY(-4px)', boxShadow: 4 } }} elevation={0}>
-              <IconButton 
-                color="error"
-                sx={{ position: 'absolute', top: 12, right: 12 }}
-                onClick={() => {
-                  confirmAction('¿Eliminar este borrador? Se perderán todos los avances.', () => {
-                    deleteActivePayroll(draft.id);
-                    showToast('Borrador eliminado', 'info');
-                  });
-                }}
-              >
-                <Trash2 size={18} />
-              </IconButton>
-              
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2.5 }}>
-                <Avatar sx={{ bgcolor: 'primary.light', color: 'primary.main', width: 44, height: 44 }}>
-                  <Calendar size={20} />
-                </Avatar>
-                <Box>
-                  <Typography variant="subtitle1" fontWeight={700} noWrap sx={{ maxWidth: '200px' }}>{draft.title}</Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    Creada: {new Date(draft.createdAt).toLocaleDateString()}
-                  </Typography>
-                </Box>
+          <Box 
+            key={draft.id}
+            p={6} 
+            bg={cardBg} 
+            borderRadius="xl" 
+            border="1px solid" 
+            borderColor={borderColor}
+            position="relative"
+            transition="all 0.3s"
+            _hover={{ transform: 'translateY(-4px)', boxShadow: 'lg' }}
+          >
+            <IconButton 
+              aria-label="Delete draft"
+              icon={<Trash2 size={18} />}
+              colorScheme="red"
+              variant="ghost"
+              position="absolute"
+              top={3}
+              right={3}
+              onClick={() => {
+                confirmAction('¿Eliminar este borrador? Se perderán todos los avances.', () => {
+                  deleteActivePayroll(draft.id);
+                  showToast('Borrador eliminado', 'info');
+                });
+              }}
+            />
+            
+            <Flex align="center" gap={4} mb={5}>
+              <Center w="44px" h="44px" borderRadius="full" bg="brand.50" color="brand.500">
+                <Calendar size={20} />
+              </Center>
+              <Box>
+                <Heading size="sm" fontWeight={700} maxW="200px" isTruncated>{draft.title}</Heading>
+                <Text fontSize="xs" color="gray.500">
+                  Creada: {new Date(draft.createdAt).toLocaleDateString()}
+                </Text>
               </Box>
+            </Flex>
 
-              <Box sx={{ mb: 3 }}>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                  Empleados: <Typography component="span" variant="body2" fontWeight={700} color="primary.main">{draft.employees.length}</Typography>
-                </Typography>
-                <Box>
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>Empresas:</Typography>
-                  {draft.companies.length === 0 ? (
-                    <Chip label="Todas" size="small" />
-                  ) : (
-                    <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
-                      {draft.companies.map(c => <Chip key={c} label={c} size="small" variant="outlined" />)}
-                    </Box>
-                  )}
-                </Box>
+            <Box mb={6}>
+              <Text fontSize="sm" color="gray.500" mb={2}>
+                Empleados: <Text as="span" fontWeight={700} color="brand.500">{draft.employees.length}</Text>
+              </Text>
+              <Box>
+                <Text fontSize="sm" color="gray.500" mb={1}>Empresas:</Text>
+                {draft.companies.length === 0 ? (
+                  <Badge size="sm">Todas</Badge>
+                ) : (
+                  <Flex gap={1} wrap="wrap">
+                    {draft.companies.map(c => <Badge key={c} colorScheme="brand" variant="subtle">{c}</Badge>)}
+                  </Flex>
+                )}
               </Box>
+            </Box>
 
-              <Button variant="outlined" fullWidth endIcon={<ChevronRight size={16} />} onClick={() => onSelectDraft(draft.id)} sx={{ justifyContent: 'space-between', borderRadius: 2 }}>
-                Continuar Editando
-              </Button>
-            </Paper>
-          </Grid>
+            <Button 
+              variant="outline" 
+              w="100%" 
+              justifyContent="space-between" 
+              rightIcon={<ChevronRight size={16} />} 
+              onClick={() => onSelectDraft(draft.id)} 
+              borderRadius="lg"
+            >
+              Continuar Editando
+            </Button>
+          </Box>
         ))}
 
         {activePayrolls.length === 0 && (
-          <Grid item xs={12}>
-            <Paper sx={{ p: 6, textAlign: 'center', borderRadius: 3, border: '1px dashed', borderColor: 'divider', bgcolor: 'background.default' }} elevation={0}>
-              <Typography variant="body1" color="text.secondary">
-                No hay nóminas en progreso. Crea una nueva para comenzar.
-              </Typography>
-            </Paper>
-          </Grid>
-        )}
-      </Grid>
-
-      <Dialog open={showModal} onClose={() => setShowModal(false)} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
-        <DialogTitle sx={{ fontWeight: 800 }}>Crear Nuevo Borrador</DialogTitle>
-        <DialogContent dividers>
-          <TextField
-            autoFocus
-            margin="dense"
-            label="Título del Periodo"
-            placeholder="Ej: Primera Quincena Febrero 2026"
-            fullWidth
-            variant="outlined"
-            value={title}
-            onChange={e => setTitle(e.target.value)}
-            sx={{ mb: 3 }}
-          />
-          <TextField
-            select
-            margin="dense"
-            label="Empresa"
-            fullWidth
-            variant="outlined"
-            value={selectedCompany}
-            onChange={e => setSelectedCompany(e.target.value)}
+          <Box 
+            gridColumn="1 / -1" 
+            p={10} 
+            textAlign="center" 
+            borderRadius="xl" 
+            border="2px dashed" 
+            borderColor={borderColor}
+            bg={useColorModeValue('gray.50', 'whiteAlpha.50')}
           >
-            <MenuItem value="">Seleccione una empresa...</MenuItem>
-            {companies.map(c => (
-              <MenuItem key={c.id} value={c.nombre_comercial || c.nit}>{c.nombre_comercial || c.nit}</MenuItem>
-            ))}
-          </TextField>
-        </DialogContent>
-        <DialogActions sx={{ p: 2, px: 3 }}>
-          <Button onClick={() => setShowModal(false)} color="inherit">Cancelar</Button>
-          <Button onClick={handleCreate} variant="contained" disabled={!title.trim() || !selectedCompany} sx={{ borderRadius: 2 }}>
-            Generar Borrador
-          </Button>
-        </DialogActions>
-      </Dialog>
+            <Text color="gray.500">
+              No hay nóminas en progreso. Crea una nueva para comenzar.
+            </Text>
+          </Box>
+        )}
+      </SimpleGrid>
+
+      <Modal isOpen={showModal} onClose={() => setShowModal(false)} size="md">
+        <ModalOverlay />
+        <ModalContent borderRadius="xl">
+          <ModalHeader fontWeight={800}>Crear Nuevo Borrador</ModalHeader>
+          <ModalCloseButton />
+          <ModalBody pb={6}>
+            <VStack spacing={4}>
+              <FormControl>
+                <FormLabel>Título del Periodo</FormLabel>
+                <Input
+                  autoFocus
+                  placeholder="Ej: Primera Quincena Febrero 2026"
+                  value={title}
+                  onChange={e => setTitle(e.target.value)}
+                />
+              </FormControl>
+              <FormControl>
+                <FormLabel>Empresa</FormLabel>
+                <Select
+                  value={selectedCompany}
+                  onChange={e => setSelectedCompany(e.target.value)}
+                >
+                  <option value="">Seleccione una empresa...</option>
+                  {companies.map(c => (
+                    <option key={c.id} value={c.nombre_comercial || c.nit}>{c.nombre_comercial || c.nit}</option>
+                  ))}
+                </Select>
+              </FormControl>
+            </VStack>
+          </ModalBody>
+          <ModalFooter borderTop="1px solid" borderColor={borderColor}>
+            <Button variant="ghost" mr={3} onClick={() => setShowModal(false)}>Cancelar</Button>
+            <Button colorScheme="brand" onClick={handleCreate} isDisabled={!title.trim() || !selectedCompany}>
+              Generar Borrador
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
     </Box>
   );
 }
@@ -177,8 +216,10 @@ function PayrollEditor({ draftId, onBack }) {
   const draft = activePayrolls.find(p => p.id === draftId);
   const data = draft?.employees || [];
 
-  const [tab, setTab] = useState('income');
+  const [tabIndex, setTabIndex] = useState(0);
   const [editingCell, setEditingCell] = useState(null); // { id, field, type }
+
+  const tab = TABS[tabIndex].id;
 
   const handleChange = (id, section, field, value) => {
     const newData = data.map(e => {
@@ -225,60 +266,77 @@ function PayrollEditor({ draftId, onBack }) {
     return { grossTotal, dedTotal, patronalTotal, netTotal: grossTotal - dedTotal };
   }, [data]);
 
+  const borderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
+
   if (!draft) return null;
 
   return (
-    <Box sx={{ p: { xs: 2, md: 4 } }}>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4, flexWrap: 'wrap', gap: 2 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-          <IconButton onClick={onBack} title="Volver a Borradores">
-            <ArrowLeft size={24} />
-          </IconButton>
+    <Box p={{ base: 4, md: 6 }}>
+      <Flex justify="space-between" align="center" mb={6} wrap="wrap" gap={4}>
+        <Flex align="center" gap={4}>
+          <IconButton aria-label="Back" icon={<ArrowLeft size={24} />} onClick={onBack} variant="ghost" />
           <Box>
-            <Typography variant="h5" fontWeight={800} sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-              {draft.title}
-              <Chip label="Borrador" color="warning" size="small" sx={{ fontWeight: 700 }} />
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
+            <Flex align="center" gap={3}>
+              <Heading size="md" fontWeight={800}>{draft.title}</Heading>
+              <Badge colorScheme="orange" variant="subtle" fontWeight={700}>Borrador</Badge>
+            </Flex>
+            <Text fontSize="sm" color="gray.500">
               {data.length} empleados en esta nómina
-            </Typography>
+            </Text>
           </Box>
-        </Box>
-        <Box sx={{ display: 'flex', gap: 1 }}>
-          <Button variant="outlined" color="inherit" startIcon={<Download size={16} />} onClick={() => showToast('Función en desarrollo', 'info')} sx={{ borderRadius: 2 }}>
+        </Flex>
+        <Flex gap={2}>
+          <Button variant="outline" leftIcon={<Download size={16} />} onClick={() => showToast('Función en desarrollo', 'info')}>
             Excel
           </Button>
-          <Button variant="outlined" color="inherit" startIcon={<FileText size={16} />} onClick={() => showToast('Función en desarrollo', 'info')} sx={{ borderRadius: 2 }}>
+          <Button variant="outline" leftIcon={<FileText size={16} />} onClick={() => showToast('Función en desarrollo', 'info')}>
             PDF
           </Button>
-          <Button variant="contained" color="primary" startIcon={<Check size={16} />} onClick={handleClose} sx={{ borderRadius: 2 }}>
+          <Button colorScheme="brand" leftIcon={<Check size={16} />} onClick={handleClose}>
             Cerrar Nómina
           </Button>
-        </Box>
-      </Box>
+        </Flex>
+      </Flex>
 
       {/* Summary strip */}
-      <Paper sx={{ p: 3, mb: 4, borderRadius: 3, border: '1px solid', borderColor: 'divider', display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }} elevation={0}>
+      <Flex 
+        p={6} 
+        mb={6} 
+        borderRadius="xl" 
+        border="1px solid" 
+        borderColor={borderColor} 
+        gap={8} 
+        wrap="wrap" 
+        align="center"
+        bg={useColorModeValue('white', 'gray.800')}
+      >
         <SummaryStat label="Costo Bruto Total" value={formatQ(totals.grossTotal)} />
-        <Divider orientation="vertical" flexItem />
-        <SummaryStat label="Deducciones Totales" value={formatQ(totals.dedTotal)} color="error.main" />
-        <Divider orientation="vertical" flexItem />
-        <SummaryStat label="Cuota Patronal Estimada" value={formatQ(totals.patronalTotal)} color="warning.main" />
-        <Divider orientation="vertical" flexItem />
-        <SummaryStat label="Neto a Pagar" value={formatQ(totals.netTotal)} color="primary.main" large />
-      </Paper>
+        <Divider orientation="vertical" h="40px" />
+        <SummaryStat label="Deducciones Totales" value={formatQ(totals.dedTotal)} color="red.500" />
+        <Divider orientation="vertical" h="40px" />
+        <SummaryStat label="Cuota Patronal Estimada" value={formatQ(totals.patronalTotal)} color="orange.400" />
+        <Divider orientation="vertical" h="40px" />
+        <SummaryStat label="Neto a Pagar" value={formatQ(totals.netTotal)} color="brand.500" large />
+      </Flex>
 
       {/* Tabs */}
-      <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
-        <Tabs value={tab} onChange={(e, v) => setTab(v)} variant="scrollable" scrollButtons="auto">
-          {TABS.map(t => (
-            <Tab key={t.id} value={t.id} label={<Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}><t.icon size={16} />{t.label}</Box>} sx={{ fontWeight: 600, textTransform: 'none', fontSize: '0.95rem' }} />
-          ))}
+      <Box mb={6}>
+        <Tabs index={tabIndex} onChange={setTabIndex} colorScheme="brand">
+          <TabList borderBottomColor={borderColor}>
+            {TABS.map(t => (
+              <Tab key={t.id} fontWeight={600}>
+                <Flex align="center" gap={2}>
+                  <t.icon size={16} />
+                  {t.label}
+                </Flex>
+              </Tab>
+            ))}
+          </TabList>
         </Tabs>
       </Box>
 
       {/* Tab content */}
-      <Box sx={{ animation: 'fadeIn 0.3s' }}>
+      <Box animation="fadeIn 0.3s ease">
         {tab === 'income' && <IncomeTab data={data} onChange={handleChange} editingCell={editingCell} setEditingCell={setEditingCell} />}
         {tab === 'deductions' && <DeductionsTab data={data} onChange={handleChange} editingCell={editingCell} setEditingCell={setEditingCell} />}
         {tab === 'summary' && <SummaryTab data={data} bonuses={bonuses} />}
@@ -289,23 +347,25 @@ function PayrollEditor({ draftId, onBack }) {
 }
 
 function IncomeTab({ data, onChange, editingCell, setEditingCell }) {
+  const borderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
+  
   return (
-    <TableContainer component={Paper} elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 3 }}>
-      <Table sx={{ minWidth: 1000 }} size="small">
-        <TableHead sx={{ bgcolor: 'background.default' }}>
-          <TableRow>
-            <TableCell sx={{ fontWeight: 700 }}>Empleado</TableCell>
-            <TableCell sx={{ fontWeight: 700 }}>Días Lab.</TableCell>
-            <TableCell sx={{ fontWeight: 700 }}>H.E. Simples (Cant)</TableCell>
-            <TableCell sx={{ fontWeight: 700 }}>H.E. Simples (Q)</TableCell>
-            <TableCell sx={{ fontWeight: 700 }}>H.E. Dobles (Cant)</TableCell>
-            <TableCell sx={{ fontWeight: 700 }}>H.E. Dobles (Q)</TableCell>
-            <TableCell sx={{ fontWeight: 700 }}>Comisiones</TableCell>
-            <TableCell sx={{ fontWeight: 700 }}>Otros Ingresos</TableCell>
-            <TableCell sx={{ fontWeight: 700 }} align="right">Total Bruto</TableCell>
-          </TableRow>
-        </TableHead>
-        <TableBody>
+    <Box border="1px solid" borderColor={borderColor} borderRadius="xl" overflowX="auto" bg={useColorModeValue('white', 'gray.800')}>
+      <Table variant="modern" size="sm">
+        <Thead>
+          <Tr>
+            <Th>Empleado</Th>
+            <Th>Días Lab.</Th>
+            <Th>H.E. Simples (Cant)</Th>
+            <Th>H.E. Simples (Q)</Th>
+            <Th>H.E. Dobles (Cant)</Th>
+            <Th>H.E. Dobles (Q)</Th>
+            <Th>Comisiones</Th>
+            <Th>Otros Ingresos</Th>
+            <Th isNumeric>Total Bruto</Th>
+          </Tr>
+        </Thead>
+        <Tbody>
           {data.map(e => {
             const baseFactor = (e.days || 30) / 30;
             const sueldoOrd = Number(e.sueldo_ordinario) || 0;
@@ -314,15 +374,13 @@ function IncomeTab({ data, onChange, editingCell, setEditingCell }) {
             const gross = (sueldoOrd * baseFactor) + (bonInc * baseFactor) + extrasVal;
             
             return (
-              <TableRow key={e.id} hover>
-                <TableCell>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                    <Avatar sx={{ width: 28, height: 28, fontSize: '0.75rem', fontWeight: 700, bgcolor: 'background.default', color: 'text.primary', border: '1px solid', borderColor: 'divider' }}>
-                      {(e.nombres?.[0] || '') + (e.apellidos?.[0] || '')}
-                    </Avatar>
-                    <Typography variant="body2" fontWeight={600} color="primary.main">{e.nombres} {e.apellidos}</Typography>
-                  </Box>
-                </TableCell>
+              <Tr key={e.id}>
+                <Td>
+                  <Flex align="center" gap={3}>
+                    <Avatar size="sm" name={`${e.nombres} ${e.apellidos}`} />
+                    <Text fontSize="sm" fontWeight={600} color="brand.500">{e.nombres} {e.apellidos}</Text>
+                  </Flex>
+                </Td>
                 <EditableCell id={e.id} field="days" section="root" value={e.days} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={70} />
                 <EditableCell id={e.id} field="simplesQty" section="extras" value={e.extras?.simplesQty || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={70} />
                 <EditableCell id={e.id} field="simplesVal" section="extras" value={e.extras?.simplesVal || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={90} isMoney />
@@ -330,31 +388,33 @@ function IncomeTab({ data, onChange, editingCell, setEditingCell }) {
                 <EditableCell id={e.id} field="doblesVal" section="extras" value={e.extras?.doblesVal || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={90} isMoney />
                 <EditableCell id={e.id} field="comisiones" section="extras" value={e.extras?.comisiones || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={100} isMoney />
                 <EditableCell id={e.id} field="otrosIngresos" section="extras" value={e.extras?.otrosIngresos || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={100} isMoney />
-                <TableCell align="right">
-                  <Typography variant="body2" fontFamily="monospace" fontWeight={700} color="secondary.main">{formatQ(gross)}</Typography>
-                </TableCell>
-              </TableRow>
+                <Td isNumeric>
+                  <Text fontSize="sm" fontFamily="mono" fontWeight={700} color="gold.500">{formatQ(gross)}</Text>
+                </Td>
+              </Tr>
             );
           })}
-        </TableBody>
+        </Tbody>
       </Table>
-    </TableContainer>
+    </Box>
   );
 }
 
 function DeductionsTab({ data, onChange, editingCell, setEditingCell }) {
+  const borderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
+
   return (
-    <TableContainer component={Paper} elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 3 }}>
-      <Table sx={{ minWidth: 1000 }} size="small">
-        <TableHead sx={{ bgcolor: 'background.default' }}>
-          <TableRow>
-            <TableCell sx={{ fontWeight: 700 }}>Empleado</TableCell>
-            <TableCell sx={{ fontWeight: 700 }}>IGSS (4.83%)</TableCell>
-            {Object.keys(DEDUCTION_LABELS).map(k => <TableCell key={k} sx={{ fontWeight: 700 }}>{DEDUCTION_LABELS[k]}</TableCell>)}
-            <TableCell sx={{ fontWeight: 700 }} align="right">Total Deducciones</TableCell>
-          </TableRow>
-        </TableHead>
-        <TableBody>
+    <Box border="1px solid" borderColor={borderColor} borderRadius="xl" overflowX="auto" bg={useColorModeValue('white', 'gray.800')}>
+      <Table variant="modern" size="sm">
+        <Thead>
+          <Tr>
+            <Th>Empleado</Th>
+            <Th>IGSS (4.83%)</Th>
+            {Object.keys(DEDUCTION_LABELS).map(k => <Th key={k}>{DEDUCTION_LABELS[k]}</Th>)}
+            <Th isNumeric>Total Deducciones</Th>
+          </Tr>
+        </Thead>
+        <Tbody>
           {data.map(e => {
             const baseFactor = (e.days || 30) / 30;
             const sueldoOrd = Number(e.sueldo_ordinario) || 0;
@@ -363,54 +423,55 @@ function DeductionsTab({ data, onChange, editingCell, setEditingCell }) {
             const totalDed = customDed + igssLaboral;
             
             return (
-              <TableRow key={e.id} hover>
-                <TableCell>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                    <Avatar sx={{ width: 28, height: 28, fontSize: '0.75rem', fontWeight: 700, bgcolor: 'background.default', color: 'text.primary', border: '1px solid', borderColor: 'divider' }}>
-                      {(e.nombres?.[0] || '') + (e.apellidos?.[0] || '')}
-                    </Avatar>
-                    <Typography variant="body2" fontWeight={600} color="primary.main">{e.nombres} {e.apellidos}</Typography>
-                  </Box>
-                </TableCell>
-                <TableCell sx={{ color: 'text.secondary', fontFamily: 'monospace' }} title="Calculado automáticamente (4.83% s/ base proporc.)">{formatQ(igssLaboral)}</TableCell>
+              <Tr key={e.id}>
+                <Td>
+                  <Flex align="center" gap={3}>
+                    <Avatar size="sm" name={`${e.nombres} ${e.apellidos}`} />
+                    <Text fontSize="sm" fontWeight={600} color="brand.500">{e.nombres} {e.apellidos}</Text>
+                  </Flex>
+                </Td>
+                <Td color="gray.500" fontFamily="mono" title="Calculado automáticamente (4.83% s/ base proporc.)">{formatQ(igssLaboral)}</Td>
                 {Object.keys(DEDUCTION_LABELS).map(k => (
                   <EditableCell key={k} id={e.id} field={k} section="deductions" value={e.deductions?.[k] || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
                 ))}
-                <TableCell align="right">
-                  <Typography variant="body2" fontFamily="monospace" fontWeight={700} color="error.main">{formatQ(totalDed)}</Typography>
-                </TableCell>
-              </TableRow>
+                <Td isNumeric>
+                  <Text fontSize="sm" fontFamily="mono" fontWeight={700} color="red.500">{formatQ(totalDed)}</Text>
+                </Td>
+              </Tr>
             );
           })}
-        </TableBody>
+        </Tbody>
       </Table>
-    </TableContainer>
+    </Box>
   );
 }
 
 function SummaryTab({ data, bonuses }) {
+  const borderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
+  const hoverBg = useColorModeValue('gray.50', 'whiteAlpha.50');
+
   return (
-    <TableContainer component={Paper} elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 3 }}>
-      <Table sx={{ minWidth: 1200 }} size="small">
-        <TableHead sx={{ bgcolor: 'background.default' }}>
-          <TableRow>
-            <TableCell sx={{ minWidth: 200, fontWeight: 700 }}>Empleado</TableCell>
-            <TableCell sx={{ fontWeight: 700 }}>Empresas</TableCell>
-            <TableCell sx={{ fontWeight: 700 }}>Salario</TableCell>
-            <TableCell sx={{ fontWeight: 700 }}>Bono Ley</TableCell>
-            <TableCell sx={{ fontWeight: 700 }}>H. Extras</TableCell>
+    <Box border="1px solid" borderColor={borderColor} borderRadius="xl" overflowX="auto" bg={useColorModeValue('white', 'gray.800')}>
+      <Table variant="modern" size="sm">
+        <Thead>
+          <Tr>
+            <Th minW="200px">Empleado</Th>
+            <Th>Empresas</Th>
+            <Th>Salario</Th>
+            <Th>Bono Ley</Th>
+            <Th>H. Extras</Th>
             {bonuses?.map(b => (
-              <TableCell key={b.id} sx={{ fontWeight: 700 }}>{b.name}</TableCell>
+              <Th key={b.id}>{b.name}</Th>
             ))}
-            <TableCell sx={{ fontWeight: 700 }}>Devengado (Bruto)</TableCell>
-            <TableCell sx={{ fontWeight: 700 }}>IGSS</TableCell>
-            <TableCell sx={{ fontWeight: 700 }}>Otras Ded.</TableCell>
-            <TableCell sx={{ fontWeight: 700 }} align="right">Neto (Líquido)</TableCell>
-            <TableCell sx={{ fontWeight: 700, bgcolor: 'action.hover' }} align="right">1ra Quincena</TableCell>
-            <TableCell sx={{ fontWeight: 700, bgcolor: 'action.hover' }} align="right">2da Quincena</TableCell>
-          </TableRow>
-        </TableHead>
-        <TableBody>
+            <Th>Devengado (Bruto)</Th>
+            <Th>IGSS</Th>
+            <Th>Otras Ded.</Th>
+            <Th isNumeric>Neto (Líquido)</Th>
+            <Th isNumeric bg={hoverBg}>1ra Quincena</Th>
+            <Th isNumeric bg={hoverBg}>2da Quincena</Th>
+          </Tr>
+        </Thead>
+        <Tbody>
           {data.map(e => {
             const baseFactor = (e.days || 30) / 30;
             const sueldoOrd = Number(e.sueldo_ordinario) || 0;
@@ -433,40 +494,40 @@ function SummaryTab({ data, bonuses }) {
             const q2 = net > 0 ? net - q1 : 0;
             
             return (
-              <TableRow key={e.id} hover>
-                <TableCell>
-                  <Typography variant="body2" fontWeight={600} color="primary.main">{e.nombres} {e.apellidos}</Typography>
-                  <Typography variant="caption" color="text.secondary">{e.puesto_laboral || e.departamento_laboral || 'Sin puesto'}</Typography>
-                </TableCell>
-                <TableCell>
-                   <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
-                    {e.empresas?.map(emp => <Chip key={emp.id} label={emp.nombre_comercial} size="small" sx={{ fontSize: '0.65rem' }} />)}
-                   </Box>
-                </TableCell>
-                <TableCell sx={{ fontFamily: 'monospace' }}>{formatQ(baseSalary)}</TableCell>
-                <TableCell sx={{ fontFamily: 'monospace' }}>{formatQ(bonusLey)}</TableCell>
-                <TableCell sx={{ fontFamily: 'monospace', color: extrasTotal > 0 ? 'secondary.main' : 'inherit' }}>{extrasTotal > 0 ? formatQ(extrasTotal) : '—'}</TableCell>
+              <Tr key={e.id}>
+                <Td>
+                  <Text fontSize="sm" fontWeight={600} color="brand.500">{e.nombres} {e.apellidos}</Text>
+                  <Text fontSize="xs" color="gray.500">{e.puesto_laboral || e.departamento_laboral || 'Sin puesto'}</Text>
+                </Td>
+                <Td>
+                   <Flex gap={1} wrap="wrap">
+                    {e.empresas?.map(emp => <Tag key={emp.id} size="sm" variant="subtle">{emp.nombre_comercial}</Tag>)}
+                   </Flex>
+                </Td>
+                <Td fontFamily="mono">{formatQ(baseSalary)}</Td>
+                <Td fontFamily="mono">{formatQ(bonusLey)}</Td>
+                <Td fontFamily="mono" color={extrasTotal > 0 ? 'gold.500' : 'inherit'}>{extrasTotal > 0 ? formatQ(extrasTotal) : '—'}</Td>
                 {bonuses?.map(b => (
-                  <TableCell key={b.id} sx={{ fontFamily: 'monospace', color: 'secondary.main' }}>{formatQ(e.appliedBonuses?.[b.id] || 0)}</TableCell>
+                  <Td key={b.id} fontFamily="mono" color="gold.500">{formatQ(e.appliedBonuses?.[b.id] || 0)}</Td>
                 ))}
-                <TableCell sx={{ fontFamily: 'monospace', fontWeight: 700, color: 'secondary.main' }}>{formatQ(gross)}</TableCell>
-                <TableCell sx={{ fontFamily: 'monospace', color: igssLaboral > 0 ? 'error.main' : 'text.secondary' }}>{igssLaboral > 0 ? `- ${formatQ(igssLaboral)}` : '—'}</TableCell>
-                <TableCell sx={{ fontFamily: 'monospace', color: customDed > 0 ? 'error.main' : 'text.secondary' }}>{customDed > 0 ? `- ${formatQ(customDed)}` : '—'}</TableCell>
-                <TableCell align="right">
-                  <Typography variant="body1" fontFamily="monospace" fontWeight={800} color="primary.main">{formatQ(net)}</Typography>
-                </TableCell>
-                <TableCell align="right" sx={{ bgcolor: 'action.hover' }}>
-                  <Typography variant="body2" fontFamily="monospace" color="primary.main">{formatQ(q1)}</Typography>
-                </TableCell>
-                <TableCell align="right" sx={{ bgcolor: 'action.hover' }}>
-                  <Typography variant="body2" fontFamily="monospace" color="primary.main">{formatQ(q2)}</Typography>
-                </TableCell>
-              </TableRow>
+                <Td fontFamily="mono" fontWeight={700} color="gold.500">{formatQ(gross)}</Td>
+                <Td fontFamily="mono" color={igssLaboral > 0 ? 'red.500' : 'gray.500'}>{igssLaboral > 0 ? `- ${formatQ(igssLaboral)}` : '—'}</Td>
+                <Td fontFamily="mono" color={customDed > 0 ? 'red.500' : 'gray.500'}>{customDed > 0 ? `- ${formatQ(customDed)}` : '—'}</Td>
+                <Td isNumeric>
+                  <Text fontSize="md" fontFamily="mono" fontWeight={800} color="brand.500">{formatQ(net)}</Text>
+                </Td>
+                <Td isNumeric bg={hoverBg}>
+                  <Text fontSize="sm" fontFamily="mono" color="brand.500">{formatQ(q1)}</Text>
+                </Td>
+                <Td isNumeric bg={hoverBg}>
+                  <Text fontSize="sm" fontFamily="mono" color="brand.500">{formatQ(q2)}</Text>
+                </Td>
+              </Tr>
             );
           })}
-        </TableBody>
+        </Tbody>
       </Table>
-    </TableContainer>
+    </Box>
   );
 }
 
@@ -492,86 +553,90 @@ function DistributionTab({ data }) {
   
   const grandTotal = companyTotals.reduce((s, c) => s + c.total, 0);
 
+  const cardBg = useColorModeValue('white', 'gray.800');
+  const borderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
+  const trackBg = useColorModeValue('gray.100', 'whiteAlpha.200');
+  const footerBg = useColorModeValue('gray.50', 'whiteAlpha.50');
+
   return (
     <Box>
-      <Grid container spacing={2} sx={{ mb: 3 }}>
+      <SimpleGrid columns={{ base: 1, sm: 2, md: 3 }} spacing={4} mb={6}>
         {companyTotals.map((c, i) => (
-          <Grid item xs={12} sm={6} md={4} key={c.id}>
-            <Paper sx={{ p: 3, borderRadius: 3, border: '1px solid', borderColor: 'divider' }} elevation={0}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2 }}>
-                <Box sx={{ width: 12, height: 12, borderRadius: '50%', bgcolor: c.color || 'primary.main', boxShadow: `0 0 10px ${c.color || '#3B82F6'}50` }} />
-                <Typography variant="subtitle2" fontWeight={700}>{c.nombre_comercial || c.nit}</Typography>
-              </Box>
-              <Typography variant="h5" fontFamily="monospace" fontWeight={800} color="secondary.main" gutterBottom>
-                {formatQ(c.total)}
-              </Typography>
-              <Typography variant="caption" color="text.secondary" display="block" gutterBottom>
-                {grandTotal > 0 ? ((c.total / grandTotal) * 100).toFixed(1) : 0}% del costo total
-              </Typography>
-              <Box sx={{ height: 6, borderRadius: 3, bgcolor: 'action.hover', overflow: 'hidden', mt: 1 }}>
-                <Box sx={{ height: '100%', bgcolor: c.color || 'primary.main', width: `${grandTotal > 0 ? (c.total / grandTotal) * 100 : 0}%` }} />
-              </Box>
-            </Paper>
-          </Grid>
+          <Box key={c.id} p={6} bg={cardBg} borderRadius="xl" border="1px solid" borderColor={borderColor}>
+            <Flex align="center" gap={3} mb={3}>
+              <Box w="12px" h="12px" borderRadius="full" bg={c.color || 'brand.500'} boxShadow={`0 0 10px ${c.color || 'var(--chakra-colors-brand-500)'}`} />
+              <Heading size="sm" fontWeight={700}>{c.nombre_comercial || c.nit}</Heading>
+            </Flex>
+            <Text fontSize="2xl" fontFamily="mono" fontWeight={800} color="gold.500" mb={1}>
+              {formatQ(c.total)}
+            </Text>
+            <Text fontSize="xs" color="gray.500" mb={3}>
+              {grandTotal > 0 ? ((c.total / grandTotal) * 100).toFixed(1) : 0}% del costo total
+            </Text>
+            <Box h="6px" borderRadius="full" bg={trackBg} overflow="hidden">
+              <Box h="100%" bg={c.color || 'brand.500'} w={`${grandTotal > 0 ? (c.total / grandTotal) * 100 : 0}%`} />
+            </Box>
+          </Box>
         ))}
-      </Grid>
+      </SimpleGrid>
 
-      <TableContainer component={Paper} elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 3 }}>
-        <Table size="small">
-          <TableHead sx={{ bgcolor: 'background.default' }}>
-            <TableRow>
-              <TableCell sx={{ fontWeight: 700 }}>Empresa</TableCell>
-              <TableCell sx={{ fontWeight: 700 }}>Salarios Ordinarios</TableCell>
-              <TableCell sx={{ fontWeight: 700 }}>Bonos Ley</TableCell>
-              <TableCell sx={{ fontWeight: 700 }}>H. Extras y Otros</TableCell>
-              <TableCell sx={{ fontWeight: 700 }}>Cuota Patronal Estimada</TableCell>
-              <TableCell sx={{ fontWeight: 700 }} align="right">Costo Total Asignado</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
+      <Box border="1px solid" borderColor={borderColor} borderRadius="xl" overflowX="auto" bg={cardBg}>
+        <Table variant="modern" size="sm">
+          <Thead>
+            <Tr>
+              <Th>Empresa</Th>
+              <Th>Salarios Ordinarios</Th>
+              <Th>Bonos Ley</Th>
+              <Th>H. Extras y Otros</Th>
+              <Th>Cuota Patronal Estimada</Th>
+              <Th isNumeric>Costo Total Asignado</Th>
+            </Tr>
+          </Thead>
+          <Tbody>
             {companyTotals.map(c => (
-              <TableRow key={c.id} hover>
-                <TableCell>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: c.color || 'primary.main' }} />
-                    <Typography variant="body2" fontWeight={600} color="primary.main">{c.nombre_comercial || c.nit}</Typography>
-                  </Box>
-                </TableCell>
-                <TableCell sx={{ fontFamily: 'monospace' }}>{formatQ(c.salary)}</TableCell>
-                <TableCell sx={{ fontFamily: 'monospace' }}>{formatQ(c.bonus)}</TableCell>
-                <TableCell sx={{ fontFamily: 'monospace' }}>{formatQ(c.extras)}</TableCell>
-                <TableCell sx={{ fontFamily: 'monospace', color: 'warning.main' }}>{formatQ(c.patronal)}</TableCell>
-                <TableCell align="right">
-                  <Typography variant="body2" fontFamily="monospace" fontWeight={700} color="secondary.main">{formatQ(c.total)}</Typography>
-                </TableCell>
-              </TableRow>
+              <Tr key={c.id}>
+                <Td>
+                  <Flex align="center" gap={2}>
+                    <Box w="10px" h="10px" borderRadius="full" bg={c.color || 'brand.500'} />
+                    <Text fontSize="sm" fontWeight={600} color="brand.500">{c.nombre_comercial || c.nit}</Text>
+                  </Flex>
+                </Td>
+                <Td fontFamily="mono">{formatQ(c.salary)}</Td>
+                <Td fontFamily="mono">{formatQ(c.bonus)}</Td>
+                <Td fontFamily="mono">{formatQ(c.extras)}</Td>
+                <Td fontFamily="mono" color="orange.400">{formatQ(c.patronal)}</Td>
+                <Td isNumeric>
+                  <Text fontSize="sm" fontFamily="mono" fontWeight={700} color="gold.500">{formatQ(c.total)}</Text>
+                </Td>
+              </Tr>
             ))}
-            <TableRow sx={{ bgcolor: 'action.hover' }}>
-              <TableCell sx={{ fontWeight: 800, color: 'primary.main' }}>GRAN TOTAL</TableCell>
-              <TableCell sx={{ fontFamily: 'monospace', fontWeight: 700 }}>{formatQ(companyTotals.reduce((s, c) => s + c.salary, 0))}</TableCell>
-              <TableCell sx={{ fontFamily: 'monospace', fontWeight: 700 }}>{formatQ(companyTotals.reduce((s, c) => s + c.bonus, 0))}</TableCell>
-              <TableCell sx={{ fontFamily: 'monospace', fontWeight: 700 }}>{formatQ(companyTotals.reduce((s, c) => s + c.extras, 0))}</TableCell>
-              <TableCell sx={{ fontFamily: 'monospace', fontWeight: 700, color: 'warning.main' }}>{formatQ(companyTotals.reduce((s, c) => s + c.patronal, 0))}</TableCell>
-              <TableCell align="right">
-                <Typography variant="body1" fontFamily="monospace" fontWeight={800} color="primary.main">{formatQ(grandTotal)}</Typography>
-              </TableCell>
-            </TableRow>
-          </TableBody>
+            <Tr bg={footerBg}>
+              <Td fontWeight={800} color="brand.500">GRAN TOTAL</Td>
+              <Td fontFamily="mono" fontWeight={700}>{formatQ(companyTotals.reduce((s, c) => s + c.salary, 0))}</Td>
+              <Td fontFamily="mono" fontWeight={700}>{formatQ(companyTotals.reduce((s, c) => s + c.bonus, 0))}</Td>
+              <Td fontFamily="mono" fontWeight={700}>{formatQ(companyTotals.reduce((s, c) => s + c.extras, 0))}</Td>
+              <Td fontFamily="mono" fontWeight={700} color="orange.400">{formatQ(companyTotals.reduce((s, c) => s + c.patronal, 0))}</Td>
+              <Td isNumeric>
+                <Text fontSize="md" fontFamily="mono" fontWeight={800} color="brand.500">{formatQ(grandTotal)}</Text>
+              </Td>
+            </Tr>
+          </Tbody>
         </Table>
-      </TableContainer>
+      </Box>
     </Box>
   );
 }
 
 function EditableCell({ id, field, section, value, onChange, editing, setEditing, width, isMoney, isDanger }) {
   const isEditing = editing?.id === id && editing?.field === field;
+  const hoverBg = useColorModeValue('gray.50', 'whiteAlpha.50');
 
   if (isEditing) {
     return (
-      <TableCell sx={{ p: 0.5 }}>
-        <TextField
+      <Td p={1}>
+        <Input
           type="number"
-          size="small"
+          size="sm"
           autoFocus
           defaultValue={value}
           onBlur={(e) => {
@@ -585,49 +650,46 @@ function EditableCell({ id, field, section, value, onChange, editing, setEditing
             }
             if (e.key === 'Escape') setEditing(null);
           }}
-          sx={{ width, minWidth: 60 }}
-          InputProps={{ sx: { fontSize: '0.8rem', height: 32 } }}
+          w={`${width}px`}
+          minW="60px"
+          fontSize="sm"
+          h="32px"
         />
-      </TableCell>
+      </Td>
     );
   }
 
   return (
-    <TableCell
+    <Td
       onClick={() => setEditing({ id, field })}
-      sx={{ 
-        cursor: 'pointer', 
-        '&:hover': { bgcolor: 'action.hover' },
-        transition: 'background-color 0.2s',
-        position: 'relative'
-      }}
+      cursor="pointer"
+      transition="background-color 0.2s"
+      _hover={{ bg: hoverBg }}
       title="Haz clic para editar"
     >
-      <Typography 
-        variant="body2" 
+      <Text 
+        fontSize="sm" 
         fontFamily="monospace"
-        sx={{
-          color: (isMoney && value > 0 && !isDanger) ? 'secondary.main' : (isDanger && value > 0) ? 'error.main' : 'inherit',
-          display: 'inline-block',
-          minWidth: 40
-        }}
+        color={(isMoney && value > 0 && !isDanger) ? 'gold.500' : (isDanger && value > 0) ? 'red.500' : 'inherit'}
+        display="inline-block"
+        minW="40px"
       >
         {isMoney && value > 0 ? formatQ(value) : value}
-        {isMoney && value === 0 && <Typography component="span" color="text.tertiary">—</Typography>}
-      </Typography>
-    </TableCell>
+        {isMoney && value === 0 && <Text as="span" color="gray.500">—</Text>}
+      </Text>
+    </Td>
   );
 }
 
 function SummaryStat({ label, value, color, large }) {
   return (
     <Box>
-      <Typography variant="caption" fontWeight={600} color="text.secondary" sx={{ textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', mb: 0.5 }}>
+      <Text fontSize="xs" fontWeight={600} color="gray.500" textTransform="uppercase" letterSpacing="0.05em" mb={1}>
         {label}
-      </Typography>
-      <Typography variant="h6" fontFamily="monospace" fontWeight={800} sx={{ fontSize: large ? '1.5rem' : '1.25rem', color: color || 'secondary.main', letterSpacing: '-0.02em' }}>
+      </Text>
+      <Text fontFamily="mono" fontWeight={800} fontSize={large ? '2xl' : 'xl'} color={color || 'gold.500'} letterSpacing="-0.02em">
         {value}
-      </Typography>
+      </Text>
     </Box>
   );
 }
