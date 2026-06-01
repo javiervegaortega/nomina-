@@ -1,7 +1,9 @@
 import React, { useContext, useMemo, useState } from 'react';
 import { DataContext } from '../context/DataContext';
 import { AppContext } from '../App';
-import { History, Calendar, Trash2, Eye, Download, FileText, CheckCircle2, ArrowLeft, Building2, X } from 'lucide-react';
+import usePagination from '../hooks/usePagination';
+import Pagination from '../components/Pagination';
+import { History, Calendar, Trash2, Eye, Download, FileText, CheckCircle2, ArrowLeft, Building2, X, Search } from 'lucide-react';
 import { formatQ, CUOTA_LABORAL_RATE, CUOTA_PATRONAL_RATE } from '../data/mockData';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
@@ -11,6 +13,7 @@ export default function PayrollHistory() {
   const { payrollHistory, deletePayroll, bonuses } = useContext(DataContext);
   const { confirmAction, showToast } = useContext(AppContext);
   const [selectedGroup, setSelectedGroup] = useState(null);
+  const [searchTerm, setSearchTerm] = useState('');
 
   // Group by title
   const groupedHistory = useMemo(() => {
@@ -53,6 +56,12 @@ export default function PayrollHistory() {
     return Object.values(groups).sort((a,b) => new Date(b.date) - new Date(a.date));
   }, [payrollHistory]);
 
+  const filteredHistory = groupedHistory.filter(g => 
+    g.title.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const pagination = usePagination(filteredHistory, 10);
+
   const handleDeleteGroup = (title, records) => {
     confirmAction(`¿Seguro que desea eliminar el registro consolidado "${title}"? Se borrarán ${records.length} nómina(s) de las empresas involucradas.`, () => {
       records.forEach(r => deletePayroll(r.id));
@@ -78,11 +87,22 @@ export default function PayrollHistory() {
             <p>Registro inmutable de procesos de nómina cerrados y agrupados por periodo</p>
           </div>
         </div>
+        <div style={{ position: 'relative' }}>
+          <Search size={18} style={{ position: 'absolute', left: '10px', top: '10px', color: 'var(--text-tertiary)' }} />
+          <input 
+            type="text" 
+            placeholder="Buscar por título..." 
+            className="input" 
+            style={{ paddingLeft: '35px' }}
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+        </div>
       </div>
 
       <div className="page-content">
         <div style={{ maxWidth: '800px', margin: '0 auto', position: 'relative' }}>
-          {groupedHistory.length > 0 && (
+          {pagination.paginatedData.length > 0 && (
             <div style={{ 
               position: 'absolute', top: '20px', bottom: '20px', left: '23px', 
               width: '2px', background: 'linear-gradient(to bottom, var(--accent) 0%, var(--border) 100%)',
@@ -91,7 +111,7 @@ export default function PayrollHistory() {
           )}
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-            {groupedHistory.map((group, i) => (
+            {pagination.paginatedData.map((group, i) => (
               <div key={group.title} className="animate-slide-right" style={{ 
                 animationDelay: `${i * 0.1}s`,
                 display: 'flex', gap: '1.5rem', position: 'relative', zIndex: 1
@@ -153,7 +173,13 @@ export default function PayrollHistory() {
               </div>
             ))}
 
-            {groupedHistory.length === 0 && (
+            {pagination.paginatedData.length > 0 && (
+              <div style={{ marginTop: '1rem' }}>
+                <Pagination {...pagination} />
+              </div>
+            )}
+
+            {filteredHistory.length === 0 && (
               <div style={{ textAlign: 'center', padding: '4rem', color: 'var(--text-tertiary)' }}>
                 <History size={48} style={{ margin: '0 auto 1.5rem', opacity: 0.3 }} />
                 <h3 style={{ margin: '0 0 0.5rem 0', color: 'var(--text-primary)' }}>Historial Vacío</h3>

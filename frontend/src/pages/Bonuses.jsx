@@ -1,5 +1,8 @@
 import React, { useState, useContext } from 'react';
 import { DataContext } from '../context/DataContext';
+import { AppContext } from '../App';
+import usePagination from '../hooks/usePagination';
+import Pagination from '../components/Pagination';
 import { Plus, Edit2, Trash2, X, Check, Gift, Users } from 'lucide-react';
 import { formatQ } from '../data/mockData';
 
@@ -9,6 +12,8 @@ export default function Bonuses() {
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState({ name: '', type: 'fijo', assignments: {} });
   
+  const pagination = usePagination(bonuses, 10);
+
   // States for adding a new assignment
   const [selectedEmp, setSelectedEmp] = useState('');
   const [assignAmount, setAssignAmount] = useState('');
@@ -75,7 +80,7 @@ export default function Bonuses() {
 
       <div className="page-content">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))', gap: '1.25rem' }}>
-          {bonuses.map((b, i) => {
+          {pagination.paginatedData.map((b, i) => {
             const assignedCount = Object.keys(b.assignments || {}).length;
             const totalAmount = Object.values(b.assignments || {}).reduce((a, val) => a + val, 0);
 
@@ -129,6 +134,7 @@ export default function Bonuses() {
             </div>
           )}
         </div>
+        {bonuses.length > 0 && <Pagination pagination={pagination} />}
       </div>
 
       {showModal && (

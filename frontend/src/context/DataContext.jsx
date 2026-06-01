@@ -12,7 +12,22 @@ export function DataProvider({ children }) {
 
   const [departments, setDepartments] = useState(() => {
     const saved = localStorage.getItem('nomina-departments');
-    return saved ? JSON.parse(saved) : INITIAL_DEPARTMENTS;
+    return saved ? JSON.parse(saved) : [];
+  });
+
+  const [areas, setAreas] = useState(() => {
+    const saved = localStorage.getItem('nomina-areas');
+    return saved ? JSON.parse(saved) : [];
+  });
+
+  const [divisions, setDivisions] = useState(() => {
+    const saved = localStorage.getItem('nomina-divisions');
+    return saved ? JSON.parse(saved) : [];
+  });
+
+  const [subdivisions, setSubdivisions] = useState(() => {
+    const saved = localStorage.getItem('nomina-subdivisions');
+    return saved ? JSON.parse(saved) : [];
   });
 
   const [employees, setEmployees] = useState([]);
@@ -43,6 +58,18 @@ export function DataProvider({ children }) {
   }, [departments]);
 
   useEffect(() => {
+    localStorage.setItem('nomina-areas', JSON.stringify(areas));
+  }, [areas]);
+
+  useEffect(() => {
+    localStorage.setItem('nomina-divisions', JSON.stringify(divisions));
+  }, [divisions]);
+
+  useEffect(() => {
+    localStorage.setItem('nomina-subdivisions', JSON.stringify(subdivisions));
+  }, [subdivisions]);
+
+  useEffect(() => {
     localStorage.setItem('nomina-bonuses', JSON.stringify(bonuses));
   }, [bonuses]);
 
@@ -58,10 +85,14 @@ export function DataProvider({ children }) {
   useEffect(() => {
     const fetchBackendData = async () => {
       try {
-        const [compRes, empRes, histRes] = await Promise.all([
+        const [compRes, empRes, histRes, deptRes, areaRes, divRes, subdivRes] = await Promise.all([
           fetch('http://localhost:3000/api/companies'),
           fetch('http://localhost:3000/api/employees'),
-          fetch('http://localhost:3000/api/payrolls')
+          fetch('http://localhost:3000/api/payrolls'),
+          fetch('http://localhost:3000/api/departments'),
+          fetch('http://localhost:3000/api/areas'),
+          fetch('http://localhost:3000/api/divisions'),
+          fetch('http://localhost:3000/api/subdivisions')
         ]);
         
         if (compRes.ok) {
@@ -77,6 +108,26 @@ export function DataProvider({ children }) {
         if (histRes.ok) {
           const apiHistory = await histRes.json();
           if (Array.isArray(apiHistory)) setPayrollHistory(apiHistory);
+        }
+
+        if (deptRes.ok) {
+          const apiDepts = await deptRes.json();
+          if (Array.isArray(apiDepts)) setDepartments(apiDepts);
+        }
+
+        if (areaRes.ok) {
+          const apiAreas = await areaRes.json();
+          if (Array.isArray(apiAreas)) setAreas(apiAreas);
+        }
+
+        if (divRes.ok) {
+          const apiDivs = await divRes.json();
+          if (Array.isArray(apiDivs)) setDivisions(apiDivs);
+        }
+
+        if (subdivRes.ok) {
+          const apiSubdivs = await subdivRes.json();
+          if (Array.isArray(apiSubdivs)) setSubdivisions(apiSubdivs);
         }
       } catch (err) {
         console.log('⚠️ Backend no disponible o en desarrollo, usando LocalStorage/MockData');
@@ -139,6 +190,190 @@ export function DataProvider({ children }) {
       }
     } catch (err) {
       setCompanies(companies.filter(c => c.id !== id));
+    }
+  };
+
+  // Departments
+  const addDepartment = async (dept) => {
+    try {
+      const res = await fetch('http://localhost:3000/api/departments', {
+        method: 'POST',
+        headers: getAuthHeader(),
+        body: JSON.stringify(dept)
+      });
+      if (res.ok) {
+        const newD = await res.json();
+        setDepartments([...departments, newD]);
+      }
+    } catch (err) {
+      setDepartments([...departments, { ...dept, id: Date.now() }]);
+    }
+  };
+
+  const updateDepartment = async (id, data) => {
+    try {
+      const res = await fetch(`http://localhost:3000/api/departments/${id}`, {
+        method: 'PUT',
+        headers: getAuthHeader(),
+        body: JSON.stringify(data)
+      });
+      if (res.ok) {
+        setDepartments(departments.map(d => d.id === id ? { ...d, ...data } : d));
+      }
+    } catch (err) {
+      setDepartments(departments.map(d => d.id === id ? { ...d, ...data } : d));
+    }
+  };
+
+  const deleteDepartment = async (id) => {
+    try {
+      const res = await fetch(`http://localhost:3000/api/departments/${id}`, {
+        method: 'DELETE',
+        headers: getAuthHeader()
+      });
+      if (res.ok) {
+        setDepartments(departments.filter(d => d.id !== id));
+      }
+    } catch (err) {
+      setDepartments(departments.filter(d => d.id !== id));
+    }
+  };
+
+  // Areas
+  const addArea = async (area) => {
+    try {
+      const res = await fetch('http://localhost:3000/api/areas', {
+        method: 'POST',
+        headers: getAuthHeader(),
+        body: JSON.stringify(area)
+      });
+      if (res.ok) {
+        const newA = await res.json();
+        setAreas([...areas, newA]);
+      }
+    } catch (err) {
+      setAreas([...areas, { ...area, id: Date.now() }]);
+    }
+  };
+
+  const updateArea = async (id, data) => {
+    try {
+      const res = await fetch(`http://localhost:3000/api/areas/${id}`, {
+        method: 'PUT',
+        headers: getAuthHeader(),
+        body: JSON.stringify(data)
+      });
+      if (res.ok) {
+        setAreas(areas.map(a => a.id === id ? { ...a, ...data } : a));
+      }
+    } catch (err) {
+      setAreas(areas.map(a => a.id === id ? { ...a, ...data } : a));
+    }
+  };
+
+  const deleteArea = async (id) => {
+    try {
+      const res = await fetch(`http://localhost:3000/api/areas/${id}`, {
+        method: 'DELETE',
+        headers: getAuthHeader()
+      });
+      if (res.ok) {
+        setAreas(areas.filter(a => a.id !== id));
+      }
+    } catch (err) {
+      setAreas(areas.filter(a => a.id !== id));
+    }
+  };
+
+  // Divisions
+  const addDivision = async (div) => {
+    try {
+      const res = await fetch('http://localhost:3000/api/divisions', {
+        method: 'POST',
+        headers: getAuthHeader(),
+        body: JSON.stringify(div)
+      });
+      if (res.ok) {
+        const newD = await res.json();
+        setDivisions([...divisions, newD]);
+      }
+    } catch (err) {
+      setDivisions([...divisions, { ...div, id: Date.now() }]);
+    }
+  };
+
+  const updateDivision = async (id, data) => {
+    try {
+      const res = await fetch(`http://localhost:3000/api/divisions/${id}`, {
+        method: 'PUT',
+        headers: getAuthHeader(),
+        body: JSON.stringify(data)
+      });
+      if (res.ok) {
+        setDivisions(divisions.map(d => d.id === id ? { ...d, ...data } : d));
+      }
+    } catch (err) {
+      setDivisions(divisions.map(d => d.id === id ? { ...d, ...data } : d));
+    }
+  };
+
+  const deleteDivision = async (id) => {
+    try {
+      const res = await fetch(`http://localhost:3000/api/divisions/${id}`, {
+        method: 'DELETE',
+        headers: getAuthHeader()
+      });
+      if (res.ok) {
+        setDivisions(divisions.filter(d => d.id !== id));
+      }
+    } catch (err) {
+      setDivisions(divisions.filter(d => d.id !== id));
+    }
+  };
+
+  // Subdivisions
+  const addSubdivision = async (subdiv) => {
+    try {
+      const res = await fetch('http://localhost:3000/api/subdivisions', {
+        method: 'POST',
+        headers: getAuthHeader(),
+        body: JSON.stringify(subdiv)
+      });
+      if (res.ok) {
+        const newSD = await res.json();
+        setSubdivisions([...subdivisions, newSD]);
+      }
+    } catch (err) {
+      setSubdivisions([...subdivisions, { ...subdiv, id: Date.now() }]);
+    }
+  };
+
+  const updateSubdivision = async (id, data) => {
+    try {
+      const res = await fetch(`http://localhost:3000/api/subdivisions/${id}`, {
+        method: 'PUT',
+        headers: getAuthHeader(),
+        body: JSON.stringify(data)
+      });
+      if (res.ok) {
+        setSubdivisions(subdivisions.map(s => s.id === id ? { ...s, ...data } : s));
+      }
+    } catch (err) {
+      setSubdivisions(subdivisions.map(s => s.id === id ? { ...s, ...data } : s));
+    }
+  };
+
+  const deleteSubdivision = async (id) => {
+    try {
+      const res = await fetch(`http://localhost:3000/api/subdivisions/${id}`, {
+        method: 'DELETE',
+        headers: getAuthHeader()
+      });
+      if (res.ok) {
+        setSubdivisions(subdivisions.filter(s => s.id !== id));
+      }
+    } catch (err) {
+      setSubdivisions(subdivisions.filter(s => s.id !== id));
     }
   };
 
@@ -285,8 +520,12 @@ export function DataProvider({ children }) {
 
   return (
     <DataContext.Provider value={{
-      companies, departments, employees, bonuses, payrollHistory,
+      companies, departments, employees, bonuses, payrollHistory, areas, divisions, subdivisions,
       addCompany, updateCompany, deleteCompany,
+      addDepartment, updateDepartment, deleteDepartment,
+      addArea, updateArea, deleteArea,
+      addDivision, updateDivision, deleteDivision,
+      addSubdivision, updateSubdivision, deleteSubdivision,
       addEmployee, updateEmployee, deleteEmployee, setAllEmployees,
       addBonus, updateBonus, deleteBonus,
       activePayrolls, createActivePayroll, updateActivePayroll, deleteActivePayroll, closePayroll,

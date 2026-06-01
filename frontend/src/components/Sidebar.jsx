@@ -3,7 +3,7 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Users, Calculator, History,
   Building2, Gift, Sun, Moon, LogOut, Hexagon,
-  ChevronLeft, ChevronRight
+  ChevronLeft, ChevronRight, Network, Map, Briefcase, Split
 } from 'lucide-react';
 import { AppContext } from '../App';
 import { AuthContext } from '../context/AuthContext';
@@ -43,6 +43,10 @@ export default function Sidebar() {
     { to: '/employees', label: 'Empleados', icon: Users },
     { to: '/payroll', label: 'Nómina', icon: Calculator },
     { to: '/history', label: 'Historial', icon: History },
+    { to: '/departments', label: 'Departamentos', icon: Network },
+    { to: '/areas', label: 'Áreas', icon: Map },
+    { to: '/divisions', label: 'Divisiones', icon: Briefcase },
+    { to: '/subdivisions', label: 'Subdivisiones', icon: Split },
     { to: '/companies', label: 'Empresas', icon: Building2 },
     { to: '/bonuses', label: 'Bonos', icon: Gift },
   ];

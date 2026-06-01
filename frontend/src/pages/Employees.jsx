@@ -3,9 +3,13 @@ import {
   Search, Plus, Edit2, Trash2, X, Eye, ChevronDown,
   UserPlus, Filter, Download, Check, FileText
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { DataContext } from '../context/DataContext';
+import usePagination from '../hooks/usePagination';
+import Pagination from '../components/Pagination';
 import ImportData from '../components/ImportData';
 import EmployeeFormModal from '../components/EmployeeFormModal';
+import EmployeeViewModal from '../components/EmployeeViewModal';
 import { formatQ, calculateMonthlyISR } from '../data/mockData';
 import {
   Box, Flex, Heading, Text, Button, Input, Select,
@@ -30,6 +34,8 @@ export default function Employees() {
   const [search, setSearch] = useState('');
   const [filterDept, setFilterDept] = useState('ALL');
   const [filterStatus, setFilterStatus] = useState('ALL');
+  const [filterDpi, setFilterDpi] = useState('');
+  const [filterIgss, setFilterIgss] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [modalMode, setModalMode] = useState('add'); // add | edit | view
   const [currentEmp, setCurrentEmp] = useState(null);
@@ -57,16 +63,27 @@ export default function Employees() {
 
   const getFullName = (e) => `${e.primer_nombre || ''} ${e.primer_apellido || ''}`.trim() || 'Sin Nombre';
 
-  const filtered = useMemo(() => {
+  const getDist = (emp) => {
+    if (typeof emp.dist === 'string') {
+      try { return JSON.parse(emp.dist); } catch(e) { return {}; }
+    }
+    return emp.dist || {};
+  };
+
+  const filteredEmployees = useMemo(() => {
     return employees.filter(e => {
       const fullName = getFullName(e);
       const matchSearch = fullName.toLowerCase().includes(search.toLowerCase()) ||
                           (e.puesto || '').toLowerCase().includes(search.toLowerCase());
       const matchDept = filterDept === 'ALL' || e.departamento_laboral === filterDept;
       const matchStatus = filterStatus === 'ALL' || e.estado === filterStatus || (filterStatus === 'active' && e.estado === 'Activo');
-      return matchSearch && matchDept && matchStatus;
+      const matchDpi = filterDpi === '' || (e.dpi && e.dpi.includes(filterDpi));
+      const matchIgss = filterIgss === '' || (e.no_igss && e.no_igss.includes(filterIgss));
+      return matchSearch && matchDept && matchStatus && matchDpi && matchIgss;
     });
-  }, [employees, search, filterDept, filterStatus]);
+  }, [employees, search, filterDept, filterStatus, filterDpi, filterIgss]);
+
+  const pagination = usePagination(filteredEmployees, 10);
 
   const openAdd = () => {
     setModalMode('add');
@@ -89,8 +106,14 @@ export default function Employees() {
   const handleSave = (formData) => {
     if (modalMode === 'add') {
       addEmployee(formData);
+      toast.success('Empleado Creado', {
+        description: 'Se ha agregado exitosamente.',
+      });
     } else if (modalMode === 'edit' && currentEmp) {
       updateEmployee(currentEmp.id, formData);
+      toast.success('Empleado Actualizado', {
+        description: 'Los cambios se han guardado.',
+      });
     }
     setShowModal(false);
   };
@@ -195,11 +218,11 @@ export default function Employees() {
           >
             Filtros {showFilters ? '▲' : '▼'}
           </Button>
-          {(filterDept !== 'ALL' || filterStatus !== 'ALL') && (
+          {(filterDept !== 'ALL' || filterStatus !== 'ALL' || filterDpi !== '' || filterIgss !== '') && (
             <Button
               variant="ghost"
               leftIcon={<X size={16} />}
-              onClick={() => { setFilterDept('ALL'); setFilterStatus('ALL'); }}
+              onClick={() => { setFilterDept('ALL'); setFilterStatus('ALL'); setFilterDpi(''); setFilterIgss(''); }}
             >
               Limpiar
             </Button>
@@ -225,7 +248,7 @@ export default function Employees() {
                 size="sm"
               >
                 <option value="ALL">Todos los departamentos</option>
-                {departments.map(d => <option key={d} value={d}>{d}</option>)}
+                {departments.map((d, i) => <option key={d.id || i} value={d.nombre_dimension}>{d.nombre_dimension}</option>)}
               </Select>
             </FormControl>
             <FormControl minW="150px" maxW="220px">
@@ -240,6 +263,26 @@ export default function Employees() {
                 <option value="Activo">Activo</option>
                 <option value="Inactivo">Inactivo</option>
               </Select>
+            </FormControl>
+            <FormControl minW="150px" maxW="220px">
+              <FormLabel fontSize="sm" color={textSecondary}>DPI</FormLabel>
+              <Input
+                value={filterDpi}
+                onChange={e => setFilterDpi(e.target.value)}
+                placeholder="Buscar DPI..."
+                borderRadius="lg"
+                size="sm"
+              />
+            </FormControl>
+            <FormControl minW="150px" maxW="220px">
+              <FormLabel fontSize="sm" color={textSecondary}>No. IGSS</FormLabel>
+              <Input
+                value={filterIgss}
+                onChange={e => setFilterIgss(e.target.value)}
+                placeholder="Buscar No. IGSS..."
+                borderRadius="lg"
+                size="sm"
+              />
             </FormControl>
           </Flex>
         </Collapse>
@@ -268,181 +311,7 @@ export default function Employees() {
               </Tr>
             </Thead>
             <Tbody>
-              {filtered.map((emp) => {
-                const fullName = getFullName(emp);
-                const companyName = companies.find(c => c.id === emp.companyId)?.nombre_comercial || 'Sin Asignar';
-                
-                return (
-                  <Tr
-                    key={emp.id}
-                    transition="all 0.2s"
-                    _hover={{ bg: hoverBg }}
-                  >
-                    <Td>
-                      <Text fontSize="xs" fontWeight={600} color={textSecondary}>{emp.id}</Text>
-                    </Td>
-                    <Td>
-                      <HStack spacing={3}>
-                        <Avatar
-                          size="sm"
-                          name={fullName}
-                          bg="brand.500"
-                          color="white"
-                          fontSize="0.75rem"
-                          fontWeight={700}
-                        />
-                        <Box>
-                          <Text
-                            fontSize="sm"
-                            fontWeight={600}
-                            color={brandColor}
-                            cursor="pointer"
-                            onClick={() => openView(emp)}
-                            _hover={{ textDecoration: 'underline' }}
-                            transition="all 0.2s"
-                          >
-                            {fullName}
-                          </Text>
-                          <Text fontSize="xs" color={textSecondary}>
-                            {emp.puesto || 'Sin Puesto'}
-                          </Text>
-                        </Box>
-                      </HStack>
-                    </Td>
-                    <Td>
-                      <VStack spacing={1} align="flex-start">
-                        <Badge
-                          variant="outline"
-                          colorScheme="brand"
-                          fontSize="xs"
-                          borderRadius="md"
-                          px={2}
-                        >
-                          {emp.departamento_laboral || 'N/A'}
-                        </Badge>
-                        <Badge
-                          variant="subtle"
-                          colorScheme="gray"
-                          fontSize="xs"
-                          borderRadius="md"
-                          px={2}
-                        >
-                          {companyName}
-                        </Badge>
-                      </VStack>
-                    </Td>
-                    <Td>
-                      <Text fontSize="sm" fontFamily="mono" fontWeight={600} color={accentColor}>
-                        {formatQ(emp.sueldo_ordinario || 0)}
-                      </Text>
-                    </Td>
-                    <Td>
-                      <Tooltip
-                        label={companies.filter(c => (emp.dist?.[c.id] || 0) > 0).map(c => `${c.nombre_comercial || c.nit}: ${emp.dist?.[c.id]}%`).join(' · ')}
-                        placement="top"
-                        hasArrow
-                        borderRadius="md"
-                      >
-                        <Flex
-                          w="120px"
-                          h="8px"
-                          borderRadius="full"
-                          overflow="hidden"
-                          bg={distBarBg}
-                        >
-                          {companies.map(c => {
-                            const pct = emp.dist?.[c.id] || 0;
-                            return pct > 0 ? (
-                              <Box
-                                key={c.id}
-                                w={`${pct}%`}
-                                bg={c.color || 'brand.500'}
-                                transition="width 0.3s"
-                              />
-                            ) : null;
-                          })}
-                        </Flex>
-                      </Tooltip>
-                    </Td>
-                    <Td>
-                      <Badge
-                        colorScheme={emp.estado === 'Activo' ? 'green' : 'orange'}
-                        fontWeight={600}
-                        borderRadius="full"
-                        px={3}
-                        py={1}
-                        fontSize="xs"
-                      >
-                        {emp.estado}
-                      </Badge>
-                    </Td>
-                    <Td textAlign="right">
-                      <HStack spacing={1} justify="flex-end">
-                        <Tooltip label="Ver detalle" hasArrow>
-                          <IconButton
-                            aria-label="Ver detalle"
-                            icon={<Eye size={18} />}
-                            size="sm"
-                            variant="ghost"
-                            colorScheme="brand"
-                            onClick={() => openView(emp)}
-                            transition="all 0.3s"
-                          />
-                        </Tooltip>
-                        <Tooltip label="Editar" hasArrow>
-                          <IconButton
-                            aria-label="Editar"
-                            icon={<Edit2 size={18} />}
-                            size="sm"
-                            variant="ghost"
-                            colorScheme="accent"
-                            onClick={() => openEdit(emp)}
-                            transition="all 0.3s"
-                          />
-                        </Tooltip>
-                        {emp.estado === 'Activo' && (
-                          <Tooltip label="Dar de Baja" hasArrow>
-                            <IconButton
-                              aria-label="Dar de Baja"
-                              icon={<X size={18} />}
-                              size="sm"
-                              variant="ghost"
-                              colorScheme="orange"
-                              onClick={() => setOffboardState({ show: true, empId: emp.id, reason: '', date: new Date().toISOString().split('T')[0] })}
-                              transition="all 0.3s"
-                            />
-                          </Tooltip>
-                        )}
-                        {emp.estado === 'Inactivo' && (
-                          <Tooltip label="Generar Finiquito" hasArrow>
-                            <IconButton
-                              aria-label="Generar Finiquito"
-                              icon={<FileText size={18} />}
-                              size="sm"
-                              variant="ghost"
-                              colorScheme="blue"
-                              onClick={() => handleGenerateFiniquito(emp)}
-                              transition="all 0.3s"
-                            />
-                          </Tooltip>
-                        )}
-                        <Tooltip label="Eliminar (Permanente)" hasArrow>
-                          <IconButton
-                            aria-label="Eliminar"
-                            icon={<Trash2 size={18} />}
-                            size="sm"
-                            variant="ghost"
-                            colorScheme="red"
-                            onClick={() => handleDelete(emp.id)}
-                            transition="all 0.3s"
-                          />
-                        </Tooltip>
-                      </HStack>
-                    </Td>
-                  </Tr>
-                );
-              })}
-              {filtered.length === 0 && (
+              {filteredEmployees.length === 0 ? (
                 <Tr>
                   <Td colSpan={7} textAlign="center" py={16}>
                     <Text color={textSecondary} fontSize="md">
@@ -450,10 +319,186 @@ export default function Employees() {
                     </Text>
                   </Td>
                 </Tr>
+              ) : (
+                pagination.paginatedData.map((emp) => {
+                  const fullName = getFullName(emp);
+                  const companyName = companies.find(c => c.id === emp.empresa_principal)?.nombre_comercial || 'SIN ASIGNAR';
+                  
+                  return (
+                    <Tr
+                      key={emp.id}
+                      transition="all 0.2s"
+                      _hover={{ bg: hoverBg }}
+                    >
+                      <Td>
+                        <Text fontSize="xs" fontWeight={600} color={textSecondary}>{emp.id}</Text>
+                      </Td>
+                      <Td>
+                        <HStack spacing={3}>
+                          <Avatar
+                            size="sm"
+                            name={fullName}
+                            bg="brand.500"
+                            color="white"
+                            fontSize="0.75rem"
+                            fontWeight={700}
+                          />
+                          <Box>
+                            <Text
+                              fontSize="sm"
+                              fontWeight={600}
+                              color={brandColor}
+                              cursor="pointer"
+                              onClick={() => openView(emp)}
+                              _hover={{ textDecoration: 'underline' }}
+                              transition="all 0.2s"
+                            >
+                              {fullName}
+                            </Text>
+                            <Text fontSize="xs" color={textSecondary}>
+                              {emp.puesto || 'Sin Puesto'}
+                            </Text>
+                          </Box>
+                        </HStack>
+                      </Td>
+                      <Td>
+                        <VStack spacing={1} align="flex-start">
+                          <Badge
+                            variant="outline"
+                            colorScheme="brand"
+                            fontSize="xs"
+                            borderRadius="md"
+                            px={2}
+                          >
+                            {emp.departamento_laboral || 'N/A'}
+                          </Badge>
+                          <Badge
+                            variant="subtle"
+                            colorScheme="gray"
+                            fontSize="xs"
+                            borderRadius="md"
+                            px={2}
+                          >
+                            {companyName}
+                          </Badge>
+                        </VStack>
+                      </Td>
+                      <Td>
+                        <Text fontSize="sm" fontFamily="mono" fontWeight={600} color={accentColor}>
+                          {formatQ(emp.sueldo_ordinario || 0)}
+                        </Text>
+                      </Td>
+                      <Td>
+                        <Tooltip
+                          label={companies.filter(c => (getDist(emp)[c.id] || 0) > 0).map(c => `${c.nombre_comercial || c.nit}: ${getDist(emp)[c.id]}%`).join(' · ')}
+                          placement="top"
+                          hasArrow
+                          borderRadius="md"
+                        >
+                          <Flex
+                            w="120px"
+                            h="8px"
+                            borderRadius="full"
+                            overflow="hidden"
+                            bg={distBarBg}
+                          >
+                            {companies.map(c => {
+                              const pct = getDist(emp)[c.id] || 0;
+                              return pct > 0 ? (
+                                <Box
+                                  key={c.id}
+                                  w={`${pct}%`}
+                                  bg={c.color || 'brand.500'}
+                                  transition="width 0.3s"
+                                />
+                              ) : null;
+                            })}
+                          </Flex>
+                        </Tooltip>
+                      </Td>
+                      <Td>
+                        <Badge
+                          colorScheme={emp.estado === 'Activo' ? 'green' : 'orange'}
+                          fontWeight={600}
+                          borderRadius="full"
+                          px={3}
+                          py={1}
+                          fontSize="xs"
+                        >
+                          {emp.estado}
+                        </Badge>
+                      </Td>
+                      <Td textAlign="right">
+                        <HStack spacing={1} justify="flex-end">
+                          <Tooltip label="Ver detalle" hasArrow>
+                            <IconButton
+                              aria-label="Ver detalle"
+                              icon={<Eye size={18} />}
+                              size="sm"
+                              variant="ghost"
+                              colorScheme="brand"
+                              onClick={() => openView(emp)}
+                              transition="all 0.3s"
+                            />
+                          </Tooltip>
+                          <Tooltip label="Editar" hasArrow>
+                            <IconButton
+                              aria-label="Editar"
+                              icon={<Edit2 size={18} />}
+                              size="sm"
+                              variant="ghost"
+                              colorScheme="accent"
+                              onClick={() => openEdit(emp)}
+                              transition="all 0.3s"
+                            />
+                          </Tooltip>
+                          {emp.estado === 'Activo' && (
+                            <Tooltip label="Dar de Baja" hasArrow>
+                              <IconButton
+                                aria-label="Dar de Baja"
+                                icon={<X size={18} />}
+                                size="sm"
+                                variant="ghost"
+                                colorScheme="orange"
+                                onClick={() => setOffboardState({ show: true, empId: emp.id, reason: '', date: new Date().toISOString().split('T')[0] })}
+                                transition="all 0.3s"
+                              />
+                            </Tooltip>
+                          )}
+                          {emp.estado === 'Inactivo' && (
+                            <Tooltip label="Generar Finiquito" hasArrow>
+                              <IconButton
+                                aria-label="Generar Finiquito"
+                                icon={<FileText size={18} />}
+                                size="sm"
+                                variant="ghost"
+                                colorScheme="blue"
+                                onClick={() => handleGenerateFiniquito(emp)}
+                                transition="all 0.3s"
+                              />
+                            </Tooltip>
+                          )}
+                          <Tooltip label="Eliminar (Permanente)" hasArrow>
+                            <IconButton
+                              aria-label="Eliminar"
+                              icon={<Trash2 size={18} />}
+                              size="sm"
+                              variant="ghost"
+                              colorScheme="red"
+                              onClick={() => handleDelete(emp.id)}
+                              transition="all 0.3s"
+                            />
+                          </Tooltip>
+                        </HStack>
+                      </Td>
+                    </Tr>
+                  );
+                })
               )}
             </Tbody>
           </Table>
         </TableContainer>
+        <Pagination {...pagination} />
       </Box>
 
       {/* EMPLOYEE FORM MODAL (add/edit) */}
@@ -463,34 +508,24 @@ export default function Employees() {
           initialData={currentEmp || INITIAL_FORM} 
           onClose={() => setShowModal(false)} 
           onSave={handleSave} 
+          employees={employees}
           companies={companies} 
           departments={departments} 
         />
       )}
 
       {/* VIEW MODAL */}
-      <Modal isOpen={showModal && modalMode === 'view' && !!currentEmp} onClose={() => setShowModal(false)} size="md" isCentered>
-        <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(4px)" />
-        <ModalContent borderRadius="xl" bg={modalBg} boxShadow="2xl">
-          <ModalHeader fontWeight={700} pb={2}>
-            Expediente del Empleado
-          </ModalHeader>
-          <ModalCloseButton />
-          <ModalBody pb={6}>
-            {currentEmp && (
-              <>
-                <Heading size="md" fontWeight={700} mb={3}>{getFullName(currentEmp)}</Heading>
-                <Text mb={1}><Text as="span" fontWeight={700}>Puesto:</Text> {currentEmp.puesto}</Text>
-                <Text mb={1}><Text as="span" fontWeight={700}>Empresa:</Text> {companies.find(c => c.id === currentEmp.companyId)?.nombre_comercial}</Text>
-                <Text mb={4}><Text as="span" fontWeight={700}>Sueldo:</Text> {formatQ(currentEmp.sueldo_ordinario)}</Text>
-                <Text fontSize="sm" color={textSecondary}>
-                  Haz clic en editar para ver y modificar todos los detalles.
-                </Text>
-              </>
-            )}
-          </ModalBody>
-        </ModalContent>
-      </Modal>
+      <EmployeeViewModal 
+        isOpen={showModal && modalMode === 'view'} 
+        onClose={() => setShowModal(false)} 
+        employee={currentEmp} 
+        companies={companies}
+        onEdit={(emp) => {
+          setCurrentEmp(emp);
+          setModalMode('edit');
+          setShowModal(true);
+        }}
+      />
 
       {/* IMPORT DATA */}
       {showImport && <ImportData onClose={() => setShowImport(false)} />}

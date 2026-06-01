@@ -13,6 +13,10 @@ import Sidebar, { DRAWER_WIDTH } from './components/Sidebar';
 import Dashboard from './pages/Dashboard';
 import Employees from './pages/Employees';
 import PayrollProcessing from './pages/PayrollProcessing';
+import Departments from './pages/Departments';
+import Areas from './pages/Areas';
+import Divisions from './pages/Divisions';
+import Subdivisions from './pages/Subdivisions';
 import Companies from './pages/Companies';
 import Bonuses from './pages/Bonuses';
 import PayrollHistory from './pages/PayrollHistory';
@@ -102,6 +106,10 @@ function AppContent() {
                   <Route path="/dashboard" element={<Dashboard />} />
                   <Route path="/employees" element={<Employees />} />
                   <Route path="/payroll" element={<PayrollProcessing />} />
+                  <Route path="/departments" element={<Departments />} />
+                  <Route path="/areas" element={<Areas />} />
+                  <Route path="/divisions" element={<Divisions />} />
+                  <Route path="/subdivisions" element={<Subdivisions />} />
                   <Route path="/companies" element={<Companies />} />
                   <Route path="/bonuses" element={<Bonuses />} />
                   <Route path="/history" element={<PayrollHistory />} />

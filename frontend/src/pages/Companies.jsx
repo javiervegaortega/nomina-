@@ -1,5 +1,8 @@
 import React, { useState, useContext } from 'react';
 import { DataContext } from '../context/DataContext';
+import { AppContext } from '../App';
+import usePagination from '../hooks/usePagination';
+import Pagination from '../components/Pagination';
 import { Plus, Edit2, Trash2, Eye } from 'lucide-react';
 import CompanyFormModal from '../components/CompanyFormModal';
 import {
@@ -22,9 +25,12 @@ import {
 
 export default function Companies() {
   const { companies, addCompany, updateCompany, deleteCompany } = useContext(DataContext);
+  const { confirmAction } = useContext(AppContext);
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [editingData, setEditingData] = useState(null);
+
+  const pagination = usePagination(companies, 10);
 
   // Color mode values
   const tableBorderColor = useColorModeValue('gray.200', 'whiteAlpha.100');
@@ -42,6 +48,7 @@ export default function Companies() {
   const viewIconColor = useColorModeValue('brand.500', 'brand.300');
   const editIconColor = useColorModeValue('accent.600', 'accent.300');
   const deleteIconColor = useColorModeValue('red.500', 'red.300');
+  const rowHoverBg = useColorModeValue('gray.50', 'whiteAlpha.50');
 
   const openAdd = () => {
     setEditingId(null);
@@ -141,102 +148,108 @@ export default function Companies() {
               </Tr>
             </Thead>
             <Tbody>
-              {companies.map((c, i) => (
-                <Tr key={c.id || i} transition="all 0.2s">
-                  <Td>
-                    <Text
-                      fontSize="sm"
-                      fontFamily="mono"
-                      color={nitColor}
-                    >
-                      {c.nit || 'S/N'}
-                    </Text>
-                  </Td>
-                  <Td>
-                    <Text
-                      fontSize="sm"
-                      fontWeight={500}
-                      color={nameColor}
-                    >
-                      {c.nombre_comercial || 'Sin Nombre'}
-                    </Text>
-                  </Td>
-                  <Td>
-                    <Text
-                      fontSize="sm"
-                      color={razonColor}
-                    >
-                      {c.razon_social || '-'}
-                    </Text>
-                  </Td>
-                  <Td textAlign="right">
-                    <Flex justify="flex-end" gap={1}>
-                      <Tooltip label="Ver detalles" hasArrow>
-                        <IconButton
-                          aria-label="Ver empresa"
-                          icon={<Eye size={16} />}
-                          size="sm"
-                          variant="ghost"
-                          color={viewIconColor}
-                          borderRadius="lg"
-                          transition="all 0.3s"
-                          _hover={{
-                            bg: viewHoverBg,
-                            transform: 'translateY(-1px)',
-                          }}
-                          onClick={() => openEdit(c)}
-                        />
-                      </Tooltip>
-                      <Tooltip label="Editar" hasArrow>
-                        <IconButton
-                          aria-label="Editar empresa"
-                          icon={<Edit2 size={16} />}
-                          size="sm"
-                          variant="ghost"
-                          color={editIconColor}
-                          borderRadius="lg"
-                          transition="all 0.3s"
-                          _hover={{
-                            bg: editHoverBg,
-                            transform: 'translateY(-1px)',
-                          }}
-                          onClick={() => openEdit(c)}
-                        />
-                      </Tooltip>
-                      <Tooltip label="Eliminar" hasArrow>
-                        <IconButton
-                          aria-label="Eliminar empresa"
-                          icon={<Trash2 size={16} />}
-                          size="sm"
-                          variant="ghost"
-                          color={deleteIconColor}
-                          borderRadius="lg"
-                          transition="all 0.3s"
-                          _hover={{
-                            bg: deleteHoverBg,
-                            transform: 'translateY(-1px)',
-                          }}
-                          onClick={() => {
-                            if (window.confirm(`¿Seguro que desea eliminar ${c.nombre_comercial || c.nit}?`)) deleteCompany(c.id);
-                          }}
-                        />
-                      </Tooltip>
-                    </Flex>
-                  </Td>
-                </Tr>
-              ))}
-              {companies.length === 0 && (
+              {companies.length === 0 ? (
                 <Tr>
-                  <Td colSpan={4} textAlign="center" py={12}>
-                    <Text fontSize="sm" color={emptyTextColor}>
-                      No hay empresas registradas en el sistema.
-                    </Text>
+                  <Td colSpan={5} textAlign="center" py={10} color={useColorModeValue('gray.500', 'gray.400')}>
+                    No hay empresas registradas.
                   </Td>
                 </Tr>
+              ) : (
+                pagination.paginatedData.map((c, i) => (
+                  <Tr key={c.id || i} _hover={{ bg: rowHoverBg }} transition="all 0.2s">
+                    <Td>
+                      <Text
+                        fontSize="sm"
+                        fontFamily="mono"
+                        color={nitColor}
+                      >
+                        {c.nit || 'S/N'}
+                      </Text>
+                    </Td>
+                    <Td>
+                      <Text
+                        fontSize="sm"
+                        fontWeight={500}
+                        color={nameColor}
+                      >
+                        {c.nombre_comercial || 'Sin Nombre'}
+                      </Text>
+                    </Td>
+                    <Td>
+                      <Text
+                        fontSize="sm"
+                        color={razonColor}
+                      >
+                        {c.razon_social || '-'}
+                      </Text>
+                    </Td>
+                    <Td textAlign="right">
+                      <Flex justify="flex-end" gap={1}>
+                        <Tooltip label="Ver detalles" hasArrow>
+                          <IconButton
+                            aria-label="Ver empresa"
+                            icon={<Eye size={16} />}
+                            size="sm"
+                            variant="ghost"
+                            color={viewIconColor}
+                            borderRadius="lg"
+                            transition="all 0.3s"
+                            _hover={{
+                              bg: viewHoverBg,
+                              transform: 'translateY(-1px)',
+                            }}
+                            onClick={() => openEdit(c)}
+                          />
+                        </Tooltip>
+                        <Tooltip label="Editar" hasArrow>
+                          <IconButton
+                            aria-label="Editar empresa"
+                            icon={<Edit2 size={16} />}
+                            size="sm"
+                            variant="ghost"
+                            color={editIconColor}
+                            borderRadius="lg"
+                            transition="all 0.3s"
+                            _hover={{
+                              bg: editHoverBg,
+                              transform: 'translateY(-1px)',
+                            }}
+                            onClick={() => openEdit(c)}
+                          />
+                        </Tooltip>
+                        <Tooltip label="Eliminar" hasArrow>
+                          <IconButton
+                            aria-label="Eliminar empresa"
+                            icon={<Trash2 size={16} />}
+                            size="sm"
+                            variant="ghost"
+                            color={deleteIconColor}
+                            borderRadius="lg"
+                            transition="all 0.3s"
+                            _hover={{
+                              bg: deleteHoverBg,
+                              transform: 'translateY(-1px)',
+                            }}
+                            onClick={() => {
+                              confirmAction(`¿Seguro que desea eliminar la empresa ${c.nombre_comercial || c.nit}?`, () => {
+                                deleteCompany(c.id);
+                              });
+                            }}
+                          />
+                        </Tooltip>
+                      </Flex>
+                    </Td>
+                  </Tr>
+                ))
               )}
             </Tbody>
           </Table>
         </Box>
+        {companies.length > 0 && (
+          <Box p={4} borderTop="1px solid" borderColor={tableBorderColor}>
+            <Pagination pagination={pagination} />
+          </Box>
+        )}
       </Box>
 
       {/* Company Form Modal */}
