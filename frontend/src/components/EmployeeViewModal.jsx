@@ -137,6 +137,29 @@ export default function EmployeeViewModal({ isOpen, onClose, employee, companies
             </Box>
           )}
 
+          {/* Quick Stats of Records */}
+          {employee.records && employee.records.length > 0 && (
+            <Box mt={6}>
+              <Text fontSize="sm" fontWeight="700" color={textColor} mb={3}>Resumen de Expediente</Text>
+              <Grid templateColumns="repeat(auto-fill, minmax(100px, 1fr))" gap={3}>
+                {['estudio', 'curso', 'puesto', 'evento', 'record', 'empresa_anterior', 'vehiculo'].map(type => {
+                  const count = employee.records.filter(r => r.type === type).length;
+                  if (count === 0) return null;
+                  const labels = {
+                    estudio: 'Estudios', curso: 'Cursos', puesto: 'Puestos',
+                    evento: 'Eventos', record: 'Llamadas Att.', empresa_anterior: 'Exp. Previa', vehiculo: 'Vehículos'
+                  };
+                  return (
+                    <Flex key={type} direction="column" align="center" bg={cardBg} p={2} borderRadius="lg" border="1px solid" borderColor={borderColor}>
+                      <Text fontSize="10px" color={subtextColor} fontWeight="700" textTransform="uppercase">{labels[type]}</Text>
+                      <Text fontSize="lg" fontWeight="800" color={textColor}>{count}</Text>
+                    </Flex>
+                  );
+                })}
+              </Grid>
+            </Box>
+          )}
+
           <Divider my={6} borderColor={borderColor} />
 
           <Flex justify="flex-end" gap={3}>

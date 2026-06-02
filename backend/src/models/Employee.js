@@ -99,6 +99,7 @@ module.exports = (sequelize) => {
     divisionId: { type: DataTypes.INTEGER },
     subdivisionId: { type: DataTypes.INTEGER },
     nivel_5: { type: DataTypes.STRING },
+    dimension_5: { type: DataTypes.STRING },
     dias_laborados: { type: DataTypes.INTEGER, defaultValue: 0 },
     puesto: { type: DataTypes.STRING },
     afiliacion: { type: DataTypes.STRING },

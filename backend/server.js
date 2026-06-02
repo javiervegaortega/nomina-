@@ -13,6 +13,8 @@ const departmentRoutes = require('./src/routes/department.routes');
 const areaRoutes = require('./src/routes/area.routes');
 const divisionRoutes = require('./src/routes/division.routes');
 const subdivisionRoutes = require('./src/routes/subdivision.routes');
+const payrollDraftRoutes = require('./src/routes/payrollDraft.routes');
+const { nestedRouter: empRecordsNested, flatRouter: empRecordsFlat } = require('./src/routes/employeeRecord.routes');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -25,11 +27,14 @@ app.use(express.json());
 app.use('/api/auth', authRoutes);
 app.use('/api/companies', companyRoutes);
 app.use('/api/employees', employeeRoutes);
+app.use('/api/employees/:employeeId/records', empRecordsNested);
+app.use('/api/employee-records', empRecordsFlat);
 app.use('/api/payrolls', payrollRoutes);
 app.use('/api/departments', departmentRoutes);
 app.use('/api/areas', areaRoutes);
 app.use('/api/divisions', divisionRoutes);
 app.use('/api/subdivisions', subdivisionRoutes);
+app.use('/api/payroll-drafts', payrollDraftRoutes);
 
 // ======================= INTEGRACION FRONTEND =======================
 // Servir la carpeta estática del Build de React

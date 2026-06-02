@@ -22,7 +22,7 @@ import {
 } from '@chakra-ui/react';
 
 export default function Employees() {
-  const { employees, addEmployee, updateEmployee, deleteEmployee, companies, departments } = useContext(DataContext);
+  const { employees, addEmployee, updateEmployee, deleteEmployee, companies, departments, areas, divisions, subdivisions } = useContext(DataContext);
   
   const INITIAL_FORM = {
     estado: 'Activo',
@@ -510,7 +510,10 @@ export default function Employees() {
           onSave={handleSave} 
           employees={employees}
           companies={companies} 
-          departments={departments} 
+          departments={departments}
+          areas={areas}
+          divisions={divisions}
+          subdivisions={subdivisions}
         />
       )}
 

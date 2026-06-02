@@ -10,6 +10,9 @@ const Area = require('./Area')(sequelize);
 const Department = require('./Department')(sequelize);
 const Division = require('./Division')(sequelize);
 const Subdivision = require('./Subdivision')(sequelize);
+const EmployeeRecord = require('./EmployeeRecord')(sequelize);
+const PayrollDraft = require('./PayrollDraft')(sequelize);
+const PayrollDraftEmployee = require('./PayrollDraftEmployee')(sequelize);
 
 // Definir asociaciones
 Company.hasMany(Employee, { foreignKey: 'companyId' });
@@ -20,6 +23,12 @@ Department.belongsTo(Area, { foreignKey: 'areaId', as: 'areaData' });
 
 Division.hasMany(Area, { foreignKey: 'divisionId' });
 Area.belongsTo(Division, { foreignKey: 'divisionId', as: 'divisionData' });
+
+Employee.hasMany(EmployeeRecord, { foreignKey: 'employeeId', as: 'records' });
+EmployeeRecord.belongsTo(Employee, { foreignKey: 'employeeId' });
+
+PayrollDraft.hasMany(PayrollDraftEmployee, { foreignKey: 'draftId', as: 'draftEmployees', onDelete: 'CASCADE' });
+PayrollDraftEmployee.belongsTo(PayrollDraft, { foreignKey: 'draftId' });
 
 // Exportar modelos y conexión
 module.exports = {
@@ -32,5 +41,8 @@ module.exports = {
   Area,
   Department,
   Division,
-  Subdivision
+  Subdivision,
+  EmployeeRecord,
+  PayrollDraft,
+  PayrollDraftEmployee
 };

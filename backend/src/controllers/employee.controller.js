@@ -1,8 +1,10 @@
-const { Employee } = require('../models');
+const { Employee, EmployeeRecord } = require('../models');
 
 const getEmployees = async (req, res) => {
   try {
-    const employees = await Employee.findAll();
+    const employees = await Employee.findAll({
+      include: [{ model: EmployeeRecord, as: 'records' }]
+    });
     res.json(employees);
   } catch (err) {
     res.status(500).json({ error: err.message });

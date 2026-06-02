@@ -38,10 +38,7 @@ export function DataProvider({ children }) {
     return saved ? JSON.parse(saved) : [];
   });
 
-  const [activePayrolls, setActivePayrolls] = useState(() => {
-    const saved = localStorage.getItem('nomina-active-payrolls');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [activePayrolls, setActivePayrolls] = useState([]);
 
   const [payrollHistory, setPayrollHistory] = useState(() => {
     const saved = localStorage.getItem('nomina-history');
@@ -74,10 +71,6 @@ export function DataProvider({ children }) {
   }, [bonuses]);
 
   useEffect(() => {
-    localStorage.setItem('nomina-active-payrolls', JSON.stringify(activePayrolls));
-  }, [activePayrolls]);
-
-  useEffect(() => {
     localStorage.setItem('nomina-history', JSON.stringify(payrollHistory));
   }, [payrollHistory]);
 
@@ -85,14 +78,19 @@ export function DataProvider({ children }) {
   useEffect(() => {
     const fetchBackendData = async () => {
       try {
-        const [compRes, empRes, histRes, deptRes, areaRes, divRes, subdivRes] = await Promise.all([
-          fetch('http://localhost:3000/api/companies'),
-          fetch('http://localhost:3000/api/employees'),
-          fetch('http://localhost:3000/api/payrolls'),
-          fetch('http://localhost:3000/api/departments'),
-          fetch('http://localhost:3000/api/areas'),
-          fetch('http://localhost:3000/api/divisions'),
-          fetch('http://localhost:3000/api/subdivisions')
+        const token = localStorage.getItem('nomina-token');
+        const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+        const fetchOpts = { headers };
+
+        const [compRes, empRes, histRes, deptRes, areaRes, divRes, subdivRes, draftsRes] = await Promise.all([
+          fetch('http://localhost:3000/api/companies', fetchOpts),
+          fetch('http://localhost:3000/api/employees', fetchOpts),
+          fetch('http://localhost:3000/api/payrolls', fetchOpts),
+          fetch('http://localhost:3000/api/departments', fetchOpts),
+          fetch('http://localhost:3000/api/areas', fetchOpts),
+          fetch('http://localhost:3000/api/divisions', fetchOpts),
+          fetch('http://localhost:3000/api/subdivisions', fetchOpts),
+          fetch('http://localhost:3000/api/payroll-drafts', fetchOpts)
         ]);
         
         if (compRes.ok) {
@@ -128,6 +126,26 @@ export function DataProvider({ children }) {
         if (subdivRes.ok) {
           const apiSubdivs = await subdivRes.json();
           if (Array.isArray(apiSubdivs)) setSubdivisions(apiSubdivs);
+        }
+        if (draftsRes.ok) {
+          const apiDrafts = await draftsRes.json();
+          if (Array.isArray(apiDrafts)) {
+            const parsedDrafts = apiDrafts.map(d => {
+              let comps = d.companies || [];
+              let emps = d.employees || [];
+              if (typeof comps === 'string') {
+                try { comps = JSON.parse(comps); } catch(e) { comps = []; }
+              }
+              if (typeof emps === 'string') {
+                try { emps = JSON.parse(emps); } catch(e) { emps = []; }
+              }
+              if (Array.isArray(emps)) {
+                emps = emps.map(emp => (typeof emp === 'string' ? JSON.parse(emp) : emp));
+              }
+              return { ...d, companies: comps, employees: emps };
+            });
+            setActivePayrolls(parsedDrafts);
+          }
         }
       } catch (err) {
         console.log('⚠️ Backend no disponible o en desarrollo, usando LocalStorage/MockData');
@@ -426,43 +444,214 @@ export function DataProvider({ children }) {
   // Set all employees (useful for CSV import)
   const setAllEmployees = (newEmployees) => setEmployees(newEmployees);
 
+  // Employee Records (estudios, cursos, puestos, eventos, record, hijos, empresa_anterior, vehiculo)
+  const addEmployeeRecord = async (employeeId, type, data) => {
+    try {
+      const res = await fetch(`http://localhost:3000/api/employees/${employeeId}/records`, {
+        method: 'POST',
+        headers: getAuthHeader(),
+        body: JSON.stringify({ type, data })
+      });
+      if (res.ok) {
+        const newRecord = await res.json();
+        setEmployees(employees.map(e => {
+          if (e.id !== employeeId) return e;
+          return { ...e, records: [...(e.records || []), newRecord] };
+        }));
+        return newRecord;
+      }
+    } catch (err) {
+      const fallback = { id: Date.now(), employeeId, type, data, created_at: new Date().toISOString() };
+      setEmployees(employees.map(e => {
+        if (e.id !== employeeId) return e;
+        return { ...e, records: [...(e.records || []), fallback] };
+      }));
+      return fallback;
+    }
+  };
+
+  const updateEmployeeRecord = async (recordId, data) => {
+    try {
+      const res = await fetch(`http://localhost:3000/api/employee-records/${recordId}`, {
+        method: 'PUT',
+        headers: getAuthHeader(),
+        body: JSON.stringify({ data })
+      });
+      if (res.ok) {
+        setEmployees(employees.map(e => ({
+          ...e,
+          records: (e.records || []).map(r => r.id === recordId ? { ...r, data } : r)
+        })));
+      }
+    } catch (err) {
+      setEmployees(employees.map(e => ({
+        ...e,
+        records: (e.records || []).map(r => r.id === recordId ? { ...r, data } : r)
+      })));
+    }
+  };
+
+  const deleteEmployeeRecord = async (employeeId, recordId) => {
+    try {
+      await fetch(`http://localhost:3000/api/employee-records/${recordId}`, {
+        method: 'DELETE',
+        headers: getAuthHeader()
+      });
+      setEmployees(employees.map(e => {
+        if (e.id !== employeeId) return e;
+        return { ...e, records: (e.records || []).filter(r => r.id !== recordId) };
+      }));
+    } catch (err) {
+      setEmployees(employees.map(e => {
+        if (e.id !== employeeId) return e;
+        return { ...e, records: (e.records || []).filter(r => r.id !== recordId) };
+      }));
+    }
+  };
+
   // Bonuses
   const addBonus = (bonus) => setBonuses([...bonuses, { ...bonus, id: Date.now().toString() }]);
   const updateBonus = (id, data) => setBonuses(bonuses.map(b => b.id === id ? { ...b, ...data } : b));
   const deleteBonus = (id) => setBonuses(bonuses.filter(b => b.id !== id));
 
   // Payroll
-  const createActivePayroll = (title, selectedCompanies) => {
-    // 1. Filter employees by selected companies
-    // 2. Freeze their state into the draft
-    const frozenEmployees = employees
-      .filter(e => selectedCompanies.length === 0 || selectedCompanies.includes(e.company))
-      .map(e => ({
-        ...e,
-        extras: { ...e.extras },
-        deductions: { ...e.deductions },
-        appliedBonuses: bonuses.reduce((acc, b) => {
-          acc[b.id] = b.assignments?.[e.id] || 0;
-          return acc;
-        }, {})
-      }));
+  // Payroll
+  const createActivePayroll = async (title, selectedCompanies) => {
+    // selectedCompanies contains commercial names of the selected companies
+    // Map selectedCompany names to company IDs
+    const selectedCompanyIds = selectedCompanies.map(name => {
+      const comp = companies.find(c => (c.nombre_comercial || c.nit) === name || c.id?.toString() === name);
+      return comp ? comp.id : null;
+    }).filter(id => id !== null);
 
-    const newDraft = {
+    const frozenEmployees = employees
+      .filter(e => {
+        if (selectedCompanies.length === 0) return true;
+        
+        // 1. Direct match by companyId
+        if (e.companyId && selectedCompanyIds.includes(e.companyId)) return true;
+        
+        // 2. Match by empresa_principal
+        if (e.empresa_principal && selectedCompanyIds.includes(e.empresa_principal)) return true;
+        
+        // 3. Match by distribution percentage
+        let distData = {};
+        if (typeof e.dist === 'string') {
+          try { distData = JSON.parse(e.dist); } catch(err) {}
+        } else {
+          distData = e.dist || {};
+        }
+        return selectedCompanyIds.some(id => (distData[id] || 0) > 0);
+      })
+      .map(e => {
+        const days = 30; // default to 30 days
+        const baseSalary = Number(e.sueldo_ordinario) || 0;
+        const baseFactor = days / 30;
+        const igssVal = (baseSalary * baseFactor) * 0.0483;
+
+        return {
+          ...e,
+          days,
+          company: e.company || (companies.find(c => c.id === e.companyId)?.nombre_comercial || ''),
+          deductions: {
+            igss: igssVal,
+            isr: Number(e.isr) || 0,
+            cafe: 0,
+            cell: 0,
+            uniform: 0,
+            shoes: 0,
+            equipo: 0,
+            product: 0,
+            bancos: Number(e.bancos) || 0,
+            otros: 0,
+            judiciales: Number(e.judiciales) || 0,
+            seguro: Number(e.seguro) || 0,
+            parqueo: Number(e.parqueo) || 0,
+            boleto_de_ornato: Number(e.boleto_de_ornato) || 0,
+            otros_egresos: Number(e.otros_egresos) || 0,
+          },
+          extras: {
+            simplesQty: Number(e.horas_extras_simples) || 0,
+            simplesVal: 0,
+            doblesQty: Number(e.horas_extras_dobles) || 0,
+            doblesVal: 0,
+            comisiones: 0,
+            otrosIngresos: Number(e.otro_ingresos) || 0,
+          },
+          appliedBonuses: bonuses.reduce((acc, b) => {
+            acc[b.id] = b.assignments?.[e.id] || 0;
+            return acc;
+          }, {})
+        };
+      });
+
+    const newDraftData = {
       id: Date.now().toString(),
       title,
       companies: selectedCompanies,
       createdAt: new Date().toISOString(),
       employees: frozenEmployees,
     };
-    setActivePayrolls([newDraft, ...activePayrolls]);
-    return newDraft.id;
+
+    try {
+      const res = await fetch('http://localhost:3000/api/payroll-drafts', {
+        method: 'POST',
+        headers: getAuthHeader(),
+        body: JSON.stringify(newDraftData)
+      });
+      if (res.ok) {
+        const savedDraft = await res.json();
+        setActivePayrolls([savedDraft, ...activePayrolls]);
+        return savedDraft.id;
+      }
+    } catch(e) {}
+    
+    // Fallback if API fails
+    setActivePayrolls([newDraftData, ...activePayrolls]);
+    return newDraftData.id;
   };
 
-  const updateActivePayroll = (id, newEmployeesData) => {
-    setActivePayrolls(activePayrolls.map(p => p.id === id ? { ...p, employees: newEmployeesData } : p));
+  const updateActivePayroll = async (id, newEmployeesData) => {
+    const updatedDrafts = activePayrolls.map(p => p.id === id ? { ...p, employees: newEmployeesData } : p);
+    setActivePayrolls(updatedDrafts);
+
+    const draft = updatedDrafts.find(p => p.id === id);
+    if (draft) {
+      try {
+        await fetch(`http://localhost:3000/api/payroll-drafts/${id}`, {
+          method: 'PUT',
+          headers: getAuthHeader(),
+          body: JSON.stringify(draft)
+        });
+      } catch(e) {}
+    }
   };
 
-  const deleteActivePayroll = (id) => setActivePayrolls(activePayrolls.filter(p => p.id !== id));
+  const updateDraftMetadata = async (id, title, companies, createdAt) => {
+    const updatedDrafts = activePayrolls.map(p => p.id === id ? { ...p, title, companies, createdAt } : p);
+    setActivePayrolls(updatedDrafts);
+
+    const draft = updatedDrafts.find(p => p.id === id);
+    if (draft) {
+      try {
+        await fetch(`http://localhost:3000/api/payroll-drafts/${id}`, {
+          method: 'PUT',
+          headers: getAuthHeader(),
+          body: JSON.stringify(draft)
+        });
+      } catch(e) {}
+    }
+  };
+
+  const deleteActivePayroll = async (id) => {
+    setActivePayrolls(activePayrolls.filter(p => p.id !== id));
+    try {
+      await fetch(`http://localhost:3000/api/payroll-drafts/${id}`, {
+        method: 'DELETE',
+        headers: getAuthHeader()
+      });
+    } catch(e) {}
+  };
 
   const closePayroll = (id) => {
     const draft = activePayrolls.find(p => p.id === id);
@@ -471,10 +660,21 @@ export function DataProvider({ children }) {
       let grossTotal = 0;
       let dedTotal = 0;
       draft.employees.forEach(e => {
-        // Simple history summary calculation
         const baseFactor = (e.days || 30) / 30;
-        const gross = (e.base * baseFactor) + (e.bonus * baseFactor) + e.extras.simplesVal + e.extras.doblesVal + e.extras.comisiones + e.extras.otrosIngresos + Object.values(e.appliedBonuses || {}).reduce((a,b)=>a+b,0);
-        const ded = Object.values(e.deductions).reduce((a, b) => a + b, 0) + ((e.base * baseFactor) * 0.0483);
+        const sueldoOrd = Number(e.sueldo_ordinario) || 0;
+        const bonInc = Number(e.bon_incentivo) || 0;
+        const bonDec = Number(e.bon_dec_37_2001) || 0;
+
+        const baseSalary = sueldoOrd * baseFactor;
+        const bonusLey = bonInc * baseFactor;
+        const bonusDec = bonDec * baseFactor;
+
+        const extrasVal = (e.extras?.simplesVal || 0) + (e.extras?.doblesVal || 0) + (e.extras?.comisiones || 0) + (e.extras?.otrosIngresos || 0);
+        const bonusesSum = Object.values(e.appliedBonuses || {}).reduce((a, b) => a + b, 0);
+
+        const gross = baseSalary + bonusLey + bonusDec + extrasVal + bonusesSum;
+        const ded = Object.values(e.deductions || {}).reduce((a, b) => a + b, 0);
+
         grossTotal += gross;
         dedTotal += ded;
       });
@@ -489,15 +689,25 @@ export function DataProvider({ children }) {
       };
 
       // Save to backend
-      const token = localStorage.getItem('nomina-token');
       fetch('http://localhost:3000/api/payrolls', {
         method: 'POST',
-        headers: token ? { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' },
+        headers: getAuthHeader(),
         body: JSON.stringify(historyRecord)
-      }).catch(err => console.error(err));
-
-      setPayrollHistory([historyRecord, ...payrollHistory]);
-      deleteActivePayroll(id);
+      }).then(res => {
+        if (!res.ok) {
+          if (res.status === 403 || res.status === 401) {
+            console.error('Error de autenticación: Tu sesión ha expirado.');
+            // Idealmente podríamos lanzar un toast o un logout aquí.
+          }
+          throw new Error('Failed to save to history');
+        }
+        return res.json();
+      }).then(() => {
+        setPayrollHistory([historyRecord, ...payrollHistory]);
+        deleteActivePayroll(id);
+      }).catch(err => {
+        console.error("No se pudo cerrar la nómina en el servidor", err);
+      });
     }
   };
 
@@ -527,8 +737,9 @@ export function DataProvider({ children }) {
       addDivision, updateDivision, deleteDivision,
       addSubdivision, updateSubdivision, deleteSubdivision,
       addEmployee, updateEmployee, deleteEmployee, setAllEmployees,
+      addEmployeeRecord, updateEmployeeRecord, deleteEmployeeRecord,
       addBonus, updateBonus, deleteBonus,
-      activePayrolls, createActivePayroll, updateActivePayroll, deleteActivePayroll, closePayroll,
+      activePayrolls, createActivePayroll, updateActivePayroll, updateDraftMetadata, deleteActivePayroll, closePayroll,
       savePayroll, deletePayroll
     }}>
       {children}

@@ -8,6 +8,14 @@ import { formatQ, CUOTA_LABORAL_RATE, CUOTA_PATRONAL_RATE } from '../data/mockDa
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import * as XLSX from 'xlsx';
+import {
+  Box, Flex, Heading, Text, Button, Input, Select,
+  Table, Thead, Tbody, Tr, Th, Td, TableContainer,
+  IconButton, Badge, Avatar, HStack, VStack,
+  InputGroup, InputLeftElement, useColorModeValue,
+  Modal, ModalOverlay, ModalContent, ModalHeader, ModalBody,
+  ModalFooter, ModalCloseButton, Divider, SimpleGrid, Center
+} from '@chakra-ui/react';
 
 export default function PayrollHistory() {
   const { payrollHistory, deletePayroll, bonuses } = useContext(DataContext);
@@ -23,7 +31,7 @@ export default function PayrollHistory() {
       if (!groups[t]) {
         groups[t] = {
           title: t,
-          date: p.date, // use most recent date
+          date: p.closedAt || new Date().toISOString(), // use most recent date
           records: [],
           employeesCount: 0,
           grossTotal: 0,
@@ -36,20 +44,34 @@ export default function PayrollHistory() {
       groups[t].employeesCount += p.employeesCount || 0;
       groups[t].netTotal += p.netTotal || 0;
       
-      const emps = p.details || p.employees || [];
-      const gross = emps.reduce((s, e) => {
+      // Calculate gross total
+      const emps = p.data || p.employees || [];
+      let grossSum = 0;
+      emps.forEach(e => {
         const baseFactor = (e.days || 30) / 30;
-        return s + (e.base * baseFactor) + (e.bonus * baseFactor);
-      }, 0);
+        const sueldoOrd = Number(e.sueldo_ordinario) || 0;
+        const bonInc = Number(e.bon_incentivo) || 0;
+        const bonDec = Number(e.bon_dec_37_2001) || 0;
+
+        const baseSalary = sueldoOrd * baseFactor;
+        const bonusLey = bonInc * baseFactor;
+        const bonusDec = bonDec * baseFactor;
+        
+        const bonos = Number(e.extras?.bonos) || 0;
+        const bonusesSum = Object.values(e.appliedBonuses || {}).reduce((a, b) => a + b, 0);
+        const extrasTotal = (e.extras?.simplesVal || 0) + (e.extras?.doblesVal || 0) + (e.extras?.comisiones || 0) + (e.extras?.otrosIngresos || 0);
+
+        grossSum += baseSalary + bonusLey + bonusDec + bonos + extrasTotal + bonusesSum;
+      });
       
-      groups[t].grossTotal += gross;
+      groups[t].grossTotal += grossSum;
       
       if (p.companies && p.companies.length > 0) {
         p.companies.forEach(c => groups[t].companies.add(c));
       }
       
-      if (new Date(p.date) > new Date(groups[t].date)) {
-        groups[t].date = p.date;
+      if (new Date(p.closedAt || new Date()) > new Date(groups[t].date)) {
+        groups[t].date = p.closedAt || new Date().toISOString();
       }
     });
     
@@ -70,160 +92,163 @@ export default function PayrollHistory() {
     });
   };
 
-  const handleDownload = () => {
-    showToast('Generando archivo de exportación...', 'success');
-  };
+  const cardBg = useColorModeValue('white', 'gray.800');
+  const borderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
 
   if (selectedGroup) {
     return <PayrollHistoryDetail group={selectedGroup} onBack={() => setSelectedGroup(null)} />;
   }
 
   return (
-    <>
-      <div className="page-header">
-        <div className="page-header-left" style={{ display: 'flex', alignItems: 'center' }}>
-          <div>
-            <h1>Historial de Nóminas</h1>
-            <p>Registro inmutable de procesos de nómina cerrados y agrupados por periodo</p>
-          </div>
-        </div>
-        <div style={{ position: 'relative' }}>
-          <Search size={18} style={{ position: 'absolute', left: '10px', top: '10px', color: 'var(--text-tertiary)' }} />
-          <input 
-            type="text" 
+    <Box p={{ base: 4, md: 6 }}>
+      <Flex justify="space-between" align="center" mb={6} wrap="wrap" gap={4}>
+        <Box>
+          <Heading size="lg" fontWeight={800} mb={1}>
+            Historial de Nóminas
+          </Heading>
+          <Text color="gray.500">
+            Registro inmutable de procesos de nómina cerrados y agrupados por periodo
+          </Text>
+        </Box>
+        <InputGroup maxW="300px" size="sm">
+          <InputLeftElement pointerEvents="none">
+            <Search size={16} color="gray.400" />
+          </InputLeftElement>
+          <Input 
             placeholder="Buscar por título..." 
-            className="input" 
-            style={{ paddingLeft: '35px' }}
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
+            borderRadius="md"
           />
-        </div>
-      </div>
+        </InputGroup>
+      </Flex>
 
-      <div className="page-content">
-        <div style={{ maxWidth: '800px', margin: '0 auto', position: 'relative' }}>
+      <Box maxW="800px" mx="auto" position="relative">
+        {pagination.paginatedData.length > 0 && (
+          <Box 
+            position="absolute" 
+            top="20px" 
+            bottom="20px" 
+            left="23px" 
+            w="2px" 
+            bg="linear-gradient(to bottom, var(--chakra-colors-brand-500) 0%, var(--chakra-colors-gray-200) 100%)"
+            zIndex={0} 
+          />
+        )}
+
+        <VStack spacing={8} align="stretch">
+          {pagination.paginatedData.map((group, i) => (
+            <Flex key={group.title} gap={6} position="relative" zIndex={1} align="start">
+              <Center 
+                w="48px" 
+                h="48px" 
+                borderRadius="full" 
+                bg={cardBg} 
+                border="2px solid" 
+                borderColor="brand.500" 
+                color="brand.500" 
+                flexShrink={0} 
+                boxShadow="lg"
+              >
+                <CheckCircle2 size={24} />
+              </Center>
+              
+              <Box 
+                flex="1" 
+                p={6} 
+                bg={cardBg} 
+                borderRadius="xl" 
+                border="1px solid" 
+                borderColor={borderColor}
+                boxShadow="md"
+              >
+                <Flex justify="space-between" align="start" mb={4} wrap="wrap" gap={2}>
+                  <Box>
+                    <Heading size="sm" fontWeight={800} mb={1}>{group.title}</Heading>
+                    <HStack spacing={4} color="gray.500" fontSize="xs">
+                      <Flex align="center" gap={1}>
+                        <Calendar size={14} /> 
+                        Cerrada: {new Date(group.date).toLocaleDateString()}
+                      </Flex>
+                      <Flex align="center" gap={1}>
+                        <Building2 size={14} /> 
+                        {group.companies.size === 0 ? 'Múltiples' : Array.from(group.companies).join(', ')}
+                      </Flex>
+                    </HStack>
+                  </Box>
+                  <HStack spacing={1}>
+                    <IconButton aria-label="Ver Detalle" icon={<Eye size={18} />} onClick={() => setSelectedGroup(group)} variant="ghost" />
+                    <IconButton aria-label="Eliminar Registro" icon={<Trash2 size={18} />} colorScheme="red" variant="ghost" onClick={() => handleDeleteGroup(group.title, group.records)} />
+                  </HStack>
+                </Flex>
+
+                <SimpleGrid columns={{ base: 1, sm: 3 }} spacing={4} p={4} bg={useColorModeValue('gray.50', 'whiteAlpha.50')} borderRadius="lg" border="1px solid" borderColor={borderColor}>
+                  <Box>
+                    <Text fontSize="xxs" color="gray.500" textTransform="uppercase" fontWeight={700}>Total Empleados</Text>
+                    <Text fontSize="md" fontWeight={700}>{group.employeesCount} liquidaciones</Text>
+                  </Box>
+                  <Box>
+                    <Text fontSize="xxs" color="gray.500" textTransform="uppercase" fontWeight={700}>Total Bruto</Text>
+                    <Text fontSize="md" fontWeight={700} fontFamily="mono">{formatQ(group.grossTotal)}</Text>
+                  </Box>
+                  <Box>
+                    <Text fontSize="xxs" color="gray.500" textTransform="uppercase" fontWeight={700}>Desembolso Neto</Text>
+                    <Text fontSize="md" fontWeight={800} fontFamily="mono" color="gold.500">{formatQ(group.netTotal)}</Text>
+                  </Box>
+                </SimpleGrid>
+              </Box>
+            </Flex>
+          ))}
+
           {pagination.paginatedData.length > 0 && (
-            <div style={{ 
-              position: 'absolute', top: '20px', bottom: '20px', left: '23px', 
-              width: '2px', background: 'linear-gradient(to bottom, var(--accent) 0%, var(--border) 100%)',
-              zIndex: 0 
-            }} />
+            <Box mt={4}>
+              <Pagination {...pagination} />
+            </Box>
           )}
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-            {pagination.paginatedData.map((group, i) => (
-              <div key={group.title} className="animate-slide-right" style={{ 
-                animationDelay: `${i * 0.1}s`,
-                display: 'flex', gap: '1.5rem', position: 'relative', zIndex: 1
-              }}>
-                <div style={{ 
-                  width: 48, height: 48, borderRadius: '50%', 
-                  background: 'var(--bg-base)', border: '2px solid var(--accent)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  color: 'var(--accent)', flexShrink: 0, boxShadow: '0 0 0 4px var(--bg-base)'
-                }}>
-                  <CheckCircle2 size={24} />
-                </div>
-                
-                <div className="card card-glow" style={{ flex: 1, padding: '1.5rem', position: 'relative' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
-                    <div>
-                      <h3 style={{ fontSize: '1.2rem', margin: '0 0 0.4rem 0', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                        {group.title}
-                      </h3>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', color: 'var(--text-tertiary)', fontSize: '0.8rem' }}>
-                        <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                          <Calendar size={14} /> 
-                          Última actualiz. {new Date(group.date).toLocaleString(undefined, { dateStyle: 'long', timeStyle: 'short' })}
-                        </span>
-                        <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                          <Building2 size={14} /> 
-                          {group.companies.size === 0 ? 'Múltiples' : Array.from(group.companies).join(', ')}
-                        </span>
-                      </div>
-                    </div>
-                    <div style={{ display: 'flex', gap: '0.25rem' }}>
-                      <button className="btn-icon" onClick={() => setSelectedGroup(group)} title="Ver Detalle Completo"><Eye size={18} /></button>
-                      <button className="btn-icon" onClick={handleDownload} title="Exportar Consolidado"><Download size={18} /></button>
-                      <button className="btn-icon text-danger" onClick={() => handleDeleteGroup(group.title, group.records)} title="Eliminar Registro"><Trash2 size={18} /></button>
-                    </div>
-                  </div>
-
-                  <div style={{ 
-                    display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', 
-                    gap: '1rem', padding: '1.25rem', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-md)',
-                    border: '1px solid var(--border)'
-                  }}>
-                    <div>
-                      <div style={{ fontSize: '0.65rem', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.25rem' }}>Total Empleados</div>
-                      <div style={{ fontSize: '1.2rem', fontWeight: 600 }}>{group.employeesCount} liquidaciones</div>
-                    </div>
-                    <div>
-                      <div style={{ fontSize: '0.65rem', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.25rem' }}>Total Creado (Bruto Base)</div>
-                      <div className="font-mono" style={{ fontSize: '1.2rem', fontWeight: 600 }}>{formatQ(group.grossTotal)}</div>
-                    </div>
-                    <div>
-                      <div style={{ fontSize: '0.65rem', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.25rem' }}>Desembolso Total Neto</div>
-                      <div className="font-mono font-bold text-gold" style={{ fontSize: '1.3rem' }}>
-                        {formatQ(group.netTotal)}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ))}
-
-            {pagination.paginatedData.length > 0 && (
-              <div style={{ marginTop: '1rem' }}>
-                <Pagination {...pagination} />
-              </div>
-            )}
-
-            {filteredHistory.length === 0 && (
-              <div style={{ textAlign: 'center', padding: '4rem', color: 'var(--text-tertiary)' }}>
-                <History size={48} style={{ margin: '0 auto 1.5rem', opacity: 0.3 }} />
-                <h3 style={{ margin: '0 0 0.5rem 0', color: 'var(--text-primary)' }}>Historial Vacío</h3>
-                <p>Aún no hay nóminas procesadas en el sistema.</p>
-                <div style={{ marginTop: '1.5rem', fontSize: '0.85rem' }}>
-                  Dirígete a <strong>Proceso de Nómina</strong> y presiona "Cerrar Nómina" para registrar la primera.
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    </>
+          {filteredHistory.length === 0 && (
+            <VStack spacing={4} py={12} align="center" color="gray.500">
+              <History size={48} opacity={0.3} />
+              <Heading size="sm">Historial Vacío</Heading>
+              <Text fontSize="sm">Aún no hay nóminas procesadas en el sistema.</Text>
+            </VStack>
+          )}
+        </VStack>
+      </Box>
+    </Box>
   );
 }
 
-/* ========== FULL PAGE DETAIL VIEW ========== */
 function PayrollHistoryDetail({ group, onBack }) {
   const { bonuses } = useContext(DataContext);
   const { showToast } = useContext(AppContext);
   const [selectedVoucherEmp, setSelectedVoucherEmp] = useState(null);
 
-  // Combine all employees and calculate totals
+  // Combine and calculate
   const { data, totals } = useMemo(() => {
     const emps = [];
     let grossTotal = 0, dedTotal = 0, patronalTotal = 0;
     
     group.records.forEach(r => {
-      const list = r.details || r.employees || [];
+      const list = r.data || r.employees || [];
       const company = r.companies?.[0] || 'N/A';
       
       list.forEach(e => {
         const baseFactor = (e.days || 30) / 30;
-        const baseSalary = e.base * baseFactor;
-        const bonusLey = e.bonus * baseFactor;
+        const sueldoOrd = Number(e.sueldo_ordinario) || 0;
+        const bonInc = Number(e.bon_incentivo) || 0;
+        const bonDec = Number(e.bon_dec_37_2001) || 0;
+
+        const baseSalary = sueldoOrd * baseFactor;
+        const bonusLey = bonInc * baseFactor;
+        const bonusDec = bonDec * baseFactor;
+        const bonos = Number(e.extras?.bonos) || 0;
         
         const extrasTotal = (e.extras?.simplesVal || 0) + (e.extras?.doblesVal || 0) + (e.extras?.comisiones || 0) + (e.extras?.otrosIngresos || 0);
         const bonusesSum = Object.values(e.appliedBonuses || {}).reduce((a, b) => a + b, 0);
-        const gross = baseSalary + bonusLey + extrasTotal + bonusesSum;
+        const gross = baseSalary + bonusLey + bonusDec + bonos + extrasTotal + bonusesSum;
         
-        const igssLaboral = baseSalary * CUOTA_LABORAL_RATE;
-        const customDed = Object.values(e.deductions || {}).reduce((a, b) => a + b, 0);
-        const ded = customDed + igssLaboral;
-        
+        const ded = Object.values(e.deductions || {}).reduce((a, b) => a + b, 0);
         const patronal = baseSalary * CUOTA_PATRONAL_RATE;
         
         grossTotal += gross;
@@ -233,7 +258,7 @@ function PayrollHistoryDetail({ group, onBack }) {
         emps.push({
           ...e,
           company,
-          calculated: { baseSalary, bonusLey, extrasTotal, bonusesSum, gross, igssLaboral, customDed, ded, net: gross - ded }
+          calculated: { baseSalary, bonusLey, bonusDec, bonos, extrasTotal, bonusesSum, gross, ded, net: gross - ded }
         });
       });
     });
@@ -244,30 +269,52 @@ function PayrollHistoryDetail({ group, onBack }) {
   const exportExcel = () => {
     showToast('Generando Excel...', 'success');
     
-    // Prepare data for Excel
-    const rows = data.map(e => {
+    const rows = data.map((e, idx) => {
       const row = {
-        'Nombre': e.name,
-        'Rol': e.role,
+        'No.': idx + 1,
+        'Nombre': `${e.primer_nombre || e.nombres || ''} ${e.primer_apellido || e.apellidos || ''}`,
         'Empresa': e.company,
-        'Salario Base': e.calculated.baseSalary,
-        'Bono Ley': e.calculated.bonusLey,
-        'Horas Extras': e.calculated.extrasTotal
+        'Puesto': e.puesto || 'N/A',
+        'Días Laborados': e.days || 30,
+        'Salario Ordinario': e.calculated.baseSalary,
+        'Bono Incentivo': e.calculated.bonusLey,
+        'Bono Decreto 37-2001': e.calculated.bonusDec,
+        'Bonos': e.calculated.bonos,
+        'Total Devengado': e.calculated.gross,
+        'Horas Simples': e.extras?.simplesQty || 0,
+        'Valor Horas Simples': e.extras?.simplesVal || 0,
+        'Horas Dobles': e.extras?.doblesQty || 0,
+        'Valor Horas Dobles': e.extras?.doblesVal || 0,
+        'Otros Ingresos': e.extras?.otrosIngresos || 0,
+        'Salario Total': e.calculated.gross + (e.extras?.simplesVal || 0) + (e.extras?.doblesVal || 0) + (e.extras?.otrosIngresos || 0),
+        'IGSS': e.deductions?.igss || 0,
+        'ISR': e.deductions?.isr || 0,
+        'Cafetería': e.deductions?.cafe || 0,
+        'Celular': e.deductions?.cell || 0,
+        'Uniforme': e.deductions?.uniform || 0,
+        'Calzado': e.deductions?.shoes || 0,
+        'Equipo': e.deductions?.equipo || 0,
+        'Producto': e.deductions?.product || 0,
+        'Bancos': e.deductions?.bancos || 0,
+        'Otros Deducción': e.deductions?.otros || 0,
+        'Judiciales': e.deductions?.judiciales || 0,
+        'Seguro': e.deductions?.seguro || 0,
+        'Parqueo': e.deductions?.parqueo || 0,
+        'Boleta de Ornato': e.deductions?.boleto_de_ornato || 0,
+        'Otros Egresos': e.deductions?.otros_egresos || 0,
+        'Total Egresos': e.calculated.ded,
+        'Líquido a Recibir': e.calculated.net,
+        '1ra Quincena': e.calculated.net > 0 ? e.calculated.net / 2 : 0,
+        '2da Quincena': e.calculated.net > 0 ? e.calculated.net - (e.calculated.net / 2) : 0,
+        'Banco Deposito': e.banco || 'N/A',
+        'Cuenta Bancaria': e.no_cuenta || 'N/A',
       };
-      bonuses.forEach(b => {
-        row[`Bono: ${b.name}`] = e.appliedBonuses?.[b.id] || 0;
-      });
-      row['Devengado Bruto'] = e.calculated.gross;
-      row['IGSS Laboral'] = e.calculated.igssLaboral;
-      row['Otras Deducciones'] = e.calculated.customDed;
-      row['Neto a Recibir'] = e.calculated.net;
-      row['Cuenta Bancaria'] = e.bankAccount || 'N/A';
       return row;
     });
 
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Nómina");
+    XLSX.utils.book_append_sheet(wb, ws, "Historial Nómina");
     XLSX.writeFile(wb, `Nomina_${group.title.replace(/[^a-z0-9]/gi, '_')}.xlsx`);
   };
 
@@ -284,234 +331,493 @@ function PayrollHistoryDetail({ group, onBack }) {
       const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
       
       pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-      pdf.save(`Boleta_${selectedVoucherEmp.name.replace(/[^a-z0-9]/gi, '_')}.pdf`);
+      pdf.save(`Boleta_${selectedVoucherEmp.primer_nombre || selectedVoucherEmp.nombres || 'Empleado'}.pdf`);
     } catch (err) {
       console.error(err);
       showToast('Error al generar PDF', 'error');
     }
   };
 
+  const borderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
+  const theadBg = useColorModeValue('gray.100', 'gray.900');
+  const tdBg = useColorModeValue('white', 'gray.800');
+  const hoverBg = useColorModeValue('gray.50', 'whiteAlpha.50');
+
+  // Compute footer totals for history detail
+  const columnTotals = useMemo(() => {
+    let totSalarioOrd = 0, totBonInc = 0, totBonDec = 0, totBonos = 0, totDevengado = 0;
+    let totHorasSimples = 0, totValSimple = 0, totHorasDobles = 0, totValDouble = 0, totOtrosIngresos = 0, totSalarioTotal = 0;
+    let totIgss = 0, totIsr = 0, totCafe = 0, totCell = 0, totUniform = 0, totShoes = 0, totEquipo = 0, totProduct = 0, totBancos = 0, totOtros = 0, totJudiciales = 0, totSeguro = 0, totParqueo = 0, totBoleta = 0, totOtrosEgresos = 0, totTotalEgresos = 0;
+    let totLiquido = 0, totQuincena1 = 0, totQuincena2 = 0;
+
+    data.forEach(e => {
+      const baseFactor = (e.days || 30) / 30;
+      const sueldoOrd = Number(e.sueldo_ordinario) || 0;
+      const bonInc = Number(e.bon_incentivo) || 0;
+      const bonDec = Number(e.bon_dec_37_2001) || 0;
+
+      const baseSalary = sueldoOrd * baseFactor;
+      const bonusLey = bonInc * baseFactor;
+      const bonusDec = bonDec * baseFactor;
+      const bonos = Number(e.extras?.bonos) || 0;
+      const devengado = baseSalary + bonusLey + bonusDec + bonos;
+
+      const simplesQty = Number(e.extras?.simplesQty) || 0;
+      const simplesVal = Number(e.extras?.simplesVal) || 0;
+      const doblesQty = Number(e.extras?.doblesQty) || 0;
+      const doblesVal = Number(e.extras?.doblesVal) || 0;
+      const otrosIngresos = Number(e.extras?.otrosIngresos) || 0;
+      const salarioTotal = devengado + simplesVal + doblesVal + otrosIngresos;
+
+      const igss = Number(e.deductions?.igss) || 0;
+      const isr = Number(e.deductions?.isr) || 0;
+      const cafe = Number(e.deductions?.cafe) || 0;
+      const cell = Number(e.deductions?.cell) || 0;
+      const uniform = Number(e.deductions?.uniform) || 0;
+      const shoes = Number(e.deductions?.shoes) || 0;
+      const equipo = Number(e.deductions?.equipo) || 0;
+      const product = Number(e.deductions?.product) || 0;
+      const bancos = Number(e.deductions?.bancos) || 0;
+      const otros = Number(e.deductions?.otros) || 0;
+      const judiciales = Number(e.deductions?.judiciales) || 0;
+      const seguro = Number(e.deductions?.seguro) || 0;
+      const parqueo = Number(e.deductions?.parqueo) || 0;
+      const boleto_de_ornato = Number(e.deductions?.boleto_de_ornato) || 0;
+      const otros_egresos = Number(e.deductions?.otros_egresos) || 0;
+      
+      const totalEgresos = igss + isr + cafe + cell + uniform + shoes + equipo + product + bancos + otros + judiciales + seguro + parqueo + boleto_de_ornato + otros_egresos;
+      const liquido = salarioTotal - totalEgresos;
+      const q1 = liquido > 0 ? liquido / 2 : 0;
+      const q2 = liquido > 0 ? liquido - q1 : 0;
+
+      totSalarioOrd += baseSalary;
+      totBonInc += bonusLey;
+      totBonDec += bonusDec;
+      totBonos += bonos;
+      totDevengado += devengado;
+      totHorasSimples += simplesQty;
+      totValSimple += simplesVal;
+      totHorasDobles += doblesQty;
+      totValDouble += doblesVal;
+      totOtrosIngresos += otrosIngresos;
+      totSalarioTotal += salarioTotal;
+
+      totIgss += igss;
+      totIsr += isr;
+      totCafe += cafe;
+      totCell += cell;
+      totUniform += uniform;
+      totShoes += shoes;
+      totEquipo += equipo;
+      totProduct += product;
+      totBancos += bancos;
+      totOtros += otros;
+      totJudiciales += judiciales;
+      totSeguro += seguro;
+      totParqueo += parqueo;
+      totBoleta += boleto_de_ornato;
+      totOtrosEgresos += otros_egresos;
+      totTotalEgresos += totalEgresos;
+      totLiquido += liquido;
+      totQuincena1 += q1;
+      totQuincena2 += q2;
+    });
+
+    return {
+      totSalarioOrd, totBonInc, totBonDec, totBonos, totDevengado,
+      totHorasSimples, totValSimple, totHorasDobles, totValDouble, totOtrosIngresos, totSalarioTotal,
+      totIgss, totIsr, totCafe, totCell, totUniform, totShoes, totEquipo, totProduct, totBancos, totOtros, totJudiciales, totSeguro, totParqueo, totBoleta, totOtrosEgresos, totTotalEgresos,
+      totLiquido, totQuincena1, totQuincena2
+    };
+  }, [data]);
+
   return (
-    <>
-      <div className="page-header">
-        <div className="page-header-left" style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-          <button className="btn-icon" onClick={onBack} title="Volver al Historial">
-            <ArrowLeft size={20} />
-          </button>
-          <div>
-            <h1 style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-              {group.title}
-              <span className="badge badge-success" style={{ fontSize: '0.6rem' }}>Cerrada</span>
-            </h1>
-            <p>{data.length} empleados procesados en este periodo</p>
-          </div>
-        </div>
-        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-          <button className="btn btn-primary" onClick={exportExcel}>
-            <Download size={16} style={{ marginRight: '0.3rem' }} /> Exportar Reporte Total
-          </button>
-        </div>
-      </div>
+    <Box p={{ base: 4, md: 6 }}>
+      {/* Header */}
+      <Flex justify="space-between" align="center" mb={6} wrap="wrap" gap={4}>
+        <Flex align="center" gap={4}>
+          <IconButton aria-label="Back" icon={<ArrowLeft size={20} />} onClick={onBack} variant="ghost" />
+          <Box>
+            <Flex align="center" gap={3}>
+              <Heading size="md" fontWeight={800}>{group.title}</Heading>
+              <Badge colorScheme="green" variant="subtle" fontWeight={700}>Cerrada</Badge>
+            </Flex>
+            <Text fontSize="sm" color="gray.500">
+              {data.length} empleados procesados en este periodo
+            </Text>
+          </Box>
+        </Flex>
+        <Button colorScheme="brand" leftIcon={<Download size={16} />} onClick={exportExcel}>
+          Exportar Reporte Total (Excel)
+        </Button>
+      </Flex>
 
-      <div className="page-content">
-        {/* Summary strip */}
-        <div className="card animate-slide-up stagger-1" style={{ padding: '1.25rem 1.5rem', marginBottom: '1.25rem' }}>
-          <div style={{ display: 'flex', gap: '2.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
-            <SummaryStat label="Costo Bruto Total" value={formatQ(totals.grossTotal)} />
-            <div style={{ width: 1, height: 36, background: 'var(--border)' }} />
-            <SummaryStat label="Deducciones Totales" value={formatQ(totals.dedTotal)} color="var(--danger)" />
-            <div style={{ width: 1, height: 36, background: 'var(--border)' }} />
-            <SummaryStat label="Cuota Patronal (Ref.)" value={formatQ(totals.patronalTotal)} color="var(--warning)" />
-            <div style={{ width: 1, height: 36, background: 'var(--border)' }} />
-            <SummaryStat label="Neto Desembolsado" value={formatQ(totals.netTotal)} color="var(--accent-light)" large />
-          </div>
-        </div>
+      {/* Summary strip */}
+      <Flex 
+        p={6} 
+        mb={6} 
+        borderRadius="xl" 
+        border="1px solid" 
+        borderColor={borderColor} 
+        gap={8} 
+        wrap="wrap" 
+        align="center"
+        bg={tdBg}
+      >
+        <SummaryStat label="Costo Bruto Total" value={formatQ(totals.grossTotal)} />
+        <Divider orientation="vertical" h="40px" />
+        <SummaryStat label="Deducciones Totales" value={formatQ(totals.dedTotal)} color="red.500" />
+        <Divider orientation="vertical" h="40px" />
+        <SummaryStat label="Cuota Patronal Estimada" value={formatQ(totals.patronalTotal)} color="orange.400" />
+        <Divider orientation="vertical" h="40px" />
+        <SummaryStat label="Desembolso Neto" value={formatQ(totals.netTotal)} color="brand.500" large />
+      </Flex>
 
-        <div className="animate-fade stagger-2" style={{ marginTop: '1.5rem' }}>
-          <h3 style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '1rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            Desglose Detallado de Empleados
-          </h3>
-          <div className="table-wrap" style={{ overflowX: 'auto', border: '1px solid var(--border)' }}>
-            <table className="table" style={{ minWidth: '1300px' }}>
-              <thead>
-                <tr>
-                  <th style={{ minWidth: 200 }}>Empleado</th>
-                  <th>Empresa</th>
-                  <th style={{ textAlign: 'right' }}>Salario</th>
-                  <th style={{ textAlign: 'right' }}>Bono Ley</th>
-                  <th style={{ textAlign: 'right' }}>H. Extras y Otros</th>
-                  {bonuses.map(b => (
-                    <th key={b.id} style={{ textAlign: 'right' }}>{b.name}</th>
-                  ))}
-                  <th style={{ textAlign: 'right' }}>Devengado (Bruto)</th>
-                  <th style={{ textAlign: 'right' }}>IGSS</th>
-                  <th style={{ textAlign: 'right' }}>Otras Ded.</th>
-                  <th style={{ textAlign: 'right', background: 'var(--bg-hover)' }}>Neto (Líquido)</th>
-                  <th style={{ textAlign: 'center', width: '80px' }}>Boleta</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.map((e, idx) => {
-                  const { baseSalary, bonusLey, extrasTotal, gross, igssLaboral, customDed, net } = e.calculated;
-                  
-                  return (
-                    <tr key={e.id + '-' + idx}>
-                      <td>
-                        <div className="font-semibold text-primary" style={{ fontSize: '0.82rem' }}>{e.name}</div>
-                        <div style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)' }}>{e.role}</div>
-                      </td>
-                      <td><span className="badge badge-neutral" style={{ fontSize: '0.65rem' }}>{e.company}</span></td>
-                      <td style={{ textAlign: 'right' }} className="font-mono">{formatQ(baseSalary)}</td>
-                      <td style={{ textAlign: 'right' }} className="font-mono">{formatQ(bonusLey)}</td>
-                      <td style={{ textAlign: 'right' }} className="font-mono text-gold">{extrasTotal > 0 ? formatQ(extrasTotal) : '—'}</td>
-                      {bonuses.map(b => (
-                        <td key={b.id} style={{ textAlign: 'right' }} className="font-mono text-gold">{e.appliedBonuses?.[b.id] > 0 ? formatQ(e.appliedBonuses[b.id]) : '—'}</td>
-                      ))}
-                      <td style={{ textAlign: 'right' }} className="font-mono font-bold text-gold">{formatQ(gross)}</td>
-                      <td style={{ textAlign: 'right' }} className="font-mono" style={{ color: igssLaboral > 0 ? 'var(--danger)' : 'var(--text-tertiary)', textAlign: 'right' }}>
-                        {igssLaboral > 0 ? `- ${formatQ(igssLaboral)}` : '—'}
-                      </td>
-                      <td style={{ textAlign: 'right' }} className="font-mono" style={{ color: customDed > 0 ? 'var(--danger)' : 'var(--text-tertiary)', textAlign: 'right' }}>
-                        {customDed > 0 ? `- ${formatQ(customDed)}` : '—'}
-                      </td>
-                      <td style={{ textAlign: 'right', background: 'var(--bg-hover)' }}>
-                        <span className="font-mono font-bold text-primary" style={{ fontSize: '1.05rem' }}>{formatQ(net)}</span>
-                      </td>
-                      <td style={{ textAlign: 'center' }}>
-                        <button className="btn-icon" style={{ color: 'var(--accent)' }} title="Ver Boleta de Pago" onClick={() => setSelectedVoucherEmp(e)}>
-                          <FileText size={16} />
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
+      {/* Spreadsheet Table (Read-Only) */}
+      <Heading size="xs" color="gray.500" textTransform="uppercase" mb={3} letterSpacing="wider">
+        Desglose Completo de Pagos
+      </Heading>
 
-      {/* VOUCHER MODAL */}
-      {selectedVoucherEmp && (
-        <div className="modal-overlay" onClick={() => setSelectedVoucherEmp(null)} style={{ zIndex: 10000 }}>
-          <div className="modal-panel" onClick={e => e.stopPropagation()} style={{ maxWidth: '700px', padding: 0 }}>
-            <div className="modal-header" style={{ padding: '1rem 1.5rem', background: 'var(--bg-elevated)', borderBottom: '1px solid var(--border)' }}>
-              <h2>Boleta de Pago</h2>
-              <button className="btn-icon" onClick={() => setSelectedVoucherEmp(null)}><X size={18} /></button>
-            </div>
-            
-            <div id="voucher-content" className="modal-body" style={{ padding: '2rem', background: '#fff', color: '#1a1a1a' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '2px solid #e5e7eb', paddingBottom: '1rem', marginBottom: '1.5rem' }}>
-                <div>
-                  <h1 style={{ fontSize: '1.5rem', fontWeight: 800, margin: 0, color: '#111827' }}>{selectedVoucherEmp.company}</h1>
-                  <div style={{ fontSize: '0.8rem', color: '#6b7280', marginTop: '0.2rem' }}>Recibo de Nómina</div>
-                </div>
-                <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontSize: '0.9rem', fontWeight: 600, color: '#374151' }}>Periodo: {group.title}</div>
-                  <div style={{ fontSize: '0.8rem', color: '#6b7280' }}>Fecha de Pago: {group.closedAt}</div>
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2rem' }}>
-                <div>
-                  <div style={{ fontSize: '0.75rem', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Empleado</div>
-                  <div style={{ fontSize: '1.1rem', fontWeight: 700, color: '#111827' }}>{selectedVoucherEmp.name}</div>
-                  <div style={{ fontSize: '0.85rem', color: '#4b5563' }}>{selectedVoucherEmp.role} · {selectedVoucherEmp.dept}</div>
-                </div>
-                <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontSize: '0.75rem', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Depósito a Cuenta</div>
-                  <div style={{ fontSize: '1rem', fontWeight: 600, color: '#111827' }}>{selectedVoucherEmp.bankName || 'N/A'} - {selectedVoucherEmp.bankAccount || 'N/A'}</div>
-                  <div style={{ fontSize: '0.85rem', color: '#4b5563' }}>Afiliación IGSS: {selectedVoucherEmp.igssNumber || 'N/A'}</div>
-                </div>
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem', marginBottom: '2rem' }}>
-                {/* Ingresos */}
-                <div>
-                  <h4 style={{ fontSize: '0.9rem', fontWeight: 700, borderBottom: '1px solid #e5e7eb', paddingBottom: '0.5rem', marginBottom: '0.75rem', color: '#111827' }}>Ingresos</h4>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '0.5rem', color: '#374151' }}>
-                    <span>Salario Base</span>
-                    <span className="font-mono">{formatQ(selectedVoucherEmp.calculated.baseSalary)}</span>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '0.5rem', color: '#374151' }}>
-                    <span>Bono Decreto (Ley)</span>
-                    <span className="font-mono">{formatQ(selectedVoucherEmp.calculated.bonusLey)}</span>
-                  </div>
-                  {selectedVoucherEmp.calculated.extrasTotal > 0 && (
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '0.5rem', color: '#374151' }}>
-                      <span>Horas Extras / Comisiones</span>
-                      <span className="font-mono">{formatQ(selectedVoucherEmp.calculated.extrasTotal)}</span>
-                    </div>
-                  )}
-                  {bonuses.map(b => selectedVoucherEmp.appliedBonuses?.[b.id] > 0 && (
-                    <div key={b.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '0.5rem', color: '#374151' }}>
-                      <span>Bono: {b.name}</span>
-                      <span className="font-mono">{formatQ(selectedVoucherEmp.appliedBonuses[b.id])}</span>
-                    </div>
-                  ))}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem', fontWeight: 700, marginTop: '1rem', paddingTop: '0.5rem', borderTop: '1px dashed #d1d5db', color: '#111827' }}>
-                    <span>Total Ingresos Brutos</span>
-                    <span className="font-mono">{formatQ(selectedVoucherEmp.calculated.gross)}</span>
-                  </div>
-                </div>
-
-                {/* Deducciones */}
-                <div>
-                  <h4 style={{ fontSize: '0.9rem', fontWeight: 700, borderBottom: '1px solid #e5e7eb', paddingBottom: '0.5rem', marginBottom: '0.75rem', color: '#111827' }}>Deducciones</h4>
-                  {selectedVoucherEmp.calculated.igssLaboral > 0 && (
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '0.5rem', color: '#ef4444' }}>
-                      <span>IGSS Laboral (4.83%)</span>
-                      <span className="font-mono">{formatQ(selectedVoucherEmp.calculated.igssLaboral)}</span>
-                    </div>
-                  )}
-                  {Object.entries(selectedVoucherEmp.deductions).map(([k, v]) => v > 0 && (
-                    <div key={k} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '0.5rem', color: '#ef4444' }}>
-                      <span style={{ textTransform: 'capitalize' }}>Deducción: {k}</span>
-                      <span className="font-mono">{formatQ(v)}</span>
-                    </div>
-                  ))}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem', fontWeight: 700, marginTop: '1rem', paddingTop: '0.5rem', borderTop: '1px dashed #d1d5db', color: '#ef4444' }}>
-                    <span>Total Deducciones</span>
-                    <span className="font-mono">{formatQ(selectedVoucherEmp.calculated.ded)}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Total Neto */}
-              <div style={{ background: '#f3f4f6', padding: '1.5rem', borderRadius: '0.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: '1.1rem', fontWeight: 800, color: '#111827' }}>NETO A RECIBIR</span>
-                <span className="font-mono" style={{ fontSize: '1.5rem', fontWeight: 800, color: '#10b981' }}>{formatQ(selectedVoucherEmp.calculated.net)}</span>
-              </div>
+      <TableContainer border="1px solid" borderColor={borderColor} borderRadius="xl" overflowX="auto" bg={tdBg} maxH="500px">
+        <Table variant="simple" size="sm" layout="fixed" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
+          <Thead position="sticky" top={0} zIndex={15}>
+            <Tr bg={theadBg}>
+              <Th w="60px" position="sticky" left={0} zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">No.</Th>
+              <Th w="200px" position="sticky" left="60px" zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Nombre Empleado</Th>
+              <Th w="120px" position="sticky" left="260px" zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Empresa</Th>
+              <Th w="120px" position="sticky" left="380px" zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor} borderBottom="2px solid" borderBottomColor="brand.500" boxShadow="4px 0 8px -4px rgba(0,0,0,0.15)" fontSize="10px">Puesto</Th>
               
-              <div style={{ marginTop: '2rem', paddingTop: '2rem', borderTop: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
-                <div style={{ textAlign: 'center', width: '200px' }}>
-                  <div style={{ borderBottom: '1px solid #9ca3af', height: '40px' }}></div>
-                  <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '0.5rem' }}>Firma del Empleado</div>
-                </div>
-                <div style={{ fontSize: '0.7rem', color: '#9ca3af' }}>
-                  Documento generado electrónicamente el {new Date().toLocaleDateString()}
-                </div>
-              </div>
-            </div>
+              <Th w="75px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Días Lab.</Th>
+              <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">S. Ordinario</Th>
+              <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Bon. Incentivo</Th>
+              <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Bono Dec. 37-2001</Th>
+              <Th w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Bonos</Th>
+              <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="brand.500">T. Devengado</Th>
+              
+              <Th w="80px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Hrs Simples</Th>
+              <Th w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Val Hrs Simp</Th>
+              <Th w="80px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Hrs Dobles</Th>
+              <Th w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Val Hrs Dobl</Th>
+              <Th w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Otros Ingr.</Th>
+              <Th w="115px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="gold.500">Salario Total</Th>
+              
+              <Th w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">IGSS</Th>
+              <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">ISR</Th>
+              <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Cafetería</Th>
+              <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Celular</Th>
+              <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Uniforme</Th>
+              <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Calzado</Th>
+              <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Equipo</Th>
+              <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Producto</Th>
+              <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Bancos</Th>
+              <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Otros</Th>
+              <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Judiciales</Th>
+              <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Seguro</Th>
+              <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Parqueo</Th>
+              <Th w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Bol. Ornato</Th>
+              <Th w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Otros Egr.</Th>
+              <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.500">Total Egresos</Th>
+              
+              <Th w="120px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="brand.500">Liquido Recibir</Th>
+              <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">1ra Quincena</Th>
+              <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">2da Quincena</Th>
+              <Th w="80px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" textAlign="center">Boleta</Th>
+            </Tr>
+          </Thead>
+          <Tbody>
+            {data.map((e, idx) => {
+              const { baseSalary, bonusLey, bonusDec, bonos, extrasTotal, gross, ded, net } = e.calculated;
+              const q1 = net > 0 ? net / 2 : 0;
+              const q2 = net > 0 ? net - q1 : 0;
 
-            <div className="modal-footer" style={{ background: 'var(--bg-base)', borderTop: '1px solid var(--border)' }}>
-              <button className="btn btn-ghost" onClick={() => setSelectedVoucherEmp(null)}>Cerrar</button>
-              <button className="btn btn-primary" onClick={exportPDF}>
-                <FileText size={16} /> Descargar PDF
-              </button>
-            </div>
-          </div>
-        </div>
+              return (
+                <Tr key={e.id + '-' + idx} _hover={{ bg: hoverBg }}>
+                  <Td position="sticky" left={0} zIndex={5} bg={tdBg} borderRight="1px solid" borderColor={borderColor} fontWeight="bold" fontSize="xs">
+                    {idx + 1}
+                  </Td>
+                  <Td position="sticky" left="60px" zIndex={5} bg={tdBg} borderRight="1px solid" borderColor={borderColor} fontWeight="600" color="brand.500" fontSize="xs" isTruncated maxW="200px">
+                    {`${e.primer_nombre || e.nombres || ''} ${e.primer_apellido || e.apellidos || ''}`}
+                  </Td>
+                  <Td position="sticky" left="260px" zIndex={5} bg={tdBg} borderRight="1px solid" borderColor={borderColor} fontSize="xs" isTruncated maxW="120px">
+                    {e.company || 'Sin Empresa'}
+                  </Td>
+                  <Td position="sticky" left="380px" zIndex={5} bg={tdBg} borderRight="1px solid" borderColor={borderColor} boxShadow="4px 0 8px -4px rgba(0,0,0,0.15)" fontSize="xs" isTruncated maxW="120px">
+                    {e.puesto || 'Sin Puesto'}
+                  </Td>
+
+                  <Td fontSize="xs">{e.days || 30}</Td>
+                  <Td fontFamily="mono" fontSize="xs">{formatQ(baseSalary)}</Td>
+                  <Td fontFamily="mono" fontSize="xs">{formatQ(bonusLey)}</Td>
+                  <Td fontFamily="mono" fontSize="xs">{formatQ(bonusDec)}</Td>
+                  <Td fontFamily="mono" fontSize="xs">{formatQ(bonos)}</Td>
+                  <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500">{formatQ(gross)}</Td>
+                  
+                  <Td fontSize="xs">{e.extras?.simplesQty || 0}</Td>
+                  <Td fontFamily="mono" fontSize="xs">{formatQ(e.extras?.simplesVal || 0)}</Td>
+                  <Td fontSize="xs">{e.extras?.doblesQty || 0}</Td>
+                  <Td fontFamily="mono" fontSize="xs">{formatQ(e.extras?.doblesVal || 0)}</Td>
+                  <Td fontFamily="mono" fontSize="xs">{formatQ(e.extras?.otrosIngresos || 0)}</Td>
+                  <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="gold.500">{formatQ(gross + (e.extras?.simplesVal || 0) + (e.extras?.doblesVal || 0) + (e.extras?.otrosIngresos || 0) - (baseSalary + bonusLey + bonusDec + bonos))}</Td>
+
+                  <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.igss || 0)}</Td>
+                  <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.isr || 0)}</Td>
+                  <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.cafe || 0)}</Td>
+                  <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.cell || 0)}</Td>
+                  <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.uniform || 0)}</Td>
+                  <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.shoes || 0)}</Td>
+                  <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.equipo || 0)}</Td>
+                  <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.product || 0)}</Td>
+                  <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.bancos || 0)}</Td>
+                  <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.otros || 0)}</Td>
+                  <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.judiciales || 0)}</Td>
+                  <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.seguro || 0)}</Td>
+                  <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.parqueo || 0)}</Td>
+                  <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.boleto_de_ornato || 0)}</Td>
+                  <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.otros_egresos || 0)}</Td>
+                  <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="red.500">{formatQ(ded)}</Td>
+                  
+                  <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500">{formatQ(net)}</Td>
+                  <Td fontFamily="mono" fontSize="xs" color="gray.500">{formatQ(q1)}</Td>
+                  <Td fontFamily="mono" fontSize="xs" color="gray.500">{formatQ(q2)}</Td>
+                  
+                  <Td textAlign="center">
+                    <IconButton 
+                      aria-label="Ver Boleta" 
+                      icon={<FileText size={16} />} 
+                      size="xs" 
+                      colorScheme="brand" 
+                      variant="ghost" 
+                      onClick={() => setSelectedVoucherEmp(e)} 
+                    />
+                  </Td>
+                </Tr>
+              );
+            })}
+          </Tbody>
+          {/* Footer totals */}
+          <Thead position="sticky" bottom={0} zIndex={15} bg={theadBg}>
+            <Tr borderTop="2px solid" borderColor="brand.500">
+              <Th position="sticky" left={0} zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor}>TOTAL</Th>
+              <Th position="sticky" left="60px" zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor}>CONSOLIDADO</Th>
+              <Th position="sticky" left="260px" zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor}></Th>
+              <Th position="sticky" left="380px" zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor} boxShadow="4px 0 8px -4px rgba(0,0,0,0.15)"></Th>
+              
+              <Th>{data.length} Emps</Th>
+              <Th fontFamily="mono" fontSize="xs">{formatQ(columnTotals.totSalarioOrd)}</Th>
+              <Th fontFamily="mono" fontSize="xs">{formatQ(columnTotals.totBonInc)}</Th>
+              <Th fontFamily="mono" fontSize="xs">{formatQ(columnTotals.totBonDec)}</Th>
+              <Th fontFamily="mono" fontSize="xs">{formatQ(columnTotals.totBonos)}</Th>
+              <Th fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500">{formatQ(columnTotals.totDevengado)}</Th>
+              
+              <Th>{columnTotals.totHorasSimples}</Th>
+              <Th fontFamily="mono" fontSize="xs">{formatQ(columnTotals.totValSimple)}</Th>
+              <Th>{columnTotals.totHorasDobles}</Th>
+              <Th fontFamily="mono" fontSize="xs">{formatQ(columnTotals.totValDouble)}</Th>
+              <Th fontFamily="mono" fontSize="xs">{formatQ(columnTotals.totOtrosIngresos)}</Th>
+              <Th fontFamily="mono" fontSize="xs" fontWeight="bold" color="gold.500">{formatQ(columnTotals.totSalarioTotal)}</Th>
+              
+              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totIgss)}</Th>
+              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totIsr)}</Th>
+              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totCafe)}</Th>
+              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totCell)}</Th>
+              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totUniform)}</Th>
+              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totShoes)}</Th>
+              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totEquipo)}</Th>
+              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totProduct)}</Th>
+              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totBancos)}</Th>
+              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totOtros)}</Th>
+              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totJudiciales)}</Th>
+              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totSeguro)}</Th>
+              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totParqueo)}</Th>
+              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totBoleta)}</Th>
+              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totOtrosEgresos)}</Th>
+              <Th fontFamily="mono" fontSize="xs" fontWeight="bold" color="red.500">{formatQ(columnTotals.totTotalEgresos)}</Th>
+              
+              <Th fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500">{formatQ(columnTotals.totLiquido)}</Th>
+              <Th fontFamily="mono" fontSize="xs">{formatQ(columnTotals.totQuincena1)}</Th>
+              <Th fontFamily="mono" fontSize="xs">{formatQ(columnTotals.totQuincena2)}</Th>
+              <Th></Th>
+            </Tr>
+          </Thead>
+        </Table>
+      </TableContainer>
+
+      {/* Voucher slip display Modal */}
+      {selectedVoucherEmp && (
+        <Modal isOpen={!!selectedVoucherEmp} onClose={() => setSelectedVoucherEmp(null)} size="xl">
+          <ModalOverlay />
+          <ModalContent borderRadius="xl">
+            <ModalHeader fontWeight={800} borderBottom="1px solid" borderColor={borderColor}>
+              Boleta de Pago
+            </ModalHeader>
+            <ModalCloseButton />
+            <ModalBody p={0} bg="white">
+              {/* Captured printable voucher container */}
+              <Box id="voucher-content" p={8} bg="white" color="gray.800" fontFamily="sans-serif">
+                <Flex justify="space-between" borderBottom="2px solid" borderColor="gray.200" pb={4} mb={6}>
+                  <Box>
+                    <Heading size="md" fontWeight={800} color="gray.900">
+                      {selectedVoucherEmp.company}
+                    </Heading>
+                    <Text fontSize="xs" color="gray.500" mt={1}>
+                      Recibo de Pago de Planilla
+                    </Text>
+                  </Box>
+                  <VStack align="end" spacing={1}>
+                    <Text fontSize="sm" fontWeight={700} color="gray.700">
+                      Periodo: {group.title}
+                    </Text>
+                    <Text fontSize="xs" color="gray.500">
+                      Fecha de Pago: {new Date(group.date).toLocaleDateString()}
+                    </Text>
+                  </VStack>
+                </Flex>
+
+                <Flex justify="space-between" mb={8} wrap="wrap" gap={4}>
+                  <Box>
+                    <Text fontSize="9px" color="gray.400" textTransform="uppercase" letterSpacing="wider">Empleado</Text>
+                    <Text fontSize="md" fontWeight={800} color="gray.900">
+                      {`${selectedVoucherEmp.primer_nombre || selectedVoucherEmp.nombres || ''} ${selectedVoucherEmp.primer_apellido || selectedVoucherEmp.apellidos || ''}`}
+                    </Text>
+                    <Text fontSize="xs" color="gray.600">
+                      Puesto: {selectedVoucherEmp.puesto || 'N/A'}
+                    </Text>
+                  </Box>
+                  <VStack align="end" spacing={1}>
+                    <Text fontSize="9px" color="gray.400" textTransform="uppercase" letterSpacing="wider">Depósito Bancario</Text>
+                    <Text fontSize="xs" fontWeight={700} color="gray.900">
+                      {selectedVoucherEmp.banco || 'N/A'} - {selectedVoucherEmp.no_cuenta || 'N/A'}
+                    </Text>
+                    <Text fontSize="xs" color="gray.600">
+                      Afiliación IGSS: {selectedVoucherEmp.no_igss || 'N/A'}
+                    </Text>
+                  </VStack>
+                </Flex>
+
+                <SimpleGrid columns={2} spacing={10} mb={8}>
+                  {/* Income column */}
+                  <Box>
+                    <Heading size="xs" borderBottom="1px solid" borderColor="gray.200" pb={2} mb={3} color="gray.900">
+                      Ingresos
+                    </Heading>
+                    <VStack align="stretch" spacing={2} fontSize="xs">
+                      <Flex justify="space-between">
+                        <Text>Salario Ordinario</Text>
+                        <Text fontFamily="mono" fontWeight={600}>{formatQ(selectedVoucherEmp.calculated.baseSalary)}</Text>
+                      </Flex>
+                      <Flex justify="space-between">
+                        <Text>Bono Incentivo (Ley)</Text>
+                        <Text fontFamily="mono" fontWeight={600}>{formatQ(selectedVoucherEmp.calculated.bonusLey)}</Text>
+                      </Flex>
+                      <Flex justify="space-between">
+                        <Text>Bono Decreto 37-2001</Text>
+                        <Text fontFamily="mono" fontWeight={600}>{formatQ(selectedVoucherEmp.calculated.bonusDec)}</Text>
+                      </Flex>
+                      {selectedVoucherEmp.calculated.bonos > 0 && (
+                        <Flex justify="space-between">
+                          <Text>Otros Bonos</Text>
+                          <Text fontFamily="mono" fontWeight={600}>{formatQ(selectedVoucherEmp.calculated.bonos)}</Text>
+                        </Flex>
+                      )}
+                      {selectedVoucherEmp.calculated.extrasTotal > 0 && (
+                        <Flex justify="space-between">
+                          <Text>Horas Extras y Otros</Text>
+                          <Text fontFamily="mono" fontWeight={600}>{formatQ(selectedVoucherEmp.calculated.extrasTotal)}</Text>
+                        </Flex>
+                      )}
+                      <Flex justify="space-between" borderTop="1px dashed" borderColor="gray.300" pt={2} fontWeight={700} color="gray.900">
+                        <Text>Total Ingresos Brutos</Text>
+                        <Text fontFamily="mono">{formatQ(selectedVoucherEmp.calculated.gross)}</Text>
+                      </Flex>
+                    </VStack>
+                  </Box>
+
+                  {/* Deductions column */}
+                  <Box>
+                    <Heading size="xs" borderBottom="1px solid" borderColor="gray.200" pb={2} mb={3} color="gray.900">
+                      Deducciones
+                    </Heading>
+                    <VStack align="stretch" spacing={2} fontSize="xs">
+                      {Object.entries(selectedVoucherEmp.deductions || {}).map(([key, val]) => {
+                        const numVal = Number(val) || 0;
+                        if (numVal <= 0) return null;
+                        
+                        // Map technical names to readable labels
+                        const labelMap = {
+                          igss: 'IGSS Laboral (4.83%)',
+                          isr: 'ISR Retención',
+                          cafe: 'Cafetería',
+                          cell: 'Consumo Celular',
+                          uniform: 'Descuento Uniforme',
+                          shoes: 'Descuento Calzado',
+                          equipo: 'Descuento Equipo',
+                          product: 'Compra Producto',
+                          bancos: 'Retención Bancos',
+                          otros: 'Otros Descuentos',
+                          judiciales: 'Retención Judicial',
+                          seguro: 'Seguro Médico/Vida',
+                          parqueo: 'Servicio Parqueo',
+                          boleto_de_ornato: 'Boleta de Ornato',
+                          otros_egresos: 'Otros Egresos'
+                        };
+
+                        return (
+                          <Flex justify="space-between" key={key} color="red.600">
+                            <Text>{labelMap[key] || key}</Text>
+                            <Text fontFamily="mono" fontWeight={600}>{formatQ(numVal)}</Text>
+                          </Flex>
+                        );
+                      })}
+                      <Flex justify="space-between" borderTop="1px dashed" borderColor="gray.300" pt={2} fontWeight={700} color="red.600">
+                        <Text>Total Egresos</Text>
+                        <Text fontFamily="mono">{formatQ(selectedVoucherEmp.calculated.ded)}</Text>
+                      </Flex>
+                    </VStack>
+                  </Box>
+                </SimpleGrid>
+
+                {/* Net Pay Box */}
+                <Flex bg="gray.100" p={4} borderRadius="lg" justify="space-between" align="center" mb={8}>
+                  <Text fontSize="sm" fontWeight={800} color="gray.900">LÍQUIDO A RECIBIR</Text>
+                  <Text fontFamily="mono" fontSize="xl" fontWeight={900} color="green.500">
+                    {formatQ(selectedVoucherEmp.calculated.net)}
+                  </Text>
+                </Flex>
+
+                {/* Signature Lines */}
+                <Flex justify="space-between" align="end" mt={12} pt={6} borderTop="1px solid" borderColor="gray.100">
+                  <Box w="200px" textAlign="center">
+                    <Box borderBottom="1px solid" borderColor="gray.400" h="40px" />
+                    <Text fontSize="10px" color="gray.400" mt={2}>Firma del Empleado</Text>
+                  </Box>
+                  <Text fontSize="9px" color="gray.400">
+                    Generado el {new Date(group.date).toLocaleDateString()}
+                  </Text>
+                </Flex>
+              </Box>
+            </ModalBody>
+            <ModalFooter bg={tdBg} borderTop="1px solid" borderColor={borderColor}>
+              <Button variant="ghost" mr={3} onClick={() => setSelectedVoucherEmp(null)}>Cerrar</Button>
+              <Button colorScheme="brand" leftIcon={<FileText size={16} />} onClick={exportPDF}>
+                Descargar PDF boleta
+              </Button>
+            </ModalFooter>
+          </ModalContent>
+        </Modal>
       )}
-    </>
+    </Box>
   );
 }
 
 function SummaryStat({ label, value, color, large }) {
   return (
-    <div>
-      <div style={{ fontSize: '0.68rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', marginBottom: '0.2rem' }}>{label}</div>
-      <div className="font-mono" style={{ fontSize: large ? '1.35rem' : '1.1rem', fontWeight: 800, color: color || 'var(--gold-light)', letterSpacing: '-0.02em' }}>{value}</div>
-    </div>
+    <Box>
+      <Text fontSize="xs" fontWeight={600} color="gray.500" textTransform="uppercase" letterSpacing="0.05em" mb={1}>
+        {label}
+      </Text>
+      <Text fontFamily="mono" fontWeight={800} fontSize={large ? '2xl' : 'xl'} color={color || 'gold.500'} letterSpacing="-0.02em">
+        {value}
+      </Text>
+    </Box>
   );
 }
