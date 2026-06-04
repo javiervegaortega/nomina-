@@ -366,7 +366,6 @@ function KpiCard({ icon, iconBg, iconColor, glowColor, label, value, trend, tren
       overflow="hidden"
       transition="all 0.3s cubic-bezier(0.4, 0, 0.2, 1)"
       _hover={{
-        transform: 'translateY(-3px)',
         boxShadow: hoverShadow,
         borderColor: iconColor,
       }}

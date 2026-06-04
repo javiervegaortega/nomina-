@@ -14,7 +14,8 @@ import {
   Tabs, TabList, Tab,
   Table, Thead, Tbody, Tr, Th, Td, TableContainer,
   Badge, Divider, useColorModeValue, Center, Tag, HStack, VStack, Checkbox, ButtonGroup, Card, CardHeader, CardBody, CardFooter, Stat, StatLabel, StatNumber, StatGroup,
-  AlertDialog, AlertDialogOverlay, AlertDialogContent, AlertDialogHeader, AlertDialogBody, AlertDialogFooter, useDisclosure
+  AlertDialog, AlertDialogOverlay, AlertDialogContent, AlertDialogHeader, AlertDialogBody, AlertDialogFooter, useDisclosure,
+  Drawer, DrawerBody, DrawerFooter, DrawerHeader, DrawerOverlay, DrawerContent, DrawerCloseButton, TabPanels, TabPanel, InputRightAddon
 } from '@chakra-ui/react';
 
 const TABS = [
@@ -40,24 +41,47 @@ function PayrollHub({ onSelectDraft }) {
   const [title, setTitle] = useState('');
   const [draftDate, setDraftDate] = useState('');
   const [selectedCompany, setSelectedCompany] = useState('');
+  const [periodType, setPeriodType] = useState('1ra');
 
   const handleCreateOrUpdate = async () => {
     if (!title || !selectedCompany) return;
     
     if (editingDraftId) {
-      await updateDraftMetadata(editingDraftId, title, [selectedCompany], draftDate ? new Date(draftDate).toISOString() : new Date().toISOString());
+      await updateDraftMetadata(editingDraftId, title, [selectedCompany], draftDate ? new Date(draftDate).toISOString() : new Date().toISOString(), periodType);
       setShowModal(false);
       showToast('Borrador actualizado', 'success');
     } else {
-      const newId = createActivePayroll(title, [selectedCompany]);
-      setShowModal(false);
-      onSelectDraft(newId);
+      const isDuplicate = activePayrolls.some(p => {
+        let pComp = '';
+        if (Array.isArray(p.companies) && p.companies.length > 0) pComp = p.companies[0];
+        else if (typeof p.companies === 'string') {
+          try { const parsed = JSON.parse(p.companies); pComp = parsed[0] || ''; } catch(e) {}
+        }
+        return p.title === title || pComp === selectedCompany;
+      });
+
+      const createAction = async () => {
+        try {
+          const newId = await createActivePayroll(title, [selectedCompany], periodType);
+          setShowModal(false);
+          onSelectDraft(newId);
+        } catch (err) {
+          showToast(err.message, 'danger');
+        }
+      };
+
+      if (isDuplicate) {
+        confirmAction('Ya existe un borrador activo con el mismo nombre y/o empresa principal. ¿Estás seguro de que deseas crear otro borrador con estos datos?', createAction);
+      } else {
+        createAction();
+      }
     }
   };
 
   const openEditModal = (draft) => {
     setEditingDraftId(draft.id);
     setTitle(draft.title || '');
+    setPeriodType(draft.periodType || '1ra');
     const dateStr = draft.createdAt ? new Date(draft.createdAt).toISOString().split('T')[0] : '';
     setDraftDate(dateStr);
     
@@ -93,6 +117,7 @@ function PayrollHub({ onSelectDraft }) {
             setTitle('');
             setDraftDate(new Date().toISOString().split('T')[0]);
             setSelectedCompany('');
+            setPeriodType('1ra');
             setShowModal(true);
           }}
         >
@@ -111,7 +136,7 @@ function PayrollHub({ onSelectDraft }) {
             borderColor={borderColor}
             position="relative"
             transition="all 0.3s"
-            _hover={{ transform: 'translateY(-4px)', boxShadow: 'lg' }}
+            _hover={{ boxShadow: 'lg' }}
           >
             <Flex position="absolute" top={3} right={3} gap={1}>
               <IconButton 
@@ -143,6 +168,9 @@ function PayrollHub({ onSelectDraft }) {
               </Center>
               <Box>
                 <Heading size="sm" fontWeight={700} maxW="200px" isTruncated>{draft.title}</Heading>
+                <Badge colorScheme={draft.periodType === '2da' ? 'purple' : 'teal'} mt={1} mb={1}>
+                  {draft.periodType === '2da' ? '2da Quincena' : '1ra Quincena'}
+                </Badge>
                 <Text fontSize="xs" color="gray.500">
                   Creada: {new Date(draft.createdAt).toLocaleDateString()}
                 </Text>
@@ -161,13 +189,16 @@ function PayrollHub({ onSelectDraft }) {
                   else if (typeof draft.companies === 'string') {
                     try { companiesArr = JSON.parse(draft.companies); } catch(e) {}
                   }
-                  
                   if (!companiesArr || companiesArr.length === 0) {
                     return <Badge size="sm">Todas</Badge>;
                   }
                   return (
                     <Flex gap={1} wrap="wrap">
-                      {companiesArr.map(c => <Badge key={c} colorScheme="brand" variant="subtle">{c}</Badge>)}
+                      {companiesArr.map(cId => {
+                        const comp = companies.find(comp => comp.id?.toString() === cId?.toString() || comp.nombre_comercial === cId);
+                        const displayName = comp ? (comp.nombre_comercial || comp.nit) : cId;
+                        return <Badge key={cId} colorScheme="brand" variant="subtle">{displayName}</Badge>;
+                      })}
                     </Flex>
                   );
                 })()}
@@ -227,6 +258,16 @@ function PayrollHub({ onSelectDraft }) {
                   value={draftDate}
                   onChange={e => setDraftDate(e.target.value)}
                 />
+              </FormControl>
+              <FormControl>
+                <FormLabel>Periodo</FormLabel>
+                <Select
+                  value={periodType}
+                  onChange={e => setPeriodType(e.target.value)}
+                >
+                  <option value="1ra">Primera Quincena</option>
+                  <option value="2da">Segunda Quincena</option>
+                </Select>
               </FormControl>
               <FormControl>
                 <FormLabel>Empresa</FormLabel>
@@ -440,6 +481,7 @@ function PayrollEditor({ draftId, onBack }) {
         {tab === 'payments' && (
           <ListadoPagosTab 
             data={filteredEmployees} 
+            periodType={draft?.periodType || '1ra'}
             onChange={handleChange} 
             editingCell={editingCell} 
             setEditingCell={setEditingCell}
@@ -489,7 +531,7 @@ function PayrollEditor({ draftId, onBack }) {
 }
 
 function ListadoPagosTab({ 
-  data, onChange, editingCell, setEditingCell, 
+  data, periodType, onChange, editingCell, setEditingCell, 
   areas, departments, 
   filterArea, setFilterArea, 
   filterDept, setFilterDept, 
@@ -497,11 +539,20 @@ function ListadoPagosTab({
   handleClose 
 }) {
   const { companies } = useContext(DataContext);
-  const [viewMode, setViewMode] = useState('table');
+  const [viewMode, setViewMode] = useState('summary');
   const borderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
   const theadBg = useColorModeValue('gray.100', 'gray.900');
   const tdBg = useColorModeValue('white', 'gray.800');
   const hoverBg = useColorModeValue('gray.50', 'whiteAlpha.50');
+
+  // Drawer State
+  const { isOpen: isDrawerOpen, onOpen: onDrawerOpen, onClose: onDrawerClose } = useDisclosure();
+  const [selectedEmp, setSelectedEmp] = useState(null);
+
+  const handleOpenDrawer = (emp) => {
+    setSelectedEmp(emp);
+    onDrawerOpen();
+  };
 
   // Compute column totals for the footer
   const columnTotals = useMemo(() => {
@@ -544,11 +595,12 @@ function ListadoPagosTab({
       const parqueo = Number(e.deductions?.parqueo) || 0;
       const boleto_de_ornato = Number(e.deductions?.boleto_de_ornato) || 0;
       const otros_egresos = Number(e.deductions?.otros_egresos) || 0;
+      const anticipo = Number(e.anticipo1ra) || 0;
       
       const totalEgresos = igss + isr + cafe + cell + uniform + shoes + equipo + product + bancos + otros + judiciales + seguro + parqueo + boleto_de_ornato + otros_egresos;
-      const liquido = salarioTotal - totalEgresos;
-      const q1 = liquido > 0 ? liquido / 2 : 0;
-      const q2 = liquido > 0 ? liquido - q1 : 0;
+      const liquido = salarioTotal - totalEgresos; // For 2da, this is the FULL month's net
+      const q1 = periodType === '2da' ? anticipo : liquido;
+      const q2 = periodType === '2da' ? liquido - anticipo : 0;
 
       totSalarioOrd += baseSalary;
       totBonInc += bonusLey;
@@ -589,7 +641,7 @@ function ListadoPagosTab({
       totIgss, totIsr, totCafe, totCell, totUniform, totShoes, totEquipo, totProduct, totBancos, totOtros, totJudiciales, totSeguro, totParqueo, totBoleta, totOtrosEgresos, totTotalEgresos,
       totLiquido, totQuincena1, totQuincena2
     };
-  }, [data]);
+  }, [data, periodType]);
 
   const { confirmAction, showToast } = useContext(AppContext);
 
@@ -637,16 +689,16 @@ function ListadoPagosTab({
             />
           </InputGroup>
           <ButtonGroup size="sm" isAttached variant="outline">
-            <IconButton icon={<List size={16} />} aria-label="Table View" onClick={() => setViewMode('table')} isActive={viewMode === 'table'} />
-            <IconButton icon={<LayoutGrid size={16} />} aria-label="Grid View" onClick={() => setViewMode('grid')} isActive={viewMode === 'grid'} />
+            <Button onClick={() => setViewMode('summary')} isActive={viewMode === 'summary'}>Vista Resumen</Button>
+            <Button onClick={() => setViewMode('detailed')} isActive={viewMode === 'detailed'}>Vista Detallada</Button>
           </ButtonGroup>
         </HStack>
       </Flex>
 
-      {/* Spreadsheet Table or Grid View */}
-      {viewMode === 'table' ? (
+      {/* Spreadsheet Table or Summary View */}
+      {viewMode === 'detailed' ? (
         <TableContainer border="1px solid" borderColor={borderColor} borderRadius="xl" overflowX="auto" bg={tdBg} maxH="550px">
-        <Table variant="simple" size="sm" layout="fixed" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
+        <Table variant="simple" size="sm" layout="fixed" style={{ borderCollapse: 'separate', borderSpacing: 0, width: 'max-content' }}>
           <Thead position="sticky" top={0} zIndex={15}>
             <Tr>
               {/* Sticky Headers */}
@@ -657,18 +709,18 @@ function ListadoPagosTab({
               
               {/* Normal Headers */}
               <Th w="75px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Días Lab.</Th>
-              <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">S. Ordinario</Th>
-              <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Bon. Incentivo</Th>
-              <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Bono Dec. 37-2001</Th>
+              <Th w="120px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">S. Ordinario</Th>
+              <Th w="120px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Bon. Incentivo</Th>
+              <Th w="140px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Bono Dec. 37-2001</Th>
               <Th w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Bonos</Th>
-              <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="brand.500">T. Devengado</Th>
+              <Th w="120px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="brand.500">T. Devengado</Th>
               
               <Th w="80px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Hrs Simples</Th>
-              <Th w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Val Hrs Simp</Th>
+              <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Val Hrs Simp</Th>
               <Th w="80px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Hrs Dobles</Th>
-              <Th w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Val Hrs Dobl</Th>
+              <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Val Hrs Dobl</Th>
               <Th w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Otros Ingr.</Th>
-              <Th w="115px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="gold.500">Salario Total</Th>
+              <Th w="130px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="gold.500">Salario Total</Th>
               
               <Th w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">IGSS</Th>
               <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">ISR</Th>
@@ -685,11 +737,15 @@ function ListadoPagosTab({
               <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Parqueo</Th>
               <Th w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Bol. Ornato</Th>
               <Th w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Otros Egr.</Th>
-              <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.500">Total Egresos</Th>
+              <Th w="130px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.500">Total Egresos</Th>
               
-              <Th w="120px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="brand.500">Liquido Recibir</Th>
-              <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">1ra Quincena</Th>
-              <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">2da Quincena</Th>
+              <Th w="120px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="brand.500">Liquido a Recibir</Th>
+              {periodType === '2da' && (
+                <>
+                  <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">1ra Quincena</Th>
+                  <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">2da Quincena</Th>
+                </>
+              )}
             </Tr>
           </Thead>
           <Tbody>
@@ -730,11 +786,12 @@ function ListadoPagosTab({
               const parqueo = Number(e.deductions?.parqueo) || 0;
               const boleto_de_ornato = Number(e.deductions?.boleto_de_ornato) || 0;
               const otros_egresos = Number(e.deductions?.otros_egresos) || 0;
+              const anticipo = Number(e.anticipo1ra) || 0;
 
               const totalEgresos = igss + isr + cafe + cell + uniform + shoes + equipo + product + bancos + otros + judiciales + seguro + parqueo + boleto_de_ornato + otros_egresos;
               const liquido = salarioTotal - totalEgresos;
-              const q1 = liquido > 0 ? liquido / 2 : 0;
-              const q2 = liquido > 0 ? liquido - q1 : 0;
+              const q1 = periodType === '2da' ? anticipo : liquido;
+              const q2 = periodType === '2da' ? liquido - anticipo : 0;
 
               return (
                 <Tr key={e.id} _hover={{ bg: hoverBg }}>
@@ -784,9 +841,15 @@ function ListadoPagosTab({
                   <EditableCell id={e.id} field="otros_egresos" section="deductions" value={e.deductions?.otros_egresos || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={85} isMoney isDanger />
                   <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="red.500">{formatQ(totalEgresos)}</Td>
                   
-                  <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500">{formatQ(liquido)}</Td>
-                  <Td fontFamily="mono" fontSize="xs" color="gray.500">{formatQ(q1)}</Td>
-                  <Td fontFamily="mono" fontSize="xs" color="gray.500">{formatQ(q2)}</Td>
+                  <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500" bg={useColorModeValue('brand.50', 'brand.900')}>
+                    {periodType === '2da' ? formatQ(liquido) : formatQ(liquido)}
+                  </Td>
+                  {periodType === '2da' && (
+                    <>
+                      <Td fontFamily="mono" fontSize="xs" color="gray.500">{formatQ(q1)}</Td>
+                      <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="green.500">{formatQ(q2)}</Td>
+                    </>
+                  )}
                 </Tr>
               );
             })}
@@ -831,79 +894,127 @@ function ListadoPagosTab({
               <Th fontFamily="mono" fontSize="xs" fontWeight="bold" color="red.500">{formatQ(columnTotals.totTotalEgresos)}</Th>
               
               <Th fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500">{formatQ(columnTotals.totLiquido)}</Th>
-              <Th fontFamily="mono" fontSize="xs">{formatQ(columnTotals.totQuincena1)}</Th>
-              <Th fontFamily="mono" fontSize="xs">{formatQ(columnTotals.totQuincena2)}</Th>
+              {periodType === '2da' && (
+                <>
+                  <Th fontFamily="mono" fontSize="xs">{formatQ(columnTotals.totQuincena1)}</Th>
+                  <Th fontFamily="mono" fontSize="xs">{formatQ(columnTotals.totQuincena2)}</Th>
+                </>
+              )}
             </Tr>
           </Thead>
         </Table>
       </TableContainer>
       ) : (
-        <SimpleGrid columns={{ base: 1, md: 2, lg: 3, xl: 4 }} spacing={4} maxH="550px" overflowY="auto" p={2}>
-          {data.map((e, i) => {
-            const baseFactor = (e.days || 30) / 30;
-            const sueldoOrd = Number(e.sueldo_ordinario) || 0;
-            const bonInc = Number(e.bon_incentivo) || 0;
-            const bonDec = Number(e.bon_dec_37_2001) || 0;
-            const baseSalary = sueldoOrd * baseFactor;
-            const bonusLey = bonInc * baseFactor;
-            const bonusDec = bonDec * baseFactor;
-            const bonos = Number(e.extras?.bonos) || 0;
-            const devengado = baseSalary + bonusLey + bonusDec + bonos;
-            const simplesVal = Number(e.extras?.simplesVal) || 0;
-            const doblesVal = Number(e.extras?.doblesVal) || 0;
-            const otrosIngresos = Number(e.extras?.otrosIngresos) || 0;
-            const salarioTotal = devengado + simplesVal + doblesVal + otrosIngresos;
-            const totalEgresos = (Number(e.deductions?.igss)||0) + (Number(e.deductions?.isr)||0) + (Number(e.deductions?.cafe)||0) + (Number(e.deductions?.cell)||0) + (Number(e.deductions?.uniform)||0) + (Number(e.deductions?.shoes)||0) + (Number(e.deductions?.equipo)||0) + (Number(e.deductions?.product)||0) + (Number(e.deductions?.bancos)||0) + (Number(e.deductions?.otros)||0) + (Number(e.deductions?.judiciales)||0) + (Number(e.deductions?.seguro)||0) + (Number(e.deductions?.parqueo)||0) + (Number(e.deductions?.boleto_de_ornato)||0) + (Number(e.deductions?.otros_egresos)||0);
-            const liquido = salarioTotal - totalEgresos;
+        <TableContainer border="1px solid" borderColor={borderColor} borderRadius="xl" overflowX="auto" bg={tdBg} maxH="550px">
+        <Table variant="simple" size="sm" layout="fixed" style={{ borderCollapse: 'separate', borderSpacing: 0, width: 'max-content' }}>
+          <Thead position="sticky" top={0} zIndex={15}>
+            <Tr>
+              {/* Sticky Headers */}
+              <Th w="60px" position="sticky" left={0} zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">No.</Th>
+              <Th w="200px" position="sticky" left="60px" zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Nombre Empleado</Th>
+              <Th w="120px" position="sticky" left="260px" zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Empresa</Th>
+              <Th w="120px" position="sticky" left="380px" zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor} borderBottom="2px solid" borderBottomColor="brand.500" boxShadow="4px 0 8px -4px rgba(0,0,0,0.15)" fontSize="10px">Puesto</Th>
+              
+              {/* Resumen Headers */}
+              <Th w="75px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Días Lab.</Th>
+              <Th w="120px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">S. Ordinario</Th>
+              <Th w="120px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Bonificaciones</Th>
+              <Th w="120px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="gold.500">Ingresos Extras</Th>
+              <Th w="120px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.500">Total Egresos</Th>
+              <Th w="120px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="brand.500">Líquido a Recibir</Th>
+              {periodType === '2da' && (
+                <>
+                  <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">1ra Quincena</Th>
+                  <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">2da Quincena</Th>
+                </>
+              )}
+              <Th w="120px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" textAlign="center">Acciones</Th>
+            </Tr>
+          </Thead>
+          <Tbody>
+            {data.map((e, i) => {
+              const baseFactor = (e.days || 30) / 30;
+              const sueldoOrd = Number(e.sueldo_ordinario) || 0;
+              const bonInc = Number(e.bon_incentivo) || 0;
+              const bonDec = Number(e.bon_dec_37_2001) || 0;
+              const baseSalary = sueldoOrd * baseFactor;
+              const bonusLey = bonInc * baseFactor;
+              const bonusDec = bonDec * baseFactor;
+              const bonos = Number(e.extras?.bonos) || 0;
+              const devengado = baseSalary + bonusLey + bonusDec + bonos;
+              const simplesVal = Number(e.extras?.simplesVal) || 0;
+              const doblesVal = Number(e.extras?.doblesVal) || 0;
+              const otrosIngresos = Number(e.extras?.otrosIngresos) || 0;
+              const totalExtras = bonos + simplesVal + doblesVal + otrosIngresos;
+              const salarioTotal = devengado + simplesVal + doblesVal + otrosIngresos;
+              const totalEgresos = (Number(e.deductions?.igss)||0) + (Number(e.deductions?.isr)||0) + (Number(e.deductions?.cafe)||0) + (Number(e.deductions?.cell)||0) + (Number(e.deductions?.uniform)||0) + (Number(e.deductions?.shoes)||0) + (Number(e.deductions?.equipo)||0) + (Number(e.deductions?.product)||0) + (Number(e.deductions?.bancos)||0) + (Number(e.deductions?.otros)||0) + (Number(e.deductions?.judiciales)||0) + (Number(e.deductions?.seguro)||0) + (Number(e.deductions?.parqueo)||0) + (Number(e.deductions?.boleto_de_ornato)||0) + (Number(e.deductions?.otros_egresos)||0);
+              const liquido = salarioTotal - totalEgresos;
+              const anticipo = Number(e.anticipo1ra) || 0;
+              const q1 = periodType === '2da' ? anticipo : liquido;
+              const q2 = periodType === '2da' ? liquido - anticipo : 0;
 
-            return (
-              <Card key={e.id} variant="outline" bg={tdBg} borderColor={borderColor} boxShadow="sm" _hover={{ boxShadow: 'md' }}>
-                <CardHeader pb={2}>
-                  <Flex align="center" gap={3}>
-                    <Avatar size="sm" icon={<User size={16} />} bg="brand.500" />
-                    <Box flex="1" overflow="hidden">
-                      <Heading size="sm" isTruncated title={`${e.primer_nombre || e.nombres || ''} ${e.primer_apellido || e.apellidos || ''}`}>
-                        {`${e.primer_nombre || e.nombres || ''} ${e.primer_apellido || e.apellidos || ''}`}
-                      </Heading>
-                      <Text fontSize="xs" color="gray.500" isTruncated>{e.puesto || 'Sin Puesto'} - {companies?.find(c => c.id == e.empresa_principal)?.nombre_comercial || e.company || 'Sin Empresa'}</Text>
-                    </Box>
-                  </Flex>
-                </CardHeader>
-                <CardBody py={2}>
-                  <StatGroup>
-                    <Stat>
-                      <StatLabel fontSize="xs">T. Devengado</StatLabel>
-                      <StatNumber fontSize="sm" color="brand.500">{formatQ(devengado)}</StatNumber>
-                    </Stat>
-                    <Stat>
-                      <StatLabel fontSize="xs">Líquido</StatLabel>
-                      <StatNumber fontSize="sm" color="brand.500">{formatQ(liquido)}</StatNumber>
-                    </Stat>
-                  </StatGroup>
-                  <Divider my={3} />
-                  <SimpleGrid columns={2} spacing={2}>
-                    <Box>
-                      <Text fontSize="10px" color="gray.500" textTransform="uppercase">Días Lab.</Text>
-                      <Text fontSize="sm" fontWeight="semibold">{e.days || 30}</Text>
-                    </Box>
-                    <Box>
-                      <Text fontSize="10px" color="gray.500" textTransform="uppercase">Salario Ord.</Text>
-                      <Text fontSize="sm" fontWeight="semibold" fontFamily="mono">{formatQ(baseSalary)}</Text>
-                    </Box>
-                    <Box>
-                      <Text fontSize="10px" color="gray.500" textTransform="uppercase">Bonificación</Text>
-                      <Text fontSize="sm" fontWeight="semibold" fontFamily="mono">{formatQ(bonusLey)}</Text>
-                    </Box>
-                    <Box>
-                      <Text fontSize="10px" color="gray.500" textTransform="uppercase">Total Egresos</Text>
-                      <Text fontSize="sm" fontWeight="semibold" color="red.500" fontFamily="mono">{formatQ(totalEgresos)}</Text>
-                    </Box>
-                  </SimpleGrid>
-                </CardBody>
-              </Card>
-            );
-          })}
-        </SimpleGrid>
+              return (
+                <Tr key={e.id} _hover={{ bg: hoverBg }}>
+                  <Td position="sticky" left={0} zIndex={5} bg={tdBg} borderRight="1px solid" borderColor={borderColor} fontWeight="bold" fontSize="xs">
+                    {i + 1}
+                  </Td>
+                  <Td position="sticky" left="60px" zIndex={5} bg={tdBg} borderRight="1px solid" borderColor={borderColor} fontWeight="600" color="brand.500" fontSize="xs" isTruncated maxW="200px" title={`${e.primer_nombre || e.nombres || ''} ${e.primer_apellido || e.apellidos || ''}`}>
+                    {`${e.primer_nombre || e.nombres || ''} ${e.primer_apellido || e.apellidos || ''}`}
+                  </Td>
+                  <Td position="sticky" left="260px" zIndex={5} bg={tdBg} borderRight="1px solid" borderColor={borderColor} fontSize="xs" isTruncated maxW="120px" title={companies?.find(c => c.id == e.empresa_principal)?.nombre_comercial || e.company || 'Sin Empresa'}>
+                    {companies?.find(c => c.id == e.empresa_principal)?.nombre_comercial || e.company || 'Sin Empresa'}
+                  </Td>
+                  <Td position="sticky" left="380px" zIndex={5} bg={tdBg} borderRight="1px solid" borderColor={borderColor} boxShadow="4px 0 8px -4px rgba(0,0,0,0.15)" fontSize="xs" isTruncated maxW="120px">
+                    {e.puesto || 'Sin Puesto'}
+                  </Td>
+
+                  <EditableCell id={e.id} field="days" section="root" value={e.days} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={60} />
+                  <Td fontFamily="mono" fontSize="xs">{formatQ(baseSalary)}</Td>
+                  <Td fontFamily="mono" fontSize="xs">{formatQ(bonusLey + bonusDec)}</Td>
+                  <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="gold.500">{formatQ(totalExtras)}</Td>
+                  <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="red.500">{formatQ(totalEgresos)}</Td>
+                  <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500" bg={useColorModeValue('brand.50', 'brand.900')}>{formatQ(liquido)}</Td>
+                  
+                  {periodType === '2da' && (
+                    <>
+                      <Td fontFamily="mono" fontSize="xs" color="gray.500">{formatQ(q1)}</Td>
+                      <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="green.500">{formatQ(q2)}</Td>
+                    </>
+                  )}
+                  <Td textAlign="center">
+                    <Button size="xs" colorScheme="brand" variant="solid" onClick={() => handleOpenDrawer(e)}>
+                      Editar Extras/Egresos
+                    </Button>
+                  </Td>
+                </Tr>
+              );
+            })}
+          </Tbody>
+          {/* Footer with column totals */}
+          <Thead position="sticky" bottom={0} zIndex={15} bg={theadBg}>
+            <Tr borderTop="2px solid" borderColor="brand.500">
+              <Th position="sticky" left={0} zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor}>TOTAL</Th>
+              <Th position="sticky" left="60px" zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor}>CONSOLIDADO</Th>
+              <Th position="sticky" left="260px" zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor}></Th>
+              <Th position="sticky" left="380px" zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor} boxShadow="4px 0 8px -4px rgba(0,0,0,0.15)"></Th>
+              
+              <Th>{data.length} Emps</Th>
+              <Th fontFamily="mono" fontSize="xs">{formatQ(columnTotals.totSalarioOrd)}</Th>
+              <Th fontFamily="mono" fontSize="xs">{formatQ(columnTotals.totBonInc + columnTotals.totBonDec)}</Th>
+              <Th fontFamily="mono" fontSize="xs" fontWeight="bold" color="gold.500">{formatQ(columnTotals.totBonos + columnTotals.totValSimple + columnTotals.totValDouble + columnTotals.totOtrosIngresos)}</Th>
+              <Th fontFamily="mono" fontSize="xs" fontWeight="bold" color="red.500">{formatQ(columnTotals.totTotalEgresos)}</Th>
+              <Th fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500">{formatQ(columnTotals.totLiquido)}</Th>
+              {periodType === '2da' && (
+                <>
+                  <Th fontFamily="mono" fontSize="xs">{formatQ(columnTotals.totQuincena1)}</Th>
+                  <Th fontFamily="mono" fontSize="xs">{formatQ(columnTotals.totQuincena2)}</Th>
+                </>
+              )}
+              <Th></Th>
+            </Tr>
+          </Thead>
+        </Table>
+      </TableContainer>
       )}
 
       {/* Action buttons and indicators in footer */}
@@ -945,6 +1056,156 @@ function ListadoPagosTab({
           </Button>
         </Flex>
       </Flex>
+
+      {/* Employee Drawer */}
+      <Drawer isOpen={isDrawerOpen} placement="right" onClose={onDrawerClose} size="md">
+        <DrawerOverlay />
+        <DrawerContent>
+          <DrawerCloseButton />
+          <DrawerHeader borderBottomWidth="1px" borderColor={borderColor}>
+            <Flex align="center" gap={3}>
+              <Avatar size="sm" icon={<User size={16} />} bg="brand.500" />
+              <Box>
+                <Heading size="sm" isTruncated>{selectedEmp ? `${selectedEmp.primer_nombre || selectedEmp.nombres || ''} ${selectedEmp.primer_apellido || selectedEmp.apellidos || ''}` : ''}</Heading>
+                <Text fontSize="xs" color="gray.500">{selectedEmp?.puesto || 'Sin Puesto'}</Text>
+              </Box>
+            </Flex>
+          </DrawerHeader>
+
+          <DrawerBody p={0}>
+            {selectedEmp && (
+              <Tabs isFitted colorScheme="brand" size="sm">
+                <TabList bg={theadBg} position="sticky" top={0} zIndex={5}>
+                  <Tab fontWeight="semibold">Ingresos Extras</Tab>
+                  <Tab fontWeight="semibold">Deducciones</Tab>
+                </TabList>
+
+                <TabPanels>
+                  {/* Tab 1: Extras */}
+                  <TabPanel p={4}>
+                    <VStack spacing={4} align="stretch">
+                      <FormControl>
+                        <FormLabel fontSize="xs" color="gray.500" mb={1}>Bonos Extras (Q)</FormLabel>
+                        <Input size="sm" type="number" borderRadius="md" value={selectedEmp.extras?.bonos || ''} 
+                          onChange={(e) => {
+                            onChange(selectedEmp.id, 'bonos', e.target.value, 'extras');
+                            setSelectedEmp(prev => ({...prev, extras: {...prev.extras, bonos: e.target.value}}));
+                          }} 
+                        />
+                      </FormControl>
+                      
+                      <Flex gap={2}>
+                        <FormControl>
+                          <FormLabel fontSize="xs" color="gray.500" mb={1}>Cant. Hrs Simples</FormLabel>
+                          <Input size="sm" type="number" borderRadius="md" value={selectedEmp.extras?.simplesQty || ''} 
+                            onChange={(e) => {
+                              onChange(selectedEmp.id, 'simplesQty', e.target.value, 'extras');
+                              setSelectedEmp(prev => ({...prev, extras: {...prev.extras, simplesQty: e.target.value}}));
+                            }} 
+                          />
+                        </FormControl>
+                        <FormControl>
+                          <FormLabel fontSize="xs" color="gray.500" mb={1}>Valor Hrs Simples (Q)</FormLabel>
+                          <Input size="sm" type="number" borderRadius="md" value={selectedEmp.extras?.simplesVal || ''} 
+                            onChange={(e) => {
+                              onChange(selectedEmp.id, 'simplesVal', e.target.value, 'extras');
+                              setSelectedEmp(prev => ({...prev, extras: {...prev.extras, simplesVal: e.target.value}}));
+                            }} 
+                          />
+                        </FormControl>
+                      </Flex>
+
+                      <Flex gap={2}>
+                        <FormControl>
+                          <FormLabel fontSize="xs" color="gray.500" mb={1}>Cant. Hrs Dobles</FormLabel>
+                          <Input size="sm" type="number" borderRadius="md" value={selectedEmp.extras?.doblesQty || ''} 
+                            onChange={(e) => {
+                              onChange(selectedEmp.id, 'doblesQty', e.target.value, 'extras');
+                              setSelectedEmp(prev => ({...prev, extras: {...prev.extras, doblesQty: e.target.value}}));
+                            }} 
+                          />
+                        </FormControl>
+                        <FormControl>
+                          <FormLabel fontSize="xs" color="gray.500" mb={1}>Valor Hrs Dobles (Q)</FormLabel>
+                          <Input size="sm" type="number" borderRadius="md" value={selectedEmp.extras?.doblesVal || ''} 
+                            onChange={(e) => {
+                              onChange(selectedEmp.id, 'doblesVal', e.target.value, 'extras');
+                              setSelectedEmp(prev => ({...prev, extras: {...prev.extras, doblesVal: e.target.value}}));
+                            }} 
+                          />
+                        </FormControl>
+                      </Flex>
+
+                      <FormControl>
+                        <FormLabel fontSize="xs" color="gray.500" mb={1}>Otros Ingresos (Q)</FormLabel>
+                        <Input size="sm" type="number" borderRadius="md" value={selectedEmp.extras?.otrosIngresos || ''} 
+                          onChange={(e) => {
+                            onChange(selectedEmp.id, 'otrosIngresos', e.target.value, 'extras');
+                            setSelectedEmp(prev => ({...prev, extras: {...prev.extras, otrosIngresos: e.target.value}}));
+                          }} 
+                        />
+                      </FormControl>
+                    </VStack>
+                  </TabPanel>
+
+                  {/* Tab 2: Deductions */}
+                  <TabPanel p={4}>
+                    <SimpleGrid columns={2} spacing={4}>
+                      {[
+                        { label: 'IGSS', key: 'igss' },
+                        { label: 'ISR', key: 'isr' },
+                        { label: 'Cafetería', key: 'cafe' },
+                        { label: 'Celular', key: 'cell' },
+                        { label: 'Uniforme', key: 'uniform' },
+                        { label: 'Calzado', key: 'shoes' },
+                        { label: 'Equipo', key: 'equipo' },
+                        { label: 'Producto', key: 'product' },
+                        { label: 'Bancos', key: 'bancos' },
+                        { label: 'Otros', key: 'otros' },
+                        { label: 'Judiciales', key: 'judiciales' },
+                        { label: 'Seguro', key: 'seguro' },
+                        { label: 'Parqueo', key: 'parqueo' },
+                        { label: 'Bol. Ornato', key: 'boleto_de_ornato' },
+                        { label: 'Otros Egresos', key: 'otros_egresos' },
+                      ].map((d) => (
+                        <FormControl key={d.key}>
+                          <FormLabel fontSize="xs" color="gray.500" mb={1}>{d.label}</FormLabel>
+                          <InputGroup size="sm">
+                            <InputLeftElement pointerEvents="none" color="gray.400" fontSize="xs">Q</InputLeftElement>
+                            <Input 
+                              type="number" 
+                              borderRadius="md" 
+                              value={selectedEmp.deductions?.[d.key] || ''} 
+                              onChange={(e) => {
+                                onChange(selectedEmp.id, d.key, e.target.value, 'deductions');
+                                setSelectedEmp(prev => ({
+                                  ...prev,
+                                  deductions: {
+                                    ...prev.deductions,
+                                    [d.key]: e.target.value
+                                  }
+                                }));
+                              }}
+                              _focus={{ borderColor: 'red.400', boxShadow: '0 0 0 1px var(--chakra-colors-red-400)' }}
+                            />
+                          </InputGroup>
+                        </FormControl>
+                      ))}
+                    </SimpleGrid>
+                  </TabPanel>
+                </TabPanels>
+              </Tabs>
+            )}
+          </DrawerBody>
+
+          <DrawerFooter borderTopWidth="1px" borderColor={borderColor}>
+            <Button colorScheme="brand" w="100%" onClick={onDrawerClose}>
+              Hecho
+            </Button>
+          </DrawerFooter>
+        </DrawerContent>
+      </Drawer>
+
     </Box>
   );
 }

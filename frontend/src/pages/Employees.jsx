@@ -170,7 +170,7 @@ export default function Employees() {
             onClick={() => setShowImport(true)}
             borderRadius="lg"
             transition="all 0.3s"
-            _hover={{ transform: 'translateY(-1px)', shadow: 'md' }}
+            _hover={{ shadow: 'md' }}
           >
             Importar CSV
           </Button>
@@ -180,7 +180,7 @@ export default function Employees() {
             onClick={openAdd}
             borderRadius="lg"
             transition="all 0.3s"
-            _hover={{ transform: 'translateY(-1px)', shadow: 'lg' }}
+            _hover={{ shadow: 'lg' }}
           >
             Nuevo Empleado
           </Button>
@@ -695,7 +695,7 @@ export default function Employees() {
                     setFiniquitoState({ show: false, emp: null, calculation: null });
                   }}
                   transition="all 0.3s"
-                  _hover={{ transform: 'translateY(-1px)', shadow: 'lg' }}
+                  _hover={{ shadow: 'lg' }}
                 >
                   Imprimir Constancia
                 </Button>

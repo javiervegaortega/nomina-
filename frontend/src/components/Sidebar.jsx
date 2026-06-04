@@ -3,7 +3,7 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Users, Calculator, History,
   Building2, Gift, Sun, Moon, LogOut, Hexagon,
-  ChevronLeft, ChevronRight, Network, Map, Briefcase, Split
+  ChevronLeft, ChevronRight, Network, Map, Briefcase, Split, Clock
 } from 'lucide-react';
 import { AppContext } from '../App';
 import { AuthContext } from '../context/AuthContext';
@@ -49,6 +49,7 @@ export default function Sidebar() {
     { to: '/subdivisions', label: 'Subdivisiones', icon: Split },
     { to: '/companies', label: 'Empresas', icon: Building2 },
     { to: '/bonuses', label: 'Bonos', icon: Gift },
+    { to: '/commissions', label: 'Comisiones', icon: Clock },
   ];
 
   return (
@@ -167,7 +168,6 @@ export default function Sidebar() {
                     position: 'absolute',
                     left: 0,
                     top: '50%',
-                    transform: 'translateY(-50%)',
                     w: '3px',
                     h: '60%',
                     borderRadius: '0 4px 4px 0',

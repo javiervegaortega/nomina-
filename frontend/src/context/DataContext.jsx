@@ -38,6 +38,11 @@ export function DataProvider({ children }) {
     return saved ? JSON.parse(saved) : [];
   });
 
+  const [commissions, setCommissions] = useState(() => {
+    const saved = localStorage.getItem('nomina-commissions');
+    return saved ? JSON.parse(saved) : [];
+  });
+
   const [activePayrolls, setActivePayrolls] = useState([]);
 
   const [payrollHistory, setPayrollHistory] = useState(() => {
@@ -71,6 +76,10 @@ export function DataProvider({ children }) {
   }, [bonuses]);
 
   useEffect(() => {
+    localStorage.setItem('nomina-commissions', JSON.stringify(commissions));
+  }, [commissions]);
+
+  useEffect(() => {
     localStorage.setItem('nomina-history', JSON.stringify(payrollHistory));
   }, [payrollHistory]);
 
@@ -82,7 +91,7 @@ export function DataProvider({ children }) {
         const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
         const fetchOpts = { headers };
 
-        const [compRes, empRes, histRes, deptRes, areaRes, divRes, subdivRes, draftsRes] = await Promise.all([
+        const [compRes, empRes, histRes, deptRes, areaRes, divRes, subdivRes, draftsRes, commRes] = await Promise.all([
           fetch('http://localhost:3000/api/companies', fetchOpts),
           fetch('http://localhost:3000/api/employees', fetchOpts),
           fetch('http://localhost:3000/api/payrolls', fetchOpts),
@@ -90,7 +99,8 @@ export function DataProvider({ children }) {
           fetch('http://localhost:3000/api/areas', fetchOpts),
           fetch('http://localhost:3000/api/divisions', fetchOpts),
           fetch('http://localhost:3000/api/subdivisions', fetchOpts),
-          fetch('http://localhost:3000/api/payroll-drafts', fetchOpts)
+          fetch('http://localhost:3000/api/payroll-drafts', fetchOpts),
+          fetch('http://localhost:3000/api/commissions', fetchOpts)
         ]);
         
         if (compRes.ok) {
@@ -146,6 +156,11 @@ export function DataProvider({ children }) {
             });
             setActivePayrolls(parsedDrafts);
           }
+        }
+        
+        if (commRes.ok) {
+          const apiCommissions = await commRes.json();
+          if (Array.isArray(apiCommissions)) setCommissions(apiCommissions);
         }
       } catch (err) {
         console.log('⚠️ Backend no disponible o en desarrollo, usando LocalStorage/MockData');
@@ -395,6 +410,52 @@ export function DataProvider({ children }) {
     }
   };
 
+  // Commissions
+  const addCommission = async (comm) => {
+    try {
+      const res = await fetch('http://localhost:3000/api/commissions', {
+        method: 'POST',
+        headers: getAuthHeader(),
+        body: JSON.stringify(comm)
+      });
+      if (res.ok) {
+        const newC = await res.json();
+        setCommissions([...commissions, newC]);
+      }
+    } catch (err) {
+      setCommissions([...commissions, { ...comm, id: Date.now() }]);
+    }
+  };
+
+  const updateCommission = async (id, data) => {
+    try {
+      const res = await fetch(`http://localhost:3000/api/commissions/${id}`, {
+        method: 'PUT',
+        headers: getAuthHeader(),
+        body: JSON.stringify(data)
+      });
+      if (res.ok) {
+        setCommissions(commissions.map(c => c.id === id ? { ...c, ...data } : c));
+      }
+    } catch (err) {
+      setCommissions(commissions.map(c => c.id === id ? { ...c, ...data } : c));
+    }
+  };
+
+  const deleteCommission = async (id) => {
+    try {
+      const res = await fetch(`http://localhost:3000/api/commissions/${id}`, {
+        method: 'DELETE',
+        headers: getAuthHeader()
+      });
+      if (res.ok) {
+        setCommissions(commissions.filter(c => c.id !== id));
+      }
+    } catch (err) {
+      setCommissions(commissions.filter(c => c.id !== id));
+    }
+  };
+
   // Employees
   const addEmployee = async (emp) => {
     try {
@@ -516,7 +577,7 @@ export function DataProvider({ children }) {
 
   // Payroll
   // Payroll
-  const createActivePayroll = async (title, selectedCompanies) => {
+  const createActivePayroll = async (title, selectedCompanies, periodType = '1ra', draftDateStr = null) => {
     // selectedCompanies contains commercial names of the selected companies
     // Map selectedCompany names to company IDs
     const selectedCompanyIds = selectedCompanies.map(name => {
@@ -524,30 +585,77 @@ export function DataProvider({ children }) {
       return comp ? comp.id : null;
     }).filter(id => id !== null);
 
+    // If 2nd quincena, find 1st quincena payouts
+    let firstQuincenaPayouts = {};
+    if (periodType === '2da') {
+      const targetDate = draftDateStr ? new Date(draftDateStr) : new Date();
+      const month = targetDate.getMonth();
+      const year = targetDate.getFullYear();
+      
+      const history1ra = payrollHistory.find(h => {
+        if (h.periodType !== '1ra') return false;
+        const hDate = new Date(h.createdAt || h.closedAt || Date.now());
+        if (hDate.getMonth() !== month || hDate.getFullYear() !== year) return false;
+        // Check if it belongs to the same companies
+        let hComps = [];
+        if (Array.isArray(h.companies)) hComps = h.companies;
+        else if (typeof h.companies === 'string') {
+          try { hComps = JSON.parse(h.companies); } catch(e) {}
+        }
+        return selectedCompanyIds.some(id => hComps.includes(id));
+      });
+
+      if (history1ra) {
+        let emps = [];
+        if (typeof history1ra.data === 'string') {
+          try { emps = JSON.parse(history1ra.data); } catch(e) {}
+        } else if (Array.isArray(history1ra.data)) {
+          emps = history1ra.data;
+        } else if (typeof history1ra.employees === 'string') {
+          try { emps = JSON.parse(history1ra.employees); } catch(e) {}
+        } else if (Array.isArray(history1ra.employees)) {
+          emps = history1ra.employees;
+        }
+        emps.forEach(emp => {
+          firstQuincenaPayouts[emp.id] = emp.netTotal || 0;
+        });
+      }
+    }
+
+    const targetDateForCommissions = draftDateStr ? new Date(draftDateStr) : new Date();
+    const monthNames = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+    const currentMonth = monthNames[targetDateForCommissions.getMonth()];
+    
+    // Find un-applied commissions for this month
+    const currentCommissions = commissions.filter(c => c.mes === currentMonth && c.estado !== 'Aplicado');
+
     const frozenEmployees = employees
       .filter(e => {
-        if (selectedCompanies.length === 0) return true;
-        
-        // 1. Direct match by companyId
-        if (e.companyId && selectedCompanyIds.includes(e.companyId)) return true;
-        
-        // 2. Match by empresa_principal
-        if (e.empresa_principal && selectedCompanyIds.includes(e.empresa_principal)) return true;
-        
-        // 3. Match by distribution percentage
-        let distData = {};
-        if (typeof e.dist === 'string') {
-          try { distData = JSON.parse(e.dist); } catch(err) {}
-        } else {
-          distData = e.dist || {};
-        }
-        return selectedCompanyIds.some(id => (distData[id] || 0) > 0);
+        if (selectedCompanyIds.length === 0) return true;
+        return selectedCompanyIds.includes(e.empresa_principal);
       })
       .map(e => {
-        const days = 30; // default to 30 days
+        const days = periodType === '1ra' ? 15 : 30;
         const baseSalary = Number(e.sueldo_ordinario) || 0;
         const baseFactor = days / 30;
         const igssVal = (baseSalary * baseFactor) * 0.0483;
+
+        // Calculate commissions
+        const empCommissions = currentCommissions.filter(c => c.employee_id === e.id);
+        let qtySimples = 0;
+        let qtyDobles = 0;
+        let totalBonos = 0;
+
+        empCommissions.forEach(c => {
+          if (c.tipo_hora === 'D') qtySimples += Number(c.horas) || 0;
+          else if (c.tipo_hora === 'N') qtyDobles += Number(c.horas) || 0;
+          totalBonos += (Number(c.monto_bono) || 0);
+        });
+
+        // 1 normal hour = BaseSalary / 30 / 8
+        const hourlyRate = baseSalary / 30 / 8;
+        const valSimples = qtySimples * hourlyRate * 1.5;
+        const valDobles = qtyDobles * hourlyRate * 2;
 
         return {
           ...e,
@@ -562,19 +670,21 @@ export function DataProvider({ children }) {
             shoes: 0,
             equipo: 0,
             product: 0,
-            bancos: Number(e.bancos) || 0,
+            bancos: (Number(e.bancos) || 0) * baseFactor,
             otros: 0,
-            judiciales: Number(e.judiciales) || 0,
-            seguro: Number(e.seguro) || 0,
-            parqueo: Number(e.parqueo) || 0,
-            boleto_de_ornato: Number(e.boleto_de_ornato) || 0,
-            otros_egresos: Number(e.otros_egresos) || 0,
+            judiciales: (Number(e.judiciales) || 0) * baseFactor,
+            seguro: (Number(e.seguro) || 0) * baseFactor,
+            parqueo: (Number(e.parqueo) || 0) * baseFactor,
+            boleto_de_ornato: (Number(e.boleto_de_ornato) || 0) * baseFactor,
+            otros_egresos: (Number(e.otros_egresos) || 0) * baseFactor,
           },
+          anticipo1ra: firstQuincenaPayouts[e.id] || 0,
           extras: {
-            simplesQty: Number(e.horas_extras_simples) || 0,
-            simplesVal: 0,
-            doblesQty: Number(e.horas_extras_dobles) || 0,
-            doblesVal: 0,
+            bonos: totalBonos,
+            simplesQty: (Number(e.horas_extras_simples) || 0) + qtySimples,
+            simplesVal: valSimples,
+            doblesQty: (Number(e.horas_extras_dobles) || 0) + qtyDobles,
+            doblesVal: valDobles,
             comisiones: 0,
             otrosIngresos: Number(e.otro_ingresos) || 0,
           },
@@ -585,12 +695,17 @@ export function DataProvider({ children }) {
         };
       });
 
+    if (frozenEmployees.length === 0) {
+      throw new Error('No hay empleados registrados cuya empresa principal coincida con la seleccionada.');
+    }
+
     const newDraftData = {
       id: Date.now().toString(),
       title,
-      companies: selectedCompanies,
-      createdAt: new Date().toISOString(),
-      employees: frozenEmployees,
+      periodType,
+      companies: selectedCompanyIds,
+      createdAt: draftDateStr ? new Date(draftDateStr).toISOString() : new Date().toISOString(),
+      employees: frozenEmployees
     };
 
     try {
@@ -627,8 +742,8 @@ export function DataProvider({ children }) {
     }
   };
 
-  const updateDraftMetadata = async (id, title, companies, createdAt) => {
-    const updatedDrafts = activePayrolls.map(p => p.id === id ? { ...p, title, companies, createdAt } : p);
+  const updateDraftMetadata = async (id, title, companies, createdAt, periodType) => {
+    const updatedDrafts = activePayrolls.map(p => p.id === id ? { ...p, title, companies, createdAt, periodType } : p);
     setActivePayrolls(updatedDrafts);
 
     const draft = updatedDrafts.find(p => p.id === id);
@@ -674,9 +789,12 @@ export function DataProvider({ children }) {
 
         const gross = baseSalary + bonusLey + bonusDec + extrasVal + bonusesSum;
         const ded = Object.values(e.deductions || {}).reduce((a, b) => a + b, 0);
+        const anticipo = e.anticipo1ra || 0;
+        
+        e.netTotal = gross - ded - anticipo; // Save snapshot of their net pay
 
         grossTotal += gross;
-        dedTotal += ded;
+        dedTotal += ded + anticipo;
       });
 
       const historyRecord = {
@@ -730,7 +848,7 @@ export function DataProvider({ children }) {
 
   return (
     <DataContext.Provider value={{
-      companies, departments, employees, bonuses, payrollHistory, areas, divisions, subdivisions,
+      companies, departments, employees, bonuses, commissions, payrollHistory, areas, divisions, subdivisions,
       addCompany, updateCompany, deleteCompany,
       addDepartment, updateDepartment, deleteDepartment,
       addArea, updateArea, deleteArea,
@@ -739,6 +857,7 @@ export function DataProvider({ children }) {
       addEmployee, updateEmployee, deleteEmployee, setAllEmployees,
       addEmployeeRecord, updateEmployeeRecord, deleteEmployeeRecord,
       addBonus, updateBonus, deleteBonus,
+      addCommission, updateCommission, deleteCommission,
       activePayrolls, createActivePayroll, updateActivePayroll, updateDraftMetadata, deleteActivePayroll, closePayroll,
       savePayroll, deletePayroll
     }}>

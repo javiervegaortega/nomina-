@@ -10,6 +10,10 @@ module.exports = (sequelize) => {
       type: DataTypes.STRING,
       allowNull: false
     },
+    periodType: {
+      type: DataTypes.STRING,
+      defaultValue: '1ra'
+    },
     closedAt: {
       type: DataTypes.STRING
     },

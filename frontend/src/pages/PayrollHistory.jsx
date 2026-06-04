@@ -18,7 +18,7 @@ import {
 } from '@chakra-ui/react';
 
 export default function PayrollHistory() {
-  const { payrollHistory, deletePayroll, bonuses } = useContext(DataContext);
+  const { payrollHistory, deletePayroll, bonuses, companies } = useContext(DataContext);
   const { confirmAction, showToast } = useContext(AppContext);
   const [selectedGroup, setSelectedGroup] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -32,6 +32,7 @@ export default function PayrollHistory() {
         groups[t] = {
           title: t,
           date: p.closedAt || new Date().toISOString(), // use most recent date
+          periodType: p.periodType || '1ra',
           records: [],
           employeesCount: 0,
           grossTotal: 0,
@@ -41,12 +42,18 @@ export default function PayrollHistory() {
       }
       
       groups[t].records.push(p);
-      groups[t].employeesCount += p.employeesCount || 0;
-      groups[t].netTotal += p.netTotal || 0;
       
       // Calculate gross total
-      const emps = p.data || p.employees || [];
+      let emps = p.data || p.employees || [];
+      if (typeof emps === 'string') {
+        try { emps = JSON.parse(emps); } catch(e) { emps = []; }
+      }
+      if (!Array.isArray(emps)) emps = [];
+
+      groups[t].employeesCount += emps.length;
+
       let grossSum = 0;
+      let dedSum = 0;
       emps.forEach(e => {
         const baseFactor = (e.days || 30) / 30;
         const sueldoOrd = Number(e.sueldo_ordinario) || 0;
@@ -61,13 +68,21 @@ export default function PayrollHistory() {
         const bonusesSum = Object.values(e.appliedBonuses || {}).reduce((a, b) => a + b, 0);
         const extrasTotal = (e.extras?.simplesVal || 0) + (e.extras?.doblesVal || 0) + (e.extras?.comisiones || 0) + (e.extras?.otrosIngresos || 0);
 
-        grossSum += baseSalary + bonusLey + bonusDec + bonos + extrasTotal + bonusesSum;
+        const eGross = baseSalary + bonusLey + bonusDec + bonos + extrasTotal + bonusesSum;
+        grossSum += eGross;
+
+        const ded = Object.values(e.deductions || {}).reduce((a, b) => a + Number(b), 0);
+        dedSum += ded;
       });
       
       groups[t].grossTotal += grossSum;
+      groups[t].netTotal += (grossSum - dedSum);
       
-      if (p.companies && p.companies.length > 0) {
-        p.companies.forEach(c => groups[t].companies.add(c));
+      if (emps.length > 0 && emps[0].empresa_principal) {
+        const comp = companies.find(c => c.id === emps[0].empresa_principal);
+        if (comp && comp.nombre_comercial) {
+          groups[t].companies.add(comp.nombre_comercial);
+        }
       }
       
       if (new Date(p.closedAt || new Date()) > new Date(groups[t].date)) {
@@ -165,6 +180,9 @@ export default function PayrollHistory() {
                 <Flex justify="space-between" align="start" mb={4} wrap="wrap" gap={2}>
                   <Box>
                     <Heading size="sm" fontWeight={800} mb={1}>{group.title}</Heading>
+                    <Badge colorScheme={group.periodType === '2da' ? 'purple' : 'teal'} mb={2}>
+                      {group.periodType === '2da' ? '2da Quincena' : '1ra Quincena'}
+                    </Badge>
                     <HStack spacing={4} color="gray.500" fontSize="xs">
                       <Flex align="center" gap={1}>
                         <Calendar size={14} /> 
@@ -172,7 +190,7 @@ export default function PayrollHistory() {
                       </Flex>
                       <Flex align="center" gap={1}>
                         <Building2 size={14} /> 
-                        {group.companies.size === 0 ? 'Múltiples' : Array.from(group.companies).join(', ')}
+                        {group.companies.size === 0 ? 'Sin empresa' : Array.from(group.companies).join(', ')}
                       </Flex>
                     </HStack>
                   </Box>
@@ -200,12 +218,6 @@ export default function PayrollHistory() {
             </Flex>
           ))}
 
-          {pagination.paginatedData.length > 0 && (
-            <Box mt={4}>
-              <Pagination {...pagination} />
-            </Box>
-          )}
-
           {filteredHistory.length === 0 && (
             <VStack spacing={4} py={12} align="center" color="gray.500">
               <History size={48} opacity={0.3} />
@@ -215,6 +227,12 @@ export default function PayrollHistory() {
           )}
         </VStack>
       </Box>
+
+      {pagination.paginatedData.length > 0 && (
+        <Box mt={8} maxW="800px" mx="auto">
+          <Pagination {...pagination} />
+        </Box>
+      )}
     </Box>
   );
 }
@@ -230,8 +248,13 @@ function PayrollHistoryDetail({ group, onBack }) {
     let grossTotal = 0, dedTotal = 0, patronalTotal = 0;
     
     group.records.forEach(r => {
-      const list = r.data || r.employees || [];
-      const company = r.companies?.[0] || 'N/A';
+      let list = r.data || r.employees || [];
+      if (typeof list === 'string') {
+        try { list = JSON.parse(list); } catch(e) { list = []; }
+      }
+      if (!Array.isArray(list)) list = [];
+      
+      const companyName = group.companies.size > 0 ? Array.from(group.companies)[0] : 'Sin empresa';
       
       list.forEach(e => {
         const baseFactor = (e.days || 30) / 30;
@@ -384,11 +407,13 @@ function PayrollHistoryDetail({ group, onBack }) {
       const parqueo = Number(e.deductions?.parqueo) || 0;
       const boleto_de_ornato = Number(e.deductions?.boleto_de_ornato) || 0;
       const otros_egresos = Number(e.deductions?.otros_egresos) || 0;
+      const anticipo = Number(e.anticipo1ra) || 0;
+      const is2da = group.periodType === '2da';
       
       const totalEgresos = igss + isr + cafe + cell + uniform + shoes + equipo + product + bancos + otros + judiciales + seguro + parqueo + boleto_de_ornato + otros_egresos;
       const liquido = salarioTotal - totalEgresos;
-      const q1 = liquido > 0 ? liquido / 2 : 0;
-      const q2 = liquido > 0 ? liquido - q1 : 0;
+      const q1 = is2da ? anticipo : liquido;
+      const q2 = is2da ? liquido - anticipo : 0;
 
       totSalarioOrd += baseSalary;
       totBonInc += bonusLey;
@@ -429,7 +454,7 @@ function PayrollHistoryDetail({ group, onBack }) {
       totIgss, totIsr, totCafe, totCell, totUniform, totShoes, totEquipo, totProduct, totBancos, totOtros, totJudiciales, totSeguro, totParqueo, totBoleta, totOtrosEgresos, totTotalEgresos,
       totLiquido, totQuincena1, totQuincena2
     };
-  }, [data]);
+  }, [data, group.periodType]);
 
   return (
     <Box p={{ base: 4, md: 6 }}>
@@ -479,7 +504,7 @@ function PayrollHistoryDetail({ group, onBack }) {
       </Heading>
 
       <TableContainer border="1px solid" borderColor={borderColor} borderRadius="xl" overflowX="auto" bg={tdBg} maxH="500px">
-        <Table variant="simple" size="sm" layout="fixed" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
+        <Table variant="simple" size="sm" layout="fixed" style={{ borderCollapse: 'separate', borderSpacing: 0, width: 'max-content' }}>
           <Thead position="sticky" top={0} zIndex={15}>
             <Tr bg={theadBg}>
               <Th w="60px" position="sticky" left={0} zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">No.</Th>
@@ -488,18 +513,17 @@ function PayrollHistoryDetail({ group, onBack }) {
               <Th w="120px" position="sticky" left="380px" zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor} borderBottom="2px solid" borderBottomColor="brand.500" boxShadow="4px 0 8px -4px rgba(0,0,0,0.15)" fontSize="10px">Puesto</Th>
               
               <Th w="75px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Días Lab.</Th>
-              <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">S. Ordinario</Th>
-              <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Bon. Incentivo</Th>
-              <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Bono Dec. 37-2001</Th>
+              <Th w="120px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">S. Ordinario</Th>
+              <Th w="120px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Bon. Incentivo</Th>
+              <Th w="140px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Bono Dec. 37-2001</Th>
               <Th w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Bonos</Th>
-              <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="brand.500">T. Devengado</Th>
-              
+              <Th w="120px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="brand.500">T. Devengado</Th>
               <Th w="80px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Hrs Simples</Th>
-              <Th w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Val Hrs Simp</Th>
+              <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Val Hrs Simp</Th>
               <Th w="80px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Hrs Dobles</Th>
-              <Th w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Val Hrs Dobl</Th>
+              <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Val Hrs Dobl</Th>
               <Th w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Otros Ingr.</Th>
-              <Th w="115px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="gold.500">Salario Total</Th>
+              <Th w="130px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="gold.500">Salario Total</Th>
               
               <Th w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">IGSS</Th>
               <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">ISR</Th>
@@ -516,19 +540,25 @@ function PayrollHistoryDetail({ group, onBack }) {
               <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Parqueo</Th>
               <Th w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Bol. Ornato</Th>
               <Th w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Otros Egr.</Th>
-              <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.500">Total Egresos</Th>
+              <Th w="130px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.500">Total Egresos</Th>
               
-              <Th w="120px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="brand.500">Liquido Recibir</Th>
-              <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">1ra Quincena</Th>
-              <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">2da Quincena</Th>
+              <Th w="120px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="brand.500">Liquido a Recibir</Th>
+              {group.periodType === '2da' && (
+                <>
+                  <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">1ra Quincena</Th>
+                  <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">2da Quincena</Th>
+                </>
+              )}
               <Th w="80px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" textAlign="center">Boleta</Th>
             </Tr>
           </Thead>
           <Tbody>
             {data.map((e, idx) => {
               const { baseSalary, bonusLey, bonusDec, bonos, extrasTotal, gross, ded, net } = e.calculated;
-              const q1 = net > 0 ? net / 2 : 0;
-              const q2 = net > 0 ? net - q1 : 0;
+              const anticipo = e.anticipo1ra || 0;
+              const is2da = group.periodType === '2da';
+              const q1 = is2da ? anticipo : net;
+              const q2 = is2da ? net - anticipo : 0;
 
               return (
                 <Tr key={e.id + '-' + idx} _hover={{ bg: hoverBg }}>
@@ -539,7 +569,7 @@ function PayrollHistoryDetail({ group, onBack }) {
                     {`${e.primer_nombre || e.nombres || ''} ${e.primer_apellido || e.apellidos || ''}`}
                   </Td>
                   <Td position="sticky" left="260px" zIndex={5} bg={tdBg} borderRight="1px solid" borderColor={borderColor} fontSize="xs" isTruncated maxW="120px">
-                    {e.company || 'Sin Empresa'}
+                    {companyName}
                   </Td>
                   <Td position="sticky" left="380px" zIndex={5} bg={tdBg} borderRight="1px solid" borderColor={borderColor} boxShadow="4px 0 8px -4px rgba(0,0,0,0.15)" fontSize="xs" isTruncated maxW="120px">
                     {e.puesto || 'Sin Puesto'}
@@ -577,8 +607,12 @@ function PayrollHistoryDetail({ group, onBack }) {
                   <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="red.500">{formatQ(ded)}</Td>
                   
                   <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500">{formatQ(net)}</Td>
-                  <Td fontFamily="mono" fontSize="xs" color="gray.500">{formatQ(q1)}</Td>
-                  <Td fontFamily="mono" fontSize="xs" color="gray.500">{formatQ(q2)}</Td>
+                  {is2da && (
+                    <>
+                      <Td fontFamily="mono" fontSize="xs" color="gray.500">{formatQ(q1)}</Td>
+                      <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="green.500">{formatQ(q2)}</Td>
+                    </>
+                  )}
                   
                   <Td textAlign="center">
                     <IconButton 
@@ -634,8 +668,12 @@ function PayrollHistoryDetail({ group, onBack }) {
               <Th fontFamily="mono" fontSize="xs" fontWeight="bold" color="red.500">{formatQ(columnTotals.totTotalEgresos)}</Th>
               
               <Th fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500">{formatQ(columnTotals.totLiquido)}</Th>
-              <Th fontFamily="mono" fontSize="xs">{formatQ(columnTotals.totQuincena1)}</Th>
-              <Th fontFamily="mono" fontSize="xs">{formatQ(columnTotals.totQuincena2)}</Th>
+              {group.periodType === '2da' && (
+                <>
+                  <Th fontFamily="mono" fontSize="xs">{formatQ(columnTotals.totQuincena1)}</Th>
+                  <Th fontFamily="mono" fontSize="xs">{formatQ(columnTotals.totQuincena2)}</Th>
+                </>
+              )}
               <Th></Th>
             </Tr>
           </Thead>

@@ -68,11 +68,9 @@ const theme = extendTheme({
           bgGradient: props.colorScheme === 'brand' ? 'linear(to-r, brand.600, brand.500)' : undefined,
           color: 'white',
           _hover: {
-            transform: 'translateY(-1px)',
             boxShadow: 'lg',
           },
           _active: {
-            transform: 'translateY(0)',
           },
         }),
         glass: (props) => ({
@@ -97,7 +95,6 @@ const theme = extendTheme({
           transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
           overflow: 'hidden',
           _hover: {
-            transform: 'translateY(-2px)',
             boxShadow: props.colorMode === 'dark' 
               ? '0 20px 40px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.08)'
               : '0 20px 40px rgba(0,0,0,0.08), 0 0 0 1px rgba(0,0,0,0.04)',

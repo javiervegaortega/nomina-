@@ -13,6 +13,7 @@ const Subdivision = require('./Subdivision')(sequelize);
 const EmployeeRecord = require('./EmployeeRecord')(sequelize);
 const PayrollDraft = require('./PayrollDraft')(sequelize);
 const PayrollDraftEmployee = require('./PayrollDraftEmployee')(sequelize);
+const Commission = require('./Commission')(sequelize);
 
 // Definir asociaciones
 Company.hasMany(Employee, { foreignKey: 'companyId' });
@@ -44,5 +45,6 @@ module.exports = {
   Subdivision,
   EmployeeRecord,
   PayrollDraft,
-  PayrollDraftEmployee
+  PayrollDraftEmployee,
+  Commission
 };

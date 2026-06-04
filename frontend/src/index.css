@@ -352,8 +352,7 @@ a {
 }
 
 .card:hover {
-  border-color: var(--border-hover);
-  transform: translateY(-2px);
+  border-color: var(--border-hover);;
   box-shadow: var(--shadow-md);
 }
 
@@ -448,13 +447,11 @@ a {
   box-shadow: 0 2px 8px var(--accent-glow);
 }
 
-.btn-primary:hover {
-  transform: translateY(-1px);
+.btn-primary:hover {;
   box-shadow: 0 4px 16px var(--accent-glow);
 }
 
-.btn-primary:active {
-  transform: translateY(0);
+.btn-primary:active {;
 }
 
 .btn-secondary {
@@ -565,8 +562,7 @@ a {
 .search-wrapper .search-icon {
   position: absolute;
   left: 0.75rem;
-  top: 50%;
-  transform: translateY(-50%);
+  top: 50%;;
   color: var(--text-tertiary);
   pointer-events: none;
 }
@@ -1228,4 +1224,10 @@ button, [role="button"], a, .btn, .tab, .nav-link, .theme-toggle {
 .toast-container.info {
   background: var(--info);
   border-color: rgba(255, 255, 255, 0.2);
+}
+
+
+th {
+  resize: horizontal;
+  overflow: hidden;
 }

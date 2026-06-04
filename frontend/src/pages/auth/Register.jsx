@@ -3,19 +3,41 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Mail, Lock, User, Building, ArrowRight } from 'lucide-react';
 import AuthSidePanel from './AuthSidePanel';
 import { AuthContext } from '../../context/AuthContext';
-import { AppContext } from '../../App';
+import { AppContext } from '../../App';import {
+  Box,
+  Flex,
+  Heading,
+  Text,
+  Button,
+  FormControl,
+  FormLabel,
+  Input,
+  InputGroup,
+  InputLeftElement,
+  useColorModeValue,
+  Link as ChakraLink,
+  VStack,
+  HStack
+} from '@chakra-ui/react';
 
 export default function Register() {
   const [name, setName] = useState('');
+  const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const { register } = useContext(AuthContext);
   const { showToast } = useContext(AppContext);
   const navigate = useNavigate();
 
+  const bgPanel = useColorModeValue('white', 'gray.900');
+  const textColor = useColorModeValue('gray.800', 'white');
+  const mutedColor = useColorModeValue('gray.500', 'gray.400');
+  const inputBg = useColorModeValue('white', 'gray.800');
+  const borderColor = useColorModeValue('gray.200', 'gray.700');
+
   const handleRegister = async (e) => {
     e.preventDefault();
-    const result = await register(name, email, password);
+    const result = await register(name, username, email, password);
     if (result.success) {
       showToast('Cuenta creada exitosamente. Por favor, inicia sesión.', 'success');
       navigate('/login');
@@ -23,68 +45,147 @@ export default function Register() {
       showToast(result.error, 'error');
     }
   };
+
   return (
-    <div className="auth-split-layout">
-      <AuthSidePanel />
-      
-      <div className="auth-form-panel animate-fade">
-        <div className="auth-form-container" style={{ maxWidth: '440px' }}>
-          <div className="auth-header" style={{ textAlign: 'center' }}>
-            <h1 style={{ fontSize: '2rem', fontWeight: 800, margin: '0 0 0.5rem 0', letterSpacing: '-0.02em' }}>
-              Crea tu cuenta
-            </h1>
-            <p style={{ color: 'var(--text-tertiary)', fontSize: '0.95rem', margin: 0 }}>
-              Comienza a gestionar tu nómina de manera inteligente
-            </p>
-          </div>
+    <Flex h="100vh" w="100vw" overflow="hidden" bg={bgPanel}>
+      {/* Left Side Panel (hidden on small screens) */}
+      <Box display={{ base: 'none', lg: 'block' }} w="50%">
+        <AuthSidePanel />
+      </Box>
 
-          <form className="auth-form" onSubmit={handleRegister}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-              <div className="form-group">
-                <label className="form-label">Nombre Completo</label>
-                <div className="input-with-icon">
-                  <User size={18} className="input-icon" />
-                  <input type="text" className="input-field pl-icon" placeholder="Juan Pérez" required value={name} onChange={e => setName(e.target.value)} />
-                </div>
-              </div>
-              
-              <div className="form-group">
-                <label className="form-label">Empresa</label>
-                <div className="input-with-icon">
-                  <Building size={18} className="input-icon" />
-                  <input type="text" className="input-field pl-icon" placeholder="Mi Empresa S.A." required />
-                </div>
-              </div>
-            </div>
+      {/* Right Side - Register Form */}
+      <Flex w={{ base: '100%', lg: '50%' }} align="center" justify="center" p={8}>
+        <Box w="100%" maxW="md">
+          <VStack spacing={8} align="stretch">
+            <Box textAlign="center">
+              <Heading as="h1" size="xl" fontWeight={800} color={textColor} mb={2} letterSpacing="-0.02em">
+                Crea tu cuenta
+              </Heading>
+              <Text color={mutedColor} fontSize="md">
+                Comienza a gestionar tu nómina de manera inteligente
+              </Text>
+            </Box>
 
-            <div className="form-group">
-              <label className="form-label">Correo Electrónico</label>
-              <div className="input-with-icon">
-                <Mail size={18} className="input-icon" />
-                <input type="email" className="input-field pl-icon" placeholder="tu@empresa.com" required value={email} onChange={e => setEmail(e.target.value)} />
-              </div>
-            </div>
+            <form onSubmit={handleRegister}>
+              <VStack spacing={5}>
+                <HStack spacing={4} w="100%">
+                  <FormControl isRequired>
+                    <FormLabel fontSize="sm" fontWeight={600} color={textColor}>
+                      Nombre Completo
+                    </FormLabel>
+                    <InputGroup size="lg">
+                      <InputLeftElement pointerEvents="none" color={mutedColor}>
+                        <User size={20} />
+                      </InputLeftElement>
+                      <Input
+                        type="text"
+                        placeholder="Juan Pérez"
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        bg={inputBg}
+                        borderColor={borderColor}
+                        _hover={{ borderColor: 'brand.400' }}
+                        _focus={{ borderColor: 'brand.500', boxShadow: '0 0 0 1px var(--chakra-colors-brand-500)' }}
+                        borderRadius="xl"
+                      />
+                    </InputGroup>
+                  </FormControl>
 
-            <div className="form-group">
-              <label className="form-label">Contraseña</label>
-              <div className="input-with-icon">
-                <Lock size={18} className="input-icon" />
-                <input type="password" className="input-field pl-icon" placeholder="Crea una contraseña segura" required value={password} onChange={e => setPassword(e.target.value)} />
-              </div>
-            </div>
+                  <FormControl isRequired>
+                    <FormLabel fontSize="sm" fontWeight={600} color={textColor}>
+                      Usuario
+                    </FormLabel>
+                    <InputGroup size="lg">
+                      <InputLeftElement pointerEvents="none" color={mutedColor}>
+                        <User size={20} />
+                      </InputLeftElement>
+                      <Input
+                        type="text"
+                        placeholder="jperez"
+                        value={username}
+                        onChange={(e) => setUsername(e.target.value)}
+                        bg={inputBg}
+                        borderColor={borderColor}
+                        _hover={{ borderColor: 'brand.400' }}
+                        _focus={{ borderColor: 'brand.500', boxShadow: '0 0 0 1px var(--chakra-colors-brand-500)' }}
+                        borderRadius="xl"
+                      />
+                    </InputGroup>
+                  </FormControl>
+                </HStack>
 
-            <button type="submit" className="btn btn-primary" style={{ width: '100%', padding: '0.85rem', marginTop: '0.5rem', justifyContent: 'center', fontSize: '0.95rem' }}>
-              Crear Cuenta <ArrowRight size={18} style={{ marginLeft: '0.5rem' }} />
-            </button>
-          </form>
+                <FormControl isRequired>
+                  <FormLabel fontSize="sm" fontWeight={600} color={textColor}>
+                    Correo Electrónico
+                  </FormLabel>
+                  <InputGroup size="lg">
+                    <InputLeftElement pointerEvents="none" color={mutedColor}>
+                      <Mail size={20} />
+                    </InputLeftElement>
+                    <Input
+                      type="email"
+                      placeholder="jperez@grupoeconsa.com"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      bg={inputBg}
+                      borderColor={borderColor}
+                      _hover={{ borderColor: 'brand.400' }}
+                      _focus={{ borderColor: 'brand.500', boxShadow: '0 0 0 1px var(--chakra-colors-brand-500)' }}
+                      borderRadius="xl"
+                    />
+                  </InputGroup>
+                </FormControl>
 
-          <div style={{ marginTop: '2.5rem', textAlign: 'center' }}>
-            <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', margin: 0 }}>
-              ¿Ya tienes una cuenta? <Link to="/login" style={{ color: 'var(--accent-light)', fontWeight: 600, textDecoration: 'none' }}>Inicia sesión</Link>
-            </p>
-          </div>
-        </div>
-      </div>
-    </div>
+                <FormControl isRequired>
+                  <FormLabel fontSize="sm" fontWeight={600} color={textColor} m={0}>
+                    Contraseña
+                  </FormLabel>
+                  <InputGroup size="lg" mt={2}>
+                    <InputLeftElement pointerEvents="none" color={mutedColor}>
+                      <Lock size={20} />
+                    </InputLeftElement>
+                    <Input
+                      type="password"
+                      placeholder="Crea una contraseña segura"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      bg={inputBg}
+                      borderColor={borderColor}
+                      _hover={{ borderColor: 'brand.400' }}
+                      _focus={{ borderColor: 'brand.500', boxShadow: '0 0 0 1px var(--chakra-colors-brand-500)' }}
+                      borderRadius="xl"
+                    />
+                  </InputGroup>
+                </FormControl>
+
+                <Button
+                  type="submit"
+                  colorScheme="brand"
+                  size="lg"
+                  w="100%"
+                  mt={4}
+                  borderRadius="xl"
+                  fontWeight={600}
+                  rightIcon={<ArrowRight size={20} />}
+                  _hover={{ boxShadow: 'lg' }}
+                  transition="all 0.3s"
+                >
+                  Crear Cuenta
+                </Button>
+              </VStack>
+            </form>
+
+            <Box textAlign="center" mt={6}>
+              <Text fontSize="sm" color={mutedColor}>
+                ¿Ya tienes una cuenta?{' '}
+                <ChakraLink as={Link} to="/login" color="brand.500" fontWeight={600}>
+                  Inicia sesión
+                </ChakraLink>
+              </Text>
+            </Box>
+          </VStack>
+        </Box>
+      </Flex>
+    </Flex>
   );
 }

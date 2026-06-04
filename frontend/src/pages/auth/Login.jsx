@@ -68,7 +68,7 @@ export default function Login() {
               <VStack spacing={5}>
                 <FormControl isRequired>
                   <FormLabel fontSize="sm" fontWeight={600} color={textColor}>
-                    Correo Electrónico o Usuario
+                    Usuario
                   </FormLabel>
                   <InputGroup size="lg">
                     <InputLeftElement pointerEvents="none" color={mutedColor}>
@@ -76,8 +76,8 @@ export default function Login() {
                     </InputLeftElement>
                     <Input
                       type="text"
-                      placeholder="tu@empresa.com o tu usuario"
-                      value={email}
+                      placeholder="usuario"
+                      value={email} 
                       onChange={(e) => setEmail(e.target.value)}
                       bg={inputBg}
                       borderColor={borderColor}
@@ -122,7 +122,7 @@ export default function Login() {
                   borderRadius="xl"
                   fontWeight={600}
                   rightIcon={<ArrowRight size={20} />}
-                  _hover={{ transform: 'translateY(-2px)', boxShadow: 'lg' }}
+                  _hover={{ boxShadow: 'lg' }}
                   transition="all 0.3s"
                 >
                   Iniciar Sesión
@@ -134,7 +134,7 @@ export default function Login() {
               <Text fontSize="sm" color={mutedColor}>
                 ¿No tienes cuenta?{' '}
                 <ChakraLink as={Link} to="/register" color="brand.500" fontWeight={600}>
-                  Crea una gratis
+                  Crea una cuenta
                 </ChakraLink>
               </Text>
             </Box>

@@ -115,7 +115,6 @@ export default function Departments() {
           borderRadius="lg"
           transition="all 0.3s"
           _hover={{
-            transform: 'translateY(-1px)',
             boxShadow: 'lg',
           }}
         >
@@ -197,7 +196,6 @@ export default function Departments() {
                           transition="all 0.3s"
                           _hover={{
                             bg: viewHoverBg,
-                            transform: 'translateY(-1px)',
                           }}
                           onClick={() => openEdit(d)}
                         />
@@ -213,7 +211,6 @@ export default function Departments() {
                           transition="all 0.3s"
                           _hover={{
                             bg: editHoverBg,
-                            transform: 'translateY(-1px)',
                           }}
                           onClick={() => openEdit(d)}
                         />
@@ -229,7 +226,6 @@ export default function Departments() {
                           transition="all 0.3s"
                           _hover={{
                             bg: deleteHoverBg,
-                            transform: 'translateY(-1px)',
                           }}
                           onClick={() => {
                             confirmAction(`¿Seguro que desea eliminar el departamento ${d.nombre_dimension}?`, () => {

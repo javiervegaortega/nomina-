@@ -116,7 +116,6 @@ export default function Companies() {
           borderRadius="lg"
           transition="all 0.3s"
           _hover={{
-            transform: 'translateY(-1px)',
             boxShadow: 'lg',
           }}
         >
@@ -196,7 +195,6 @@ export default function Companies() {
                             transition="all 0.3s"
                             _hover={{
                               bg: viewHoverBg,
-                              transform: 'translateY(-1px)',
                             }}
                             onClick={() => openEdit(c)}
                           />
@@ -212,7 +210,6 @@ export default function Companies() {
                             transition="all 0.3s"
                             _hover={{
                               bg: editHoverBg,
-                              transform: 'translateY(-1px)',
                             }}
                             onClick={() => openEdit(c)}
                           />
@@ -228,7 +225,6 @@ export default function Companies() {
                             transition="all 0.3s"
                             _hover={{
                               bg: deleteHoverBg,
-                              transform: 'translateY(-1px)',
                             }}
                             onClick={() => {
                               confirmAction(`¿Seguro que desea eliminar la empresa ${c.nombre_comercial || c.nit}?`, () => {

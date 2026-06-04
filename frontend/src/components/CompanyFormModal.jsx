@@ -402,8 +402,8 @@ export default function CompanyFormModal({ isOpen, onClose, onSave, initialData 
             borderRadius="lg"
             boxShadow="sm"
             transition="all 0.3s"
-            _hover={{ transform: 'translateY(-1px)', boxShadow: 'md' }}
-            _active={{ transform: 'translateY(0)' }}
+            _hover={{ boxShadow: 'md' }}
+            _active={{ }}
           >
             Guardar Empresa
           </Button>

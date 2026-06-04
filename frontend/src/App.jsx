@@ -20,6 +20,8 @@ import Subdivisions from './pages/Subdivisions';
 import Companies from './pages/Companies';
 import Bonuses from './pages/Bonuses';
 import PayrollHistory from './pages/PayrollHistory';
+import Settings from './pages/Settings';
+import Commissions from './pages/Commissions';
 import Login from './pages/auth/Login';
 import Register from './pages/auth/Register';
 import ForgotPassword from './pages/auth/ForgotPassword';
@@ -106,13 +108,15 @@ function AppContent() {
                   <Route path="/dashboard" element={<Dashboard />} />
                   <Route path="/employees" element={<Employees />} />
                   <Route path="/payroll" element={<PayrollProcessing />} />
+                  <Route path="/history" element={<PayrollHistory />} />
                   <Route path="/departments" element={<Departments />} />
                   <Route path="/areas" element={<Areas />} />
                   <Route path="/divisions" element={<Divisions />} />
                   <Route path="/subdivisions" element={<Subdivisions />} />
                   <Route path="/companies" element={<Companies />} />
                   <Route path="/bonuses" element={<Bonuses />} />
-                  <Route path="/history" element={<PayrollHistory />} />
+                  <Route path="/commissions" element={<Commissions />} />
+                  <Route path="/settings" element={<Settings />} />
                 </Route>
               </Route>
             </Routes>
