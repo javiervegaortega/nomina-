@@ -1,5 +1,4 @@
 import React, { createContext, useState, useEffect } from 'react';
-import { COMPANIES as INITIAL_COMPANIES, EMPLOYEES as INITIAL_EMPLOYEES, DEPARTMENTS as INITIAL_DEPARTMENTS } from '../data/mockData';
 
 export const DataContext = createContext();
 
@@ -7,7 +6,7 @@ export function DataProvider({ children }) {
   // --- STATE ---
   const [companies, setCompanies] = useState(() => {
     const saved = localStorage.getItem('nomina-companies');
-    return saved ? JSON.parse(saved) : INITIAL_COMPANIES;
+    return saved ? JSON.parse(saved) : [];
   });
 
   const [departments, setDepartments] = useState(() => {

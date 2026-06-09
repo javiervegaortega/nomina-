@@ -115,8 +115,8 @@ export default function PayrollHistory() {
   }
 
   return (
-    <Box p={{ base: 4, md: 6 }}>
-      <Flex justify="space-between" align="center" mb={6} wrap="wrap" gap={4}>
+    <Box p={{ base: 3, md: 6, lg: 8 }}>
+      <Flex justify="space-between" align={{ base: 'stretch', md: 'center' }} direction={{ base: 'column', md: 'row' }} mb={6} wrap="wrap" gap={4}>
         <Box>
           <Heading size="lg" fontWeight={800} mb={1}>
             Historial de Nóminas
@@ -125,7 +125,7 @@ export default function PayrollHistory() {
             Registro inmutable de procesos de nómina cerrados y agrupados por periodo
           </Text>
         </Box>
-        <InputGroup maxW="300px" size="sm">
+        <InputGroup maxW={{ base: '100%', md: '300px' }} size="sm">
           <InputLeftElement pointerEvents="none">
             <Search size={16} color="gray.400" />
           </InputLeftElement>
@@ -138,7 +138,7 @@ export default function PayrollHistory() {
         </InputGroup>
       </Flex>
 
-      <Box maxW="800px" mx="auto" position="relative">
+      <Box maxW="800px" mx="auto" position="relative" px={{ base: 0, md: 0 }}>
         {pagination.paginatedData.length > 0 && (
           <Box 
             position="absolute" 
@@ -153,10 +153,10 @@ export default function PayrollHistory() {
 
         <VStack spacing={8} align="stretch">
           {pagination.paginatedData.map((group, i) => (
-            <Flex key={group.title} gap={6} position="relative" zIndex={1} align="start">
+            <Flex key={group.title} gap={{ base: 3, md: 6 }} position="relative" zIndex={1} align="start">
               <Center 
-                w="48px" 
-                h="48px" 
+                w={{ base: '36px', md: '48px' }} 
+                h={{ base: '36px', md: '48px' }} 
                 borderRadius="full" 
                 bg={cardBg} 
                 border="2px solid" 
@@ -164,13 +164,14 @@ export default function PayrollHistory() {
                 color="brand.500" 
                 flexShrink={0} 
                 boxShadow="lg"
+                display={{ base: 'none', sm: 'flex' }}
               >
                 <CheckCircle2 size={24} />
               </Center>
               
               <Box 
                 flex="1" 
-                p={6} 
+                p={{ base: 4, md: 6 }} 
                 bg={cardBg} 
                 borderRadius="xl" 
                 border="1px solid" 
@@ -183,7 +184,7 @@ export default function PayrollHistory() {
                     <Badge colorScheme={group.periodType === '2da' ? 'purple' : 'teal'} mb={2}>
                       {group.periodType === '2da' ? '2da Quincena' : '1ra Quincena'}
                     </Badge>
-                    <HStack spacing={4} color="gray.500" fontSize="xs">
+                    <HStack spacing={{ base: 2, md: 4 }} color="gray.500" fontSize="xs" flexWrap="wrap">
                       <Flex align="center" gap={1}>
                         <Calendar size={14} /> 
                         Cerrada: {new Date(group.date).toLocaleDateString()}
@@ -280,7 +281,7 @@ function PayrollHistoryDetail({ group, onBack }) {
         
         emps.push({
           ...e,
-          company,
+          company: companyName,
           calculated: { baseSalary, bonusLey, bonusDec, bonos, extrasTotal, bonusesSum, gross, ded, net: gross - ded }
         });
       });
@@ -457,36 +458,41 @@ function PayrollHistoryDetail({ group, onBack }) {
   }, [data, group.periodType]);
 
   return (
-    <Box p={{ base: 4, md: 6 }}>
+    <Box p={{ base: 3, md: 6, lg: 8 }}>
       {/* Header */}
-      <Flex justify="space-between" align="center" mb={6} wrap="wrap" gap={4}>
+      <Flex justify="space-between" align={{ base: 'stretch', md: 'center' }} direction={{ base: 'column', md: 'row' }} mb={6} wrap="wrap" gap={4}>
         <Flex align="center" gap={4}>
           <IconButton aria-label="Back" icon={<ArrowLeft size={20} />} onClick={onBack} variant="ghost" />
           <Box>
-            <Flex align="center" gap={3}>
-              <Heading size="md" fontWeight={800}>{group.title}</Heading>
+            <Flex align="center" gap={{ base: 2, md: 3 }} flexWrap="wrap">
+              <Heading size={{ base: 'sm', md: 'md' }} fontWeight={800}>{group.title}</Heading>
               <Badge colorScheme="green" variant="subtle" fontWeight={700}>Cerrada</Badge>
+              <Badge colorScheme={group.periodType === '2da' ? 'purple' : 'teal'} variant="subtle" fontWeight={700}>
+                {group.periodType === '2da' ? '2da Quincena' : '1ra Quincena'}
+              </Badge>
             </Flex>
             <Text fontSize="sm" color="gray.500">
               {data.length} empleados procesados en este periodo
             </Text>
           </Box>
         </Flex>
-        <Button colorScheme="brand" leftIcon={<Download size={16} />} onClick={exportExcel}>
-          Exportar Reporte Total (Excel)
+        <Button colorScheme="brand" leftIcon={<Download size={16} />} onClick={exportExcel} size={{ base: 'sm', md: 'md' }}>
+          <Text display={{ base: 'none', sm: 'inline' }}>Exportar Reporte Total (Excel)</Text>
+          <Text display={{ base: 'inline', sm: 'none' }}>Exportar Excel</Text>
         </Button>
       </Flex>
 
       {/* Summary strip */}
       <Flex 
-        p={6} 
+        p={{ base: 4, md: 6 }} 
         mb={6} 
         borderRadius="xl" 
         border="1px solid" 
         borderColor={borderColor} 
-        gap={8} 
+        gap={{ base: 4, md: 8 }} 
+        direction={{ base: 'column', sm: 'row' }}
         wrap="wrap" 
-        align="center"
+        align={{ base: 'stretch', sm: 'center' }}
         bg={tdBg}
       >
         <SummaryStat label="Costo Bruto Total" value={formatQ(totals.grossTotal)} />
@@ -569,7 +575,7 @@ function PayrollHistoryDetail({ group, onBack }) {
                     {`${e.primer_nombre || e.nombres || ''} ${e.primer_apellido || e.apellidos || ''}`}
                   </Td>
                   <Td position="sticky" left="260px" zIndex={5} bg={tdBg} borderRight="1px solid" borderColor={borderColor} fontSize="xs" isTruncated maxW="120px">
-                    {companyName}
+                    {e.company || 'Sin empresa'}
                   </Td>
                   <Td position="sticky" left="380px" zIndex={5} bg={tdBg} borderRight="1px solid" borderColor={borderColor} boxShadow="4px 0 8px -4px rgba(0,0,0,0.15)" fontSize="xs" isTruncated maxW="120px">
                     {e.puesto || 'Sin Puesto'}
@@ -682,7 +688,7 @@ function PayrollHistoryDetail({ group, onBack }) {
 
       {/* Voucher slip display Modal */}
       {selectedVoucherEmp && (
-        <Modal isOpen={!!selectedVoucherEmp} onClose={() => setSelectedVoucherEmp(null)} size="xl">
+        <Modal isOpen={!!selectedVoucherEmp} onClose={() => setSelectedVoucherEmp(null)} size={{ base: 'full', md: 'xl' }}>
           <ModalOverlay />
           <ModalContent borderRadius="xl">
             <ModalHeader fontWeight={800} borderBottom="1px solid" borderColor={borderColor}>
@@ -732,7 +738,7 @@ function PayrollHistoryDetail({ group, onBack }) {
                   </VStack>
                 </Flex>
 
-                <SimpleGrid columns={2} spacing={10} mb={8}>
+                <SimpleGrid columns={{ base: 1, md: 2 }} spacing={{ base: 6, md: 10 }} mb={8}>
                   {/* Income column */}
                   <Box>
                     <Heading size="xs" borderBottom="1px solid" borderColor="gray.200" pb={2} mb={3} color="gray.900">
@@ -823,8 +829,8 @@ function PayrollHistoryDetail({ group, onBack }) {
                 </Flex>
 
                 {/* Signature Lines */}
-                <Flex justify="space-between" align="end" mt={12} pt={6} borderTop="1px solid" borderColor="gray.100">
-                  <Box w="200px" textAlign="center">
+                <Flex justify="space-between" align="end" mt={12} pt={6} borderTop="1px solid" borderColor="gray.100" direction={{ base: 'column', sm: 'row' }} gap={4}>
+                  <Box w={{ base: '100%', sm: '200px' }} textAlign="center">
                     <Box borderBottom="1px solid" borderColor="gray.400" h="40px" />
                     <Text fontSize="10px" color="gray.400" mt={2}>Firma del Empleado</Text>
                   </Box>
@@ -850,10 +856,10 @@ function PayrollHistoryDetail({ group, onBack }) {
 function SummaryStat({ label, value, color, large }) {
   return (
     <Box>
-      <Text fontSize="xs" fontWeight={600} color="gray.500" textTransform="uppercase" letterSpacing="0.05em" mb={1}>
+      <Text fontSize={{ base: '2xs', md: 'xs' }} fontWeight={600} color="gray.500" textTransform="uppercase" letterSpacing="0.05em" mb={1}>
         {label}
       </Text>
-      <Text fontFamily="mono" fontWeight={800} fontSize={large ? '2xl' : 'xl'} color={color || 'gold.500'} letterSpacing="-0.02em">
+      <Text fontFamily="mono" fontWeight={800} fontSize={large ? { base: 'xl', md: '2xl' } : { base: 'lg', md: 'xl' }} color={color || 'gold.500'} letterSpacing="-0.02em">
         {value}
       </Text>
     </Box>

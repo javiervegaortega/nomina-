@@ -180,7 +180,7 @@ export default function Commissions() {
         mb={6}
       >
         <Box>
-          <Heading as="h1" size="lg" fontWeight={800} mb={1} letterSpacing="-0.02em">
+          <Heading as="h1" size={{ base: 'md', lg: 'lg' }} fontWeight={800} mb={1} letterSpacing="-0.02em">
             Comisiones
           </Heading>
           <Flex align="center" gap={2}>
@@ -196,7 +196,7 @@ export default function Commissions() {
           colorScheme="brand"
           leftIcon={<Plus size={18} />}
           onClick={openAdd}
-          size="md"
+          size={{ base: 'sm', md: 'md' }}
           borderRadius="lg"
           transition="all 0.3s"
           _hover={{ boxShadow: 'lg' }}
@@ -326,7 +326,7 @@ export default function Commissions() {
       </Box>
 
       {/* Add Commission Modal */}
-      <Modal isOpen={isOpen} onClose={onClose} size="xl" isCentered scrollBehavior="inside">
+      <Modal isOpen={isOpen} onClose={onClose} size={{ base: 'full', md: 'xl' }} isCentered scrollBehavior="inside">
         <ModalOverlay />
         <ModalContent bg={modalBg} borderRadius="xl">
           <ModalHeader fontWeight={700} borderBottom="1px solid" borderColor={borderColor}>

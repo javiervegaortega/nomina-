@@ -39,6 +39,7 @@ function MainLayout() {
         flex="1"
         overflow="auto"
         bg="chakra-body-bg"
+        pt={{ base: '60px', md: 0 }}
       >
         <Outlet />
       </Box>

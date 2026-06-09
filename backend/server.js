@@ -51,7 +51,8 @@ app.use((req, res) => {
 const startServer = async () => {
   try {
     // Sincronizar modelos con la base de datos (Crea las tablas si no existen)
-    await sequelize.sync({ alter: true });
+    // Evita ALTER automatico para no generar indices duplicados en MySQL.
+    await sequelize.sync();
     console.log('Base de datos sincronizada correctamente.');
     
     app.listen(PORT, () => {

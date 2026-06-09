@@ -1,15 +1,18 @@
-import React, { useState, useMemo, useContext } from 'react';
+import React, { useState, useMemo, useContext, useRef } from 'react';
 import {
   Search, Plus, Edit2, Trash2, X, Eye, ChevronDown,
   UserPlus, Filter, Download, Check, FileText
 } from 'lucide-react';
 import { toast } from 'sonner';
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
 import { DataContext } from '../context/DataContext';
 import usePagination from '../hooks/usePagination';
 import Pagination from '../components/Pagination';
 import ImportData from '../components/ImportData';
 import EmployeeFormModal from '../components/EmployeeFormModal';
 import EmployeeViewModal from '../components/EmployeeViewModal';
+import FiniquitoDocument from '../components/FiniquitoDocument';
 import { formatQ, calculateMonthlyISR } from '../data/mockData';
 import {
   Box, Flex, Heading, Text, Button, Input, Select,
@@ -46,6 +49,8 @@ export default function Employees() {
   
   // Finiquito modal state
   const [finiquitoState, setFiniquitoState] = useState({ show: false, emp: null, calculation: null });
+  const finiquitoRef = useRef(null);
+  const finiquitoPrintRef = useRef(null);
 
   // Theme-aware colors
   const cardBg = useColorModeValue('white', 'gray.800');
@@ -145,12 +150,69 @@ export default function Employees() {
     setFiniquitoState({ show: true, emp, calculation: calc });
   };
 
+  const getEmployeeCompany = (emp) => {
+    const companyId = emp?.empresa_principal || emp?.companyId;
+    return companies.find(c => String(c.id) === String(companyId)) || null;
+  };
+
+  const handlePrintFiniquito = async () => {
+    if (!finiquitoState.emp || !finiquitoState.calculation) {
+      toast.error('No hay datos para generar el finiquito.');
+      return;
+    }
+
+    const element = finiquitoPrintRef.current;
+    if (!element) {
+      toast.error('No se pudo preparar el finiquito.');
+      return;
+    }
+
+    const toastId = toast.loading('Generando PDF del finiquito...');
+    try {
+      const canvas = await html2canvas(element, {
+        scale: 2,
+        backgroundColor: '#ffffff',
+        useCORS: true,
+        logging: false,
+      });
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = pdf.internal.pageSize.getHeight();
+      const imgHeight = (canvas.height * pdfWidth) / canvas.width;
+
+      if (imgHeight <= pdfHeight) {
+        pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, imgHeight);
+      } else {
+        let position = 0;
+        let remaining = imgHeight;
+        while (remaining > 0) {
+          pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, imgHeight);
+          remaining -= pdfHeight;
+          position -= pdfHeight;
+          if (remaining > 0) pdf.addPage();
+        }
+      }
+
+      const fullName = getFullName(finiquitoState.emp);
+      const safeName = (fullName || 'Empleado').replace(/[^a-z0-9]/gi, '_');
+      pdf.save(`Finiquito_${safeName}.pdf`);
+
+      toast.success('PDF del finiquito generado', { id: toastId });
+      setFiniquitoState({ show: false, emp: null, calculation: null });
+    } catch (err) {
+      console.error(err);
+      toast.error('Error al generar el PDF del finiquito', { id: toastId });
+    }
+  };
+
   return (
-    <Box p={{ base: 4, md: 6 }}>
+    <Box p={{ base: 3, md: 6, lg: 8 }}>
       {/* HEADER */}
       <Flex
         justify="space-between"
-        align="center"
+        align={{ base: 'stretch', md: 'center' }}
+        direction={{ base: 'column', md: 'row' }}
         mb={6}
         flexWrap="wrap"
         gap={4}
@@ -163,7 +225,7 @@ export default function Employees() {
             Gestión de personal y distribución de costos · {employees.length} registros
           </Text>
         </Box>
-        <HStack spacing={3}>
+        <HStack spacing={3} flexWrap="wrap">
           <Button
             variant="outline"
             leftIcon={<Download size={16} style={{ transform: 'rotate(180deg)' }} />}
@@ -198,7 +260,7 @@ export default function Employees() {
         boxShadow="sm"
       >
         <Flex gap={3} align="center" flexWrap="wrap">
-          <InputGroup flex={1} minW="250px">
+          <InputGroup flex={1} minW={{ base: '100%', md: '250px' }}>
             <InputLeftElement pointerEvents="none">
               <Search size={18} color="gray" />
             </InputLeftElement>
@@ -239,7 +301,7 @@ export default function Employees() {
             borderColor={borderColor}
             flexWrap="wrap"
           >
-            <FormControl minW="200px" maxW="280px">
+            <FormControl minW={{ base: '100%', sm: '200px' }} maxW={{ base: '100%', sm: '280px' }}>
               <FormLabel fontSize="sm" color={textSecondary}>Departamento</FormLabel>
               <Select
                 value={filterDept}
@@ -251,7 +313,7 @@ export default function Employees() {
                 {departments.map((d, i) => <option key={d.id || i} value={d.nombre_dimension}>{d.nombre_dimension}</option>)}
               </Select>
             </FormControl>
-            <FormControl minW="150px" maxW="220px">
+            <FormControl minW={{ base: '100%', sm: '150px' }} maxW={{ base: '100%', sm: '220px' }}>
               <FormLabel fontSize="sm" color={textSecondary}>Estado</FormLabel>
               <Select
                 value={filterStatus}
@@ -264,7 +326,7 @@ export default function Employees() {
                 <option value="Inactivo">Inactivo</option>
               </Select>
             </FormControl>
-            <FormControl minW="150px" maxW="220px">
+            <FormControl minW={{ base: '100%', sm: '150px' }} maxW={{ base: '100%', sm: '220px' }}>
               <FormLabel fontSize="sm" color={textSecondary}>DPI</FormLabel>
               <Input
                 value={filterDpi}
@@ -274,7 +336,7 @@ export default function Employees() {
                 size="sm"
               />
             </FormControl>
-            <FormControl minW="150px" maxW="220px">
+            <FormControl minW={{ base: '100%', sm: '150px' }} maxW={{ base: '100%', sm: '220px' }}>
               <FormLabel fontSize="sm" color={textSecondary}>No. IGSS</FormLabel>
               <Input
                 value={filterIgss}
@@ -297,8 +359,8 @@ export default function Employees() {
         boxShadow="sm"
         overflow="hidden"
       >
-        <TableContainer>
-          <Table variant="simple" size="md">
+        <TableContainer overflowX="auto">
+          <Table variant="simple" size={{ base: 'sm', md: 'md' }} minW="900px">
             <Thead bg={theadBg}>
               <Tr>
                 <Th fontWeight={600} color={textSecondary} w="50px">#</Th>
@@ -429,12 +491,12 @@ export default function Employees() {
                         </Badge>
                       </Td>
                       <Td textAlign="right">
-                        <HStack spacing={1} justify="flex-end">
+                        <HStack spacing={{ base: 0, md: 1 }} justify="flex-end">
                           <Tooltip label="Ver detalle" hasArrow>
                             <IconButton
                               aria-label="Ver detalle"
-                              icon={<Eye size={18} />}
-                              size="sm"
+                              icon={<Eye size={16} />}
+                              size={{ base: 'xs', md: 'sm' }}
                               variant="ghost"
                               colorScheme="brand"
                               onClick={() => openView(emp)}
@@ -444,8 +506,8 @@ export default function Employees() {
                           <Tooltip label="Editar" hasArrow>
                             <IconButton
                               aria-label="Editar"
-                              icon={<Edit2 size={18} />}
-                              size="sm"
+                              icon={<Edit2 size={16} />}
+                              size={{ base: 'xs', md: 'sm' }}
                               variant="ghost"
                               colorScheme="accent"
                               onClick={() => openEdit(emp)}
@@ -456,8 +518,8 @@ export default function Employees() {
                             <Tooltip label="Dar de Baja" hasArrow>
                               <IconButton
                                 aria-label="Dar de Baja"
-                                icon={<X size={18} />}
-                                size="sm"
+                                icon={<X size={16} />}
+                                size={{ base: 'xs', md: 'sm' }}
                                 variant="ghost"
                                 colorScheme="orange"
                                 onClick={() => setOffboardState({ show: true, empId: emp.id, reason: '', date: new Date().toISOString().split('T')[0] })}
@@ -469,8 +531,8 @@ export default function Employees() {
                             <Tooltip label="Generar Finiquito" hasArrow>
                               <IconButton
                                 aria-label="Generar Finiquito"
-                                icon={<FileText size={18} />}
-                                size="sm"
+                                icon={<FileText size={16} />}
+                                size={{ base: 'xs', md: 'sm' }}
                                 variant="ghost"
                                 colorScheme="blue"
                                 onClick={() => handleGenerateFiniquito(emp)}
@@ -481,8 +543,8 @@ export default function Employees() {
                           <Tooltip label="Eliminar (Permanente)" hasArrow>
                             <IconButton
                               aria-label="Eliminar"
-                              icon={<Trash2 size={18} />}
-                              size="sm"
+                              icon={<Trash2 size={16} />}
+                              size={{ base: 'xs', md: 'sm' }}
                               variant="ghost"
                               colorScheme="red"
                               onClick={() => handleDelete(emp.id)}
@@ -537,7 +599,7 @@ export default function Employees() {
       <Modal
         isOpen={offboardState.show}
         onClose={() => setOffboardState({ show: false, empId: null, reason: '', date: '' })}
-        size="md"
+        size={{ base: 'full', md: 'md' }}
         isCentered
       >
         <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(4px)" />
@@ -590,15 +652,34 @@ export default function Employees() {
         </ModalContent>
       </Modal>
 
+      {/* Documento oculto para generación del PDF */}
+      {finiquitoState.calculation && finiquitoState.emp && (
+        <Box
+          position="fixed"
+          left="-9999px"
+          top={0}
+          zIndex={-1}
+          pointerEvents="none"
+        >
+          <Box ref={finiquitoPrintRef}>
+            <FiniquitoDocument
+              emp={finiquitoState.emp}
+              calculation={finiquitoState.calculation}
+              company={getEmployeeCompany(finiquitoState.emp)}
+            />
+          </Box>
+        </Box>
+      )}
+
       {/* FINIQUITO MODAL */}
       <Modal
         isOpen={finiquitoState.show && Boolean(finiquitoState.calculation)}
         onClose={() => setFiniquitoState({ show: false, emp: null, calculation: null })}
-        size="lg"
+        size={{ base: 'full', md: 'lg' }}
         isCentered
       >
         <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(4px)" />
-        <ModalContent borderRadius="xl" bg={modalBg} boxShadow="2xl">
+        <ModalContent ref={finiquitoRef} borderRadius="xl" bg={modalBg} boxShadow="2xl">
           {finiquitoState.calculation && (
             <>
               <ModalHeader fontWeight={700} pb={2}>
@@ -606,7 +687,9 @@ export default function Employees() {
               </ModalHeader>
               <ModalCloseButton />
               <ModalBody>
-                {/* Employee info header */}
+                <Text fontSize="xs" color={textSecondary} mb={4}>
+                  {getEmployeeCompany(finiquitoState.emp)?.nombre_comercial || 'Empresa'} — Vista previa del documento
+                </Text>
                 <Flex mb={5} align="center" gap={4}>
                   <Box flex={1}>
                     <Text fontSize="md" fontWeight={700} color={brandColor}>
@@ -615,56 +698,38 @@ export default function Employees() {
                     <Text fontSize="sm" color={textSecondary}>
                       {finiquitoState.emp?.puesto}
                     </Text>
+                    {finiquitoState.emp?.dpi && (
+                      <Text fontSize="xs" color={textSecondary} mt={1}>
+                        DPI: {finiquitoState.emp.dpi}
+                      </Text>
+                    )}
                   </Box>
                   <Box textAlign="right">
-                    <Text fontSize="xs" color={textSecondary}>Salario Base Computable</Text>
+                    <Text fontSize="xs" color={textSecondary}>Salario base computable</Text>
                     <Text fontFamily="mono" fontWeight={700} color={brandColor}>
                       {formatQ(Number(finiquitoState.emp?.sueldo_ordinario || 0) + Number(finiquitoState.emp?.bon_incentivo || 0))}
                     </Text>
                   </Box>
                 </Flex>
 
-                {/* Finiquito calculation table */}
-                <Box
-                  borderRadius="xl"
-                  border="1px solid"
-                  borderColor={borderColor}
-                  overflow="hidden"
-                >
+                <Box borderRadius="xl" border="1px solid" borderColor={borderColor} overflow="hidden">
                   <Table size="sm" variant="simple">
                     <Tbody>
-                      <Tr>
-                        <Td fontSize="sm">Indemnización por Tiempo Servido</Td>
-                        <Td textAlign="right">
-                          <Text fontFamily="mono" color={brandColor} fontWeight={600}>
-                            {formatQ(finiquitoState.calculation.indemnizacion)}
-                          </Text>
-                        </Td>
-                      </Tr>
-                      <Tr>
-                        <Td fontSize="sm">Aguinaldo Proporcional</Td>
-                        <Td textAlign="right">
-                          <Text fontFamily="mono" color={brandColor} fontWeight={600}>
-                            {formatQ(finiquitoState.calculation.aguinaldoProp)}
-                          </Text>
-                        </Td>
-                      </Tr>
-                      <Tr>
-                        <Td fontSize="sm">Bono 14 Proporcional</Td>
-                        <Td textAlign="right">
-                          <Text fontFamily="mono" color={brandColor} fontWeight={600}>
-                            {formatQ(finiquitoState.calculation.bono14Prop)}
-                          </Text>
-                        </Td>
-                      </Tr>
-                      <Tr>
-                        <Td fontSize="sm">Vacaciones Pendientes de Goce</Td>
-                        <Td textAlign="right">
-                          <Text fontFamily="mono" color={brandColor} fontWeight={600}>
-                            {formatQ(finiquitoState.calculation.vacaciones)}
-                          </Text>
-                        </Td>
-                      </Tr>
+                      {[
+                        ['Indemnización por tiempo servido', finiquitoState.calculation.indemnizacion],
+                        ['Aguinaldo proporcional', finiquitoState.calculation.aguinaldoProp],
+                        ['Bono 14 proporcional', finiquitoState.calculation.bono14Prop],
+                        ['Vacaciones pendientes de goce', finiquitoState.calculation.vacaciones],
+                      ].map(([label, amount]) => (
+                        <Tr key={label}>
+                          <Td fontSize="sm">{label}</Td>
+                          <Td textAlign="right">
+                            <Text fontFamily="mono" color={brandColor} fontWeight={600}>
+                              {formatQ(amount)}
+                            </Text>
+                          </Td>
+                        </Tr>
+                      ))}
                       <Tr bg={finiquitoRowBg}>
                         <Td>
                           <Text fontWeight={700} color={brandColor}>GRAN TOTAL A RECIBIR</Text>
@@ -690,14 +755,11 @@ export default function Employees() {
                 <Button
                   colorScheme="brand"
                   leftIcon={<FileText size={16} />}
-                  onClick={() => {
-                    alert('Generando PDF del Finiquito...');
-                    setFiniquitoState({ show: false, emp: null, calculation: null });
-                  }}
+                  onClick={handlePrintFiniquito}
                   transition="all 0.3s"
                   _hover={{ shadow: 'lg' }}
                 >
-                  Imprimir Constancia
+                  Descargar PDF
                 </Button>
               </ModalFooter>
             </>

@@ -9,11 +9,18 @@ const getAll = async (req, res) => {
     // Transform backend structure back to what frontend expects
     const formattedDrafts = drafts.map(d => {
       const draftObj = d.toJSON();
-      const employeesArr = draftObj.draftEmployees.map(de => de.data);
+      const employeesArr = draftObj.draftEmployees.map(de => {
+        try {
+          return typeof de.data === 'string' ? JSON.parse(de.data) : de.data;
+        } catch(e) {
+          return de.data;
+        }
+      });
       return {
         id: draftObj.id,
         title: draftObj.title,
         companies: draftObj.companies,
+        periodType: draftObj.periodType,
         employees: employeesArr,
         createdAt: draftObj.createdAt
       };
@@ -28,13 +35,14 @@ const getAll = async (req, res) => {
 const create = async (req, res) => {
   const t = await sequelize.transaction();
   try {
-    const { id, title, companies, employees, createdAt } = req.body;
+    const { id, title, companies, employees, createdAt, periodType } = req.body;
     
     // Create main draft record
     const newDraft = await PayrollDraft.create({
       id,
       title,
       companies,
+      periodType,
       employeesCount: employees ? employees.length : 0,
       createdAt
     }, { transaction: t });
@@ -68,12 +76,14 @@ const update = async (req, res) => {
       return res.status(404).json({ error: 'Borrador no encontrado' });
     }
 
-    const { title, companies, employees, createdAt } = req.body;
+    const { title, companies, employees, createdAt, periodType } = req.body;
+    console.log("UPDATE DRAFT ID:", draftId, "PAYLOAD PERIOD:", periodType);
     
     // Update main record
     await draft.update({
       title,
       companies,
+      periodType,
       createdAt,
       employeesCount: employees ? employees.length : 0
     }, { transaction: t });
@@ -83,11 +93,14 @@ const update = async (req, res) => {
       await PayrollDraftEmployee.destroy({ where: { draftId }, transaction: t });
       
       if (employees.length > 0) {
-        const employeeRecords = employees.map(emp => ({
-          draftId,
-          employeeId: emp.id,
-          data: emp
-        }));
+        const employeeRecords = employees.map(emp => {
+          const empObj = typeof emp === 'string' ? JSON.parse(emp) : emp;
+          return {
+            draftId,
+            employeeId: empObj.id,
+            data: empObj
+          };
+        });
         await PayrollDraftEmployee.bulkCreate(employeeRecords, { transaction: t });
       }
     }

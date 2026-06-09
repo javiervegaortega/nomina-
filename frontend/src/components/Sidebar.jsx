@@ -3,13 +3,15 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Users, Calculator, History,
   Building2, Gift, Sun, Moon, LogOut, Hexagon,
-  ChevronLeft, ChevronRight, Network, Map, Briefcase, Split, Clock
+  ChevronLeft, ChevronRight, Network, Map, Briefcase, Split, Clock,
+  Menu
 } from 'lucide-react';
 import { AppContext } from '../App';
 import { AuthContext } from '../context/AuthContext';
 import {
   Box, Flex, Text, IconButton, Tooltip, Divider, VStack,
-  useColorModeValue,
+  useColorModeValue, useBreakpointValue,
+  Drawer, DrawerOverlay, DrawerContent, DrawerCloseButton,
 } from '@chakra-ui/react';
 
 export default function Sidebar() {
@@ -17,6 +19,9 @@ export default function Sidebar() {
   const { user, logout } = useContext(AuthContext);
   const navigate = useNavigate();
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  const isMobile = useBreakpointValue({ base: true, md: false });
 
   const drawerWidth = isCollapsed ? 80 : 260;
 
@@ -30,6 +35,8 @@ export default function Sidebar() {
   const activeColor = useColorModeValue('brand.600', 'brand.300');
   const userCardBg = useColorModeValue('gray.50', 'gray.900');
   const brandSubtitle = useColorModeValue('gray.500', 'gray.500');
+  const logoutHoverBg = useColorModeValue('red.50', 'whiteAlpha.100');
+  const sidebarShadow = useColorModeValue('2px 0 12px rgba(0,0,0,0.03)', 'none');
 
   const handleLogout = () => {
     confirmAction('¿Estás seguro que deseas cerrar sesión?', () => {
@@ -52,30 +59,16 @@ export default function Sidebar() {
     { to: '/commissions', label: 'Comisiones', icon: Clock },
   ];
 
-  return (
-    <Box
-      as="nav"
-      w={`${drawerWidth}px`}
-      minW={`${drawerWidth}px`}
-      h="100vh"
-      position="sticky"
-      top={0}
-      bg={sidebarBg}
-      borderRight="1px solid"
-      borderColor={borderColor}
-      display="flex"
-      flexDirection="column"
-      overflow="hidden"
-      boxShadow={useColorModeValue('2px 0 12px rgba(0,0,0,0.03)', 'none')}
-      transition="width 0.3s ease, min-width 0.3s ease"
-    >
+  // Shared nav content renderer (used by both mobile drawer and desktop sidebar)
+  const renderNavContent = (mobile = false) => (
+    <>
       {/* Brand */}
       <Flex 
         align="center" 
-        justify={isCollapsed ? "center" : "flex-start"}
-        direction={isCollapsed ? "column" : "row"}
-        gap={isCollapsed ? 4 : 3} 
-        p={isCollapsed ? 4 : 6} 
+        justify={!mobile && isCollapsed ? "center" : "flex-start"}
+        direction={!mobile && isCollapsed ? "column" : "row"}
+        gap={!mobile && isCollapsed ? 4 : 3} 
+        p={!mobile && isCollapsed ? 4 : 6} 
         pb={4} 
         position="relative"
       >
@@ -89,14 +82,14 @@ export default function Sidebar() {
           justify="center"
           color="white"
           boxShadow="0 4px 12px rgba(14,165,233,0.35)"
-          cursor={isCollapsed ? "pointer" : "default"}
-          onClick={() => isCollapsed && setIsCollapsed(false)}
+          cursor={!mobile && isCollapsed ? "pointer" : "default"}
+          onClick={() => !mobile && isCollapsed && setIsCollapsed(false)}
         >
           <Hexagon size={20} strokeWidth={2.5} />
         </Flex>
 
-        {!isCollapsed && (
-          <Box flex={1} whiteSpace="nowrap" opacity={isCollapsed ? 0 : 1} transition="opacity 0.2s">
+        {(mobile || !isCollapsed) && (
+          <Box flex={1} whiteSpace="nowrap" opacity={1} transition="opacity 0.2s">
             <Text fontWeight={800} fontSize="md" lineHeight="1.2" letterSpacing="-0.5px" color={textPrimary}>
               Nómina
             </Text>
@@ -106,37 +99,40 @@ export default function Sidebar() {
           </Box>
         )}
 
-        <IconButton
-          icon={isCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
-          size="xs"
-          position={isCollapsed ? 'relative' : 'absolute'}
-          right={isCollapsed ? 'auto' : 4}
-          variant="ghost"
-          onClick={() => setIsCollapsed(!isCollapsed)}
-          aria-label="Toggle Sidebar"
-          color={textSecondary}
-        />
+        {!mobile && (
+          <IconButton
+            icon={isCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+            size="xs"
+            position={isCollapsed ? 'relative' : 'absolute'}
+            right={isCollapsed ? 'auto' : 4}
+            variant="ghost"
+            onClick={() => setIsCollapsed(!isCollapsed)}
+            aria-label="Toggle Sidebar"
+            color={textSecondary}
+          />
+        )}
       </Flex>
 
-      <Divider mx={isCollapsed ? 2 : 4} mb={2} borderColor={borderColor} transition="margin 0.3s" />
+      <Divider mx={!mobile && isCollapsed ? 2 : 4} mb={2} borderColor={borderColor} transition="margin 0.3s" />
 
       {/* Navigation */}
-      <Box flex={1} overflowY="auto" overflowX="hidden" px={isCollapsed ? 2 : 3} py={2} css={{ '&::-webkit-scrollbar': { width: '4px' } }}>
+      <Box flex={1} overflowY="auto" overflowX="hidden" px={!mobile && isCollapsed ? 2 : 3} py={2} css={{ '&::-webkit-scrollbar': { width: '4px' } }}>
         <Text
-          px={isCollapsed ? 0 : 3}
+          px={!mobile && isCollapsed ? 0 : 3}
           mb={2}
           fontSize="0.65rem"
           fontWeight={700}
           letterSpacing="0.1em"
           textTransform="uppercase"
           color={textSecondary}
-          textAlign={isCollapsed ? 'center' : 'left'}
+          textAlign={!mobile && isCollapsed ? 'center' : 'left'}
           whiteSpace="nowrap"
         >
-          {isCollapsed ? '—' : 'Menú Principal'}
+          {!mobile && isCollapsed ? '—' : 'Menú Principal'}
         </Text>
         <VStack spacing="2px" align="stretch">
           {NAV_ITEMS.map(({ to, label, icon: Icon }) => {
+            const showLabel = mobile || !isCollapsed;
             const linkContent = (
               <Box
                 key={to}
@@ -144,9 +140,9 @@ export default function Sidebar() {
                 to={to}
                 display="flex"
                 alignItems="center"
-                justifyContent={isCollapsed ? 'center' : 'flex-start'}
-                gap={isCollapsed ? 0 : 3}
-                px={isCollapsed ? 0 : 3}
+                justifyContent={!mobile && isCollapsed ? 'center' : 'flex-start'}
+                gap={!mobile && isCollapsed ? 0 : 3}
+                px={!mobile && isCollapsed ? 0 : 3}
                 py="9px"
                 borderRadius="lg"
                 position="relative"
@@ -167,9 +163,9 @@ export default function Sidebar() {
                     content: '""',
                     position: 'absolute',
                     left: 0,
-                    top: '50%',
+                    top: 0,
+                    bottom: 0,
                     w: '3px',
-                    h: '60%',
                     borderRadius: '0 4px 4px 0',
                     bg: activeColor,
                   },
@@ -179,11 +175,12 @@ export default function Sidebar() {
                     transition: 'color 0.2s',
                   },
                 }}
+                onClick={mobile ? () => setMobileOpen(false) : undefined}
               >
                 <Box as="span" display="flex" alignItems="center" minW="20px" justifyContent="center">
                   <Icon size={20} />
                 </Box>
-                {!isCollapsed && (
+                {showLabel && (
                   <Text as="span" fontSize="0.875rem" fontWeight={600} whiteSpace="nowrap">
                     {label}
                   </Text>
@@ -191,7 +188,7 @@ export default function Sidebar() {
               </Box>
             );
 
-            return isCollapsed ? (
+            return !mobile && isCollapsed ? (
               <Tooltip key={to} label={label} placement="right" hasArrow>
                 {linkContent}
               </Tooltip>
@@ -202,17 +199,17 @@ export default function Sidebar() {
         </VStack>
       </Box>
 
-      <Divider mx={isCollapsed ? 2 : 4} borderColor={borderColor} transition="margin 0.3s" />
+      <Divider mx={!mobile && isCollapsed ? 2 : 4} borderColor={borderColor} transition="margin 0.3s" />
 
       {/* Bottom section: theme toggle + user */}
-      <Box p={isCollapsed ? 2 : 4}>
+      <Box p={!mobile && isCollapsed ? 2 : 4}>
         {/* Theme toggle */}
-        <Tooltip label={themeMode === 'dark' ? 'Modo Claro' : 'Modo Oscuro'} placement="right" isDisabled={!isCollapsed} hasArrow>
+        <Tooltip label={themeMode === 'dark' ? 'Modo Claro' : 'Modo Oscuro'} placement="right" isDisabled={mobile || !isCollapsed} hasArrow>
           <Flex
             align="center"
-            justify={isCollapsed ? 'center' : 'flex-start'}
-            gap={isCollapsed ? 0 : 3}
-            px={isCollapsed ? 0 : 3}
+            justify={!mobile && isCollapsed ? 'center' : 'flex-start'}
+            gap={!mobile && isCollapsed ? 0 : 3}
+            px={!mobile && isCollapsed ? 0 : 3}
             py={2}
             borderRadius="lg"
             cursor="pointer"
@@ -225,7 +222,7 @@ export default function Sidebar() {
             tabIndex={0}
           >
             {themeMode === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
-            {!isCollapsed && (
+            {(mobile || !isCollapsed) && (
               <Text fontSize="sm" fontWeight={600} whiteSpace="nowrap">
                 {themeMode === 'dark' ? 'Modo Claro' : 'Modo Oscuro'}
               </Text>
@@ -236,16 +233,16 @@ export default function Sidebar() {
         {/* User card */}
         <Flex
           align="center"
-          justify={isCollapsed ? 'center' : 'space-between'}
-          gap={isCollapsed ? 0 : 3}
-          p={isCollapsed ? 2 : 3}
+          justify={!mobile && isCollapsed ? 'center' : 'space-between'}
+          gap={!mobile && isCollapsed ? 0 : 3}
+          p={!mobile && isCollapsed ? 2 : 3}
           borderRadius="lg"
-          bg={isCollapsed ? 'transparent' : userCardBg}
-          border={isCollapsed ? 'none' : '1px solid'}
+          bg={!mobile && isCollapsed ? 'transparent' : userCardBg}
+          border={!mobile && isCollapsed ? 'none' : '1px solid'}
           borderColor={borderColor}
           position="relative"
         >
-          <Tooltip label={user?.name || 'Usuario'} placement="right" isDisabled={!isCollapsed} hasArrow>
+          <Tooltip label={user?.name || 'Usuario'} placement="right" isDisabled={mobile || !isCollapsed} hasArrow>
             <Flex
               w="36px"
               h="36px"
@@ -262,7 +259,7 @@ export default function Sidebar() {
             </Flex>
           </Tooltip>
 
-          {!isCollapsed && (
+          {(mobile || !isCollapsed) && (
             <Box flex={1} minW={0} whiteSpace="nowrap">
               <Text fontSize="sm" fontWeight={700} color={textPrimary} isTruncated>
                 {user?.name || 'Usuario'}
@@ -273,7 +270,7 @@ export default function Sidebar() {
             </Box>
           )}
 
-          {!isCollapsed ? (
+          {(mobile || !isCollapsed) ? (
             <Tooltip label="Cerrar Sesión" placement="top" hasArrow>
               <IconButton
                 aria-label="Cerrar Sesión"
@@ -281,7 +278,7 @@ export default function Sidebar() {
                 size="sm"
                 variant="ghost"
                 color={textSecondary}
-                _hover={{ color: 'red.500', bg: useColorModeValue('red.50', 'whiteAlpha.100') }}
+                _hover={{ color: 'red.500', bg: logoutHoverBg }}
                 onClick={handleLogout}
               />
             </Tooltip>
@@ -292,7 +289,7 @@ export default function Sidebar() {
           )}
         </Flex>
 
-        {isCollapsed && (
+        {!mobile && isCollapsed && (
            <Tooltip label="Cerrar Sesión" placement="right" hasArrow>
               <Flex
                 mt={2}
@@ -310,6 +307,58 @@ export default function Sidebar() {
            </Tooltip>
         )}
       </Box>
+    </>
+  );
+
+  // Mobile: hamburger button + Drawer
+  if (isMobile) {
+    return (
+      <>
+        <IconButton
+          aria-label="Menu"
+          icon={<Menu size={22} />}
+          onClick={() => setMobileOpen(true)}
+          position="fixed"
+          top={3}
+          left={3}
+          zIndex={1401}
+          size="md"
+          variant="solid"
+          colorScheme="brand"
+          borderRadius="lg"
+          boxShadow="lg"
+          display={{ base: 'flex', md: 'none' }}
+        />
+        <Drawer isOpen={mobileOpen} placement="left" onClose={() => setMobileOpen(false)}>
+          <DrawerOverlay />
+          <DrawerContent bg={sidebarBg} maxW="280px" display="flex" flexDirection="column">
+            <DrawerCloseButton />
+            {renderNavContent(true)}
+          </DrawerContent>
+        </Drawer>
+      </>
+    );
+  }
+
+  // Desktop: existing sidebar
+  return (
+    <Box
+      as="nav"
+      w={`${drawerWidth}px`}
+      minW={`${drawerWidth}px`}
+      h="100vh"
+      position="sticky"
+      top={0}
+      bg={sidebarBg}
+      borderRight="1px solid"
+      borderColor={borderColor}
+      display="flex"
+      flexDirection="column"
+      overflow="hidden"
+      boxShadow={sidebarShadow}
+      transition="width 0.3s ease, min-width 0.3s ease"
+    >
+      {renderNavContent(false)}
     </Box>
   );
 }

@@ -98,8 +98,8 @@ function PayrollHub({ onSelectDraft }) {
   const borderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
 
   return (
-    <Box p={{ base: 4, md: 6 }}>
-      <Flex justify="space-between" align="center" mb={6} wrap="wrap" gap={4}>
+    <Box p={{ base: 3, md: 6, lg: 8 }}>
+      <Flex justify="space-between" align={{ base: 'stretch', md: 'center' }} direction={{ base: 'column', md: 'row' }} mb={6} wrap="wrap" gap={4}>
         <Box>
           <Heading size="lg" fontWeight={800} mb={1}>
             Nóminas en Progreso
@@ -235,7 +235,7 @@ function PayrollHub({ onSelectDraft }) {
         )}
       </SimpleGrid>
 
-      <Modal isOpen={showModal} onClose={() => setShowModal(false)} size="md">
+      <Modal isOpen={showModal} onClose={() => setShowModal(false)} size={{ base: 'full', md: 'md' }}>
         <ModalOverlay />
         <ModalContent borderRadius="xl">
           <ModalHeader fontWeight={800}>{editingDraftId ? 'Editar Borrador' : 'Crear Nuevo Borrador'}</ModalHeader>
@@ -413,13 +413,13 @@ function PayrollEditor({ draftId, onBack }) {
   if (!draft) return null;
 
   return (
-    <Box p={{ base: 4, md: 6 }}>
-      <Flex justify="space-between" align="center" mb={6} wrap="wrap" gap={4}>
+    <Box p={{ base: 3, md: 6, lg: 8 }}>
+      <Flex justify="space-between" align={{ base: 'stretch', md: 'center' }} direction={{ base: 'column', md: 'row' }} mb={6} wrap="wrap" gap={4}>
         <Flex align="center" gap={4}>
           <IconButton aria-label="Back" icon={<ArrowLeft size={24} />} onClick={onBack} variant="ghost" />
           <Box>
-            <Flex align="center" gap={3}>
-              <Heading size="md" fontWeight={800}>{draft.title}</Heading>
+            <Flex align="center" gap={{ base: 2, md: 3 }} flexWrap="wrap">
+              <Heading size={{ base: 'sm', md: 'md' }} fontWeight={800}>{draft.title}</Heading>
               <Badge colorScheme="orange" variant="subtle" fontWeight={700}>Borrador</Badge>
             </Flex>
             <Text fontSize="sm" color="gray.500">
@@ -441,14 +441,15 @@ function PayrollEditor({ draftId, onBack }) {
 
       {/* Summary strip */}
       <Flex 
-        p={6} 
+        p={{ base: 4, md: 6 }} 
         mb={6} 
         borderRadius="xl" 
         border="1px solid" 
         borderColor={borderColor} 
-        gap={8} 
+        gap={{ base: 4, md: 8 }} 
+        direction={{ base: 'column', sm: 'row' }}
         wrap="wrap" 
-        align="center"
+        align={{ base: 'stretch', sm: 'center' }}
         bg={useColorModeValue('white', 'gray.800')}
       >
         <SummaryStat label="Costo Bruto Total" value={formatQ(totals.grossTotal)} />
@@ -648,13 +649,13 @@ function ListadoPagosTab({
   return (
     <Box>
       {/* Filters bar */}
-      <Flex gap={4} wrap="wrap" mb={4} align="center" justify="space-between">
-        <HStack spacing={3} wrap="wrap" flex="1">
+      <Flex gap={{ base: 2, md: 4 }} wrap="wrap" mb={4} align={{ base: 'stretch', md: 'center' }} justify="space-between" direction={{ base: 'column', md: 'row' }}>
+        <HStack spacing={{ base: 2, md: 3 }} wrap="wrap" flex="1">
           <Select 
             placeholder="Filtrar por Área..." 
             value={filterArea} 
             onChange={e => setFilterArea(e.target.value)}
-            w="200px"
+            w={{ base: '100%', sm: '200px' }}
             size="sm"
             borderRadius="md"
           >
@@ -666,7 +667,7 @@ function ListadoPagosTab({
             placeholder="Filtrar por Departamento..." 
             value={filterDept} 
             onChange={e => setFilterDept(e.target.value)}
-            w="200px"
+            w={{ base: '100%', sm: '200px' }}
             size="sm"
             borderRadius="md"
           >
@@ -676,7 +677,7 @@ function ListadoPagosTab({
           </Select>
         </HStack>
 
-        <HStack maxW="400px" spacing={3}>
+        <HStack maxW={{ base: '100%', md: '400px' }} spacing={{ base: 2, md: 3 }} w={{ base: '100%', md: 'auto' }} flexWrap="wrap">
           <InputGroup size="sm">
             <InputLeftElement pointerEvents="none">
               <Search size={16} color="gray.400" />
@@ -1058,7 +1059,7 @@ function ListadoPagosTab({
       </Flex>
 
       {/* Employee Drawer */}
-      <Drawer isOpen={isDrawerOpen} placement="right" onClose={onDrawerClose} size="md">
+      <Drawer isOpen={isDrawerOpen} placement="right" onClose={onDrawerClose} size={{ base: 'full', md: 'md' }}>
         <DrawerOverlay />
         <DrawerContent>
           <DrawerCloseButton />
@@ -1260,7 +1261,7 @@ function DistributionTab({ data }) {
       </SimpleGrid>
 
       <Box border="1px solid" borderColor={borderColor} borderRadius="xl" overflowX="auto" bg={cardBg}>
-        <Table variant="modern" size="sm">
+        <Table variant="modern" size="sm" minW="800px">
           <Thead>
             <Tr>
               <Th>Empresa</Th>
@@ -1364,10 +1365,10 @@ function EditableCell({ id, field, section, value, onChange, editing, setEditing
 function SummaryStat({ label, value, color, large }) {
   return (
     <Box>
-      <Text fontSize="xs" fontWeight={600} color="gray.500" textTransform="uppercase" letterSpacing="0.05em" mb={1}>
+      <Text fontSize={{ base: '2xs', md: 'xs' }} fontWeight={600} color="gray.500" textTransform="uppercase" letterSpacing="0.05em" mb={1}>
         {label}
       </Text>
-      <Text fontFamily="mono" fontWeight={800} fontSize={large ? '2xl' : 'xl'} color={color || 'gold.500'} letterSpacing="-0.02em">
+      <Text fontFamily="mono" fontWeight={800} fontSize={large ? { base: 'xl', md: '2xl' } : { base: 'lg', md: 'xl' }} color={color || 'gold.500'} letterSpacing="-0.02em">
         {value}
       </Text>
     </Box>

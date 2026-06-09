@@ -79,7 +79,7 @@ export default function Bonuses() {
       </div>
 
       <div className="page-content">
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))', gap: '1.25rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 350px), 1fr))', gap: '1.25rem' }}>
           {pagination.paginatedData.map((b, i) => {
             const assignedCount = Object.keys(b.assignments || {}).length;
             const totalAmount = Object.values(b.assignments || {}).reduce((a, val) => a + val, 0);
@@ -139,14 +139,14 @@ export default function Bonuses() {
 
       {showModal && (
         <div className="modal-overlay" onClick={() => setShowModal(false)}>
-          <div className="modal-panel" onClick={e => e.stopPropagation()} style={{ maxWidth: '600px' }}>
+          <div className="modal-panel" onClick={e => e.stopPropagation()} style={{ maxWidth: '600px', width: '95%' }}>
             <div className="modal-header">
               <h2>{editingId ? 'Editar Bono' : 'Configuración de Bono'}</h2>
               <button className="btn-icon" onClick={() => setShowModal(false)}><X size={18} /></button>
             </div>
             <div className="modal-body">
               <div className="form-group-row" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '1rem' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 2fr) minmax(0, 1fr)', gap: '1rem' }}>
                   <div className="form-group">
                     <label className="form-label">Nombre del Incentivo/Bono</label>
                     <input className="input-field" value={form.name} onChange={e => setForm({...form, name: e.target.value})} placeholder="ej: Bono de Productividad" />
@@ -166,7 +166,7 @@ export default function Bonuses() {
                     <span className="badge badge-neutral">{Object.keys(form.assignments).length} asignados</span>
                   </label>
                   
-                  <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', background: 'var(--bg-elevated)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1rem', background: 'var(--bg-elevated)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
                     <select className="input-field" value={selectedEmp} onChange={e => setSelectedEmp(e.target.value)} style={{ flex: 1 }}>
                       <option value="">-- Seleccione un empleado --</option>
                       {employees.filter(e => !form.assignments[e.id]).map(e => <option key={e.id} value={e.id}>{e.name} ({e.role})</option>)}

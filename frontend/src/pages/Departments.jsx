@@ -83,7 +83,7 @@ export default function Departments() {
         <Box>
           <Heading
             as="h1"
-            size="lg"
+            size={{ base: 'md', lg: 'lg' }}
             fontWeight={800}
             mb={1}
             letterSpacing="-0.02em"
@@ -111,7 +111,7 @@ export default function Departments() {
           colorScheme="brand"
           leftIcon={<Plus size={18} />}
           onClick={openAdd}
-          size="md"
+          size={{ base: 'sm', md: 'md' }}
           borderRadius="lg"
           transition="all 0.3s"
           _hover={{
