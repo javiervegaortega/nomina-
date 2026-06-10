@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useContext, useRef } from 'react';
+import React, { useState, useMemo, useContext, useRef, useEffect, useCallback } from 'react';
 import {
   Search, Plus, Edit2, Trash2, X, Eye, ChevronDown,
   UserPlus, Filter, Download, Check, FileText
@@ -27,18 +27,29 @@ import {
 export default function Employees() {
   const { employees, addEmployee, updateEmployee, deleteEmployee, companies, departments, areas, divisions, subdivisions } = useContext(DataContext);
   
-  const INITIAL_FORM = {
+  const INITIAL_FORM = useMemo(() => ({
     estado: 'Activo',
     moneda: 'GTQ',
     dist: companies.reduce((acc, c) => ({ ...acc, [c.id]: 0 }), {})
-  };
+  }), [companies]);
 
   const [showImport, setShowImport] = useState(false);
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+
+  // Debounce search input by 300ms
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  // Strip accents/tildes for search comparison
+  const normalize = useCallback((str) => str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase(), []);
   const [filterDept, setFilterDept] = useState('ALL');
+  const [filterArea, setFilterArea] = useState('ALL');
+  const [filterDiv, setFilterDiv] = useState('ALL');
+  const [filterSubdiv, setFilterSubdiv] = useState('ALL');
   const [filterStatus, setFilterStatus] = useState('ALL');
-  const [filterDpi, setFilterDpi] = useState('');
-  const [filterIgss, setFilterIgss] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [modalMode, setModalMode] = useState('add'); // add | edit | view
   const [currentEmp, setCurrentEmp] = useState(null);
@@ -66,7 +77,7 @@ export default function Employees() {
   const modalBg = useColorModeValue('white', 'gray.800');
   const finiquitoRowBg = useColorModeValue('gray.50', 'gray.700');
 
-  const getFullName = (e) => `${e.primer_nombre || ''} ${e.primer_apellido || ''}`.trim() || 'Sin Nombre';
+  const getFullName = (e) => `${e.primer_nombre || ''} ${e.segundo_nombre || ''} ${e.otro_nombre || ''} ${e.primer_apellido || ''} ${e.segundo_apellido || ''}`.replace(/\s+/g, ' ').trim() || 'Sin Nombre';
 
   const getDist = (emp) => {
     if (typeof emp.dist === 'string') {
@@ -76,17 +87,26 @@ export default function Employees() {
   };
 
   const filteredEmployees = useMemo(() => {
+    const searchNorm = normalize(debouncedSearch);
     return employees.filter(e => {
-      const fullName = getFullName(e);
-      const matchSearch = fullName.toLowerCase().includes(search.toLowerCase()) ||
-                          (e.puesto || '').toLowerCase().includes(search.toLowerCase());
-      const matchDept = filterDept === 'ALL' || e.departamento_laboral === filterDept;
-      const matchStatus = filterStatus === 'ALL' || e.estado === filterStatus || (filterStatus === 'active' && e.estado === 'Activo');
-      const matchDpi = filterDpi === '' || (e.dpi && e.dpi.includes(filterDpi));
-      const matchIgss = filterIgss === '' || (e.no_igss && e.no_igss.includes(filterIgss));
-      return matchSearch && matchDept && matchStatus && matchDpi && matchIgss;
+      if (filterDept !== 'ALL' && e.departamento_laboral !== filterDept) return false;
+      if (filterArea !== 'ALL' && String(e.areaId) !== filterArea) return false;
+      if (filterDiv !== 'ALL' && String(e.divisionId) !== filterDiv) return false;
+      if (filterSubdiv !== 'ALL' && String(e.subdivisionId) !== filterSubdiv) return false;
+      if (filterStatus !== 'ALL') {
+        const empStatus = (e.estado || '').toUpperCase();
+        const selStatus = filterStatus.toUpperCase();
+        if (empStatus !== selStatus) return false;
+      }
+      if (!searchNorm) return true;
+      const fullName = normalize(getFullName(e));
+      return fullName.includes(searchNorm) ||
+             normalize(e.puesto || '').includes(searchNorm) ||
+             (e.dpi || '').includes(debouncedSearch) ||
+             (e.no_igss || '').includes(debouncedSearch) ||
+             (e.nit || '').includes(debouncedSearch);
     });
-  }, [employees, search, filterDept, filterStatus, filterDpi, filterIgss]);
+  }, [employees, debouncedSearch, filterDept, filterArea, filterDiv, filterSubdiv, filterStatus, normalize]);
 
   const pagination = usePagination(filteredEmployees, 10);
 
@@ -131,7 +151,7 @@ export default function Employees() {
 
   const handleOffboard = () => {
     updateEmployee(offboardState.empId, { 
-      estado: 'Inactivo', 
+      estado: 'De Baja', 
       motivo_baja: offboardState.reason,
       fecha_baja: offboardState.date
     });
@@ -280,11 +300,11 @@ export default function Employees() {
           >
             Filtros {showFilters ? '▲' : '▼'}
           </Button>
-          {(filterDept !== 'ALL' || filterStatus !== 'ALL' || filterDpi !== '' || filterIgss !== '') && (
+          {(filterDept !== 'ALL' || filterArea !== 'ALL' || filterDiv !== 'ALL' || filterSubdiv !== 'ALL' || filterStatus !== 'ALL') && (
             <Button
               variant="ghost"
               leftIcon={<X size={16} />}
-              onClick={() => { setFilterDept('ALL'); setFilterStatus('ALL'); setFilterDpi(''); setFilterIgss(''); }}
+              onClick={() => { setFilterDept('ALL'); setFilterArea('ALL'); setFilterDiv('ALL'); setFilterSubdiv('ALL'); setFilterStatus('ALL'); }}
             >
               Limpiar
             </Button>
@@ -301,50 +321,66 @@ export default function Employees() {
             borderColor={borderColor}
             flexWrap="wrap"
           >
-            <FormControl minW={{ base: '100%', sm: '200px' }} maxW={{ base: '100%', sm: '280px' }}>
-              <FormLabel fontSize="sm" color={textSecondary}>Departamento</FormLabel>
+            <FormControl minW={{ base: '100%', sm: '180px' }} maxW={{ base: '100%', sm: '240px' }}>
+              <FormLabel fontSize="xs" color={textSecondary} fontWeight="600" textTransform="uppercase">Departamento</FormLabel>
               <Select
                 value={filterDept}
-                onChange={e => setFilterDept(e.target.value)}
+                onChange={e => { setFilterDept(e.target.value); setFilterArea('ALL'); setFilterDiv('ALL'); setFilterSubdiv('ALL'); }}
                 borderRadius="lg"
                 size="sm"
               >
-                <option value="ALL">Todos los departamentos</option>
+                <option value="ALL">Todos</option>
                 {departments.map((d, i) => <option key={d.id || i} value={d.nombre_dimension}>{d.nombre_dimension}</option>)}
               </Select>
             </FormControl>
-            <FormControl minW={{ base: '100%', sm: '150px' }} maxW={{ base: '100%', sm: '220px' }}>
-              <FormLabel fontSize="sm" color={textSecondary}>Estado</FormLabel>
+            <FormControl minW={{ base: '100%', sm: '180px' }} maxW={{ base: '100%', sm: '240px' }}>
+              <FormLabel fontSize="xs" color={textSecondary} fontWeight="600" textTransform="uppercase">Área</FormLabel>
+              <Select
+                value={filterArea}
+                onChange={e => { setFilterArea(e.target.value); setFilterDiv('ALL'); setFilterSubdiv('ALL'); }}
+                borderRadius="lg"
+                size="sm"
+              >
+                <option value="ALL">Todas</option>
+                {(areas || []).map(a => <option key={a.id} value={String(a.id)}>{a.nombre}</option>)}
+              </Select>
+            </FormControl>
+            <FormControl minW={{ base: '100%', sm: '180px' }} maxW={{ base: '100%', sm: '240px' }}>
+              <FormLabel fontSize="xs" color={textSecondary} fontWeight="600" textTransform="uppercase">División</FormLabel>
+              <Select
+                value={filterDiv}
+                onChange={e => { setFilterDiv(e.target.value); setFilterSubdiv('ALL'); }}
+                borderRadius="lg"
+                size="sm"
+              >
+                <option value="ALL">Todas</option>
+                {(divisions || []).map(d => <option key={d.id} value={String(d.id)}>{d.nombre}</option>)}
+              </Select>
+            </FormControl>
+            <FormControl minW={{ base: '100%', sm: '180px' }} maxW={{ base: '100%', sm: '240px' }}>
+              <FormLabel fontSize="xs" color={textSecondary} fontWeight="600" textTransform="uppercase">Subdivisión</FormLabel>
+              <Select
+                value={filterSubdiv}
+                onChange={e => setFilterSubdiv(e.target.value)}
+                borderRadius="lg"
+                size="sm"
+              >
+                <option value="ALL">Todas</option>
+                {(subdivisions || []).map(s => <option key={s.id} value={String(s.id)}>{s.nombre}</option>)}
+              </Select>
+            </FormControl>
+            <FormControl minW={{ base: '100%', sm: '140px' }} maxW={{ base: '100%', sm: '180px' }}>
+              <FormLabel fontSize="xs" color={textSecondary} fontWeight="600" textTransform="uppercase">Estado</FormLabel>
               <Select
                 value={filterStatus}
                 onChange={e => setFilterStatus(e.target.value)}
                 borderRadius="lg"
                 size="sm"
               >
-                <option value="ALL">Todos los estados</option>
+                <option value="ALL">Todos</option>
                 <option value="Activo">Activo</option>
-                <option value="Inactivo">Inactivo</option>
+                <option value="De Baja">De Baja</option>
               </Select>
-            </FormControl>
-            <FormControl minW={{ base: '100%', sm: '150px' }} maxW={{ base: '100%', sm: '220px' }}>
-              <FormLabel fontSize="sm" color={textSecondary}>DPI</FormLabel>
-              <Input
-                value={filterDpi}
-                onChange={e => setFilterDpi(e.target.value)}
-                placeholder="Buscar DPI..."
-                borderRadius="lg"
-                size="sm"
-              />
-            </FormControl>
-            <FormControl minW={{ base: '100%', sm: '150px' }} maxW={{ base: '100%', sm: '220px' }}>
-              <FormLabel fontSize="sm" color={textSecondary}>No. IGSS</FormLabel>
-              <Input
-                value={filterIgss}
-                onChange={e => setFilterIgss(e.target.value)}
-                placeholder="Buscar No. IGSS..."
-                borderRadius="lg"
-                size="sm"
-              />
             </FormControl>
           </Flex>
         </Collapse>
@@ -451,32 +487,40 @@ export default function Employees() {
                         </Text>
                       </Td>
                       <Td>
-                        <Tooltip
-                          label={companies.filter(c => (getDist(emp)[c.id] || 0) > 0).map(c => `${c.nombre_comercial || c.nit}: ${getDist(emp)[c.id]}%`).join(' · ')}
-                          placement="top"
-                          hasArrow
-                          borderRadius="md"
-                        >
-                          <Flex
-                            w="120px"
-                            h="8px"
-                            borderRadius="full"
-                            overflow="hidden"
-                            bg={distBarBg}
-                          >
-                            {companies.map(c => {
-                              const pct = getDist(emp)[c.id] || 0;
-                              return pct > 0 ? (
-                                <Box
-                                  key={c.id}
-                                  w={`${pct}%`}
-                                  bg={c.color || 'brand.500'}
-                                  transition="width 0.3s"
-                                />
-                              ) : null;
-                            })}
-                          </Flex>
-                        </Tooltip>
+                        {(() => {
+                          const distObj = getDist(emp);
+                          const activeCompanies = companies.filter(c => (distObj[c.id] || 0) > 0);
+                          const tooltipLabel = activeCompanies.map(c => `${c.nombre_comercial || c.nit}: ${distObj[c.id]}%`).join(' · ');
+                          
+                          return (
+                            <Tooltip
+                              label={tooltipLabel}
+                              placement="top"
+                              hasArrow
+                              borderRadius="md"
+                            >
+                              <Flex
+                                w="120px"
+                                h="8px"
+                                borderRadius="full"
+                                overflow="hidden"
+                                bg={distBarBg}
+                              >
+                                {companies.map(c => {
+                                  const pct = distObj[c.id] || 0;
+                                  return pct > 0 ? (
+                                    <Box
+                                      key={c.id}
+                                      w={`${pct}%`}
+                                      bg={c.color || 'brand.500'}
+                                      transition="width 0.3s"
+                                    />
+                                  ) : null;
+                                })}
+                              </Flex>
+                            </Tooltip>
+                          );
+                        })()}
                       </Td>
                       <Td>
                         <Badge
@@ -527,7 +571,7 @@ export default function Employees() {
                               />
                             </Tooltip>
                           )}
-                          {emp.estado === 'Inactivo' && (
+                          {emp.estado === 'De Baja' && (
                             <Tooltip label="Generar Finiquito" hasArrow>
                               <IconButton
                                 aria-label="Generar Finiquito"
@@ -585,6 +629,9 @@ export default function Employees() {
         onClose={() => setShowModal(false)} 
         employee={currentEmp} 
         companies={companies}
+        areas={areas}
+        divisions={divisions}
+        subdivisions={subdivisions}
         onEdit={(emp) => {
           setCurrentEmp(emp);
           setModalMode('edit');
@@ -610,7 +657,7 @@ export default function Employees() {
           <ModalCloseButton />
           <ModalBody>
             <Text fontSize="sm" color={textSecondary} mb={5}>
-              El empleado pasará a estado Inactivo y ya no aparecerá en nóminas futuras, pero su historial se mantendrá intacto.
+              El empleado pasará a estado DE BAJA y ya no aparecerá en nóminas futuras, pero su historial se mantendrá intacto.
             </Text>
             <FormControl mb={5}>
               <FormLabel fontSize="sm" fontWeight={600}>Fecha de Baja</FormLabel>

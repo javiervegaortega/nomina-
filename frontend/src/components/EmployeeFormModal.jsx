@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useContext } from 'react';
+import React, { useState, useEffect, useContext, useMemo } from 'react';
 import { X, Check, User, Building2, FileSignature, Landmark, MapPin, GraduationCap, Briefcase, FileWarning, Plus, Trash2, Edit3, Baby, Car, Heart } from 'lucide-react';
 import {
   Modal, ModalOverlay, ModalContent,
@@ -213,8 +213,15 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
 
   const handleChange = (field, value) => setForm(prev => ({ ...prev, [field]: value }));
 
-  const duplicateDpi = employees.find(e => e.dpi === form.dpi && e.id !== form.id && form.dpi?.trim());
-  const duplicateIgss = employees.find(e => e.no_igss === form.no_igss && e.id !== form.id && form.no_igss?.trim());
+  const duplicateDpi = useMemo(() => {
+    if (!form.dpi || !form.dpi.trim()) return null;
+    return employees.find(e => e.dpi === form.dpi && e.id !== form.id);
+  }, [employees, form.dpi, form.id]);
+
+  const duplicateIgss = useMemo(() => {
+    if (!form.no_igss || !form.no_igss.trim()) return null;
+    return employees.find(e => e.no_igss === form.no_igss && e.id !== form.id);
+  }, [employees, form.no_igss, form.id]);
 
   const handleSave = () => {
     if (distTotal !== 100) return;
@@ -229,7 +236,6 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
     try {
       const parsed = JSON.parse(form.dist);
       parsedDistValues = Object.values(parsed);
-      form.dist = parsed;
     } catch(e) {
       parsedDistValues = [];
     }
@@ -383,10 +389,10 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
               <Box>
                 <SectionTitle title="Jerarquía Corporativa" />
                 <SimpleGrid columns={{ base: 1, sm: 3 }} spacing={6} mb={8}>
-                  <SelectField label="Departamento (OBLIGATORIO)" val={form.departamento_laboral} onChange={v => { handleChange('departamento_laboral', v); handleChange('areaId', ''); handleChange('divisionId', ''); handleChange('subdivisionId', ''); handleChange('nivel_5', ''); }} options={DEPARTAMENTOS_LIST} required />
-                  <SelectField label="Área (OBLIGATORIO)" val={form.areaId} onChange={v => { handleChange('areaId', v); handleChange('divisionId', ''); handleChange('subdivisionId', ''); handleChange('nivel_5', ''); }} options={(areas || []).filter(a => !form.departamento_laboral || a.departamento === form.departamento_laboral || a.departamento_id === form.departamento_laboral || a.nombre_dimension === form.departamento_laboral)} required />
-                  <SelectField label="División (OBLIGATORIO)" val={form.divisionId} onChange={v => { handleChange('divisionId', v); handleChange('subdivisionId', ''); handleChange('nivel_5', ''); }} options={(divisions || []).filter(d => !form.areaId || d.area === form.areaId || d.area_id === form.areaId || d.padre_id === form.areaId || d.padre === form.areaId || d.nombre_dimension === form.areaId)} required />
-                  <SelectField label="Sub División" val={form.subdivisionId} onChange={v => { handleChange('subdivisionId', v); handleChange('nivel_5', ''); }} options={(subdivisions || []).filter(s => !form.divisionId || s.division === form.divisionId || s.division_id === form.divisionId || s.padre_id === form.divisionId || s.padre === form.divisionId || s.nombre_dimension === form.divisionId)} />
+                  <SelectField label="Departamento (OBLIGATORIO)" val={form.departamento_laboral} onChange={v => { handleChange('departamento_laboral', v); handleChange('areaId', ''); handleChange('divisionId', ''); handleChange('subdivisionId', ''); handleChange('nivel_5', ''); }} options={(departments || []).map(d => ({ value: d.nombre_dimension, label: d.nombre_dimension }))} required />
+                  <SelectField label="Área (OBLIGATORIO)" val={String(form.areaId || '')} onChange={v => { handleChange('areaId', v); handleChange('divisionId', ''); handleChange('subdivisionId', ''); handleChange('nivel_5', ''); }} options={areas || []} required />
+                  <SelectField label="División (OBLIGATORIO)" val={String(form.divisionId || '')} onChange={v => { handleChange('divisionId', v); handleChange('subdivisionId', ''); handleChange('nivel_5', ''); }} options={divisions || []} required />
+                  <SelectField label="Sub División" val={String(form.subdivisionId || '')} onChange={v => { handleChange('subdivisionId', v); handleChange('nivel_5', ''); }} options={subdivisions || []} />
                   <SelectField label="Nivel 5" val={form.nivel_5} onChange={v => handleChange('nivel_5', v)} options={[]} />
                   <Field label="Puesto (OBLIGATORIO)" val={form.puesto} onChange={v => handleChange('puesto', v)} required />
                 </SimpleGrid>

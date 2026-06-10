@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useContext } from 'react';
 import {
   Save, Download, FileText, Check, X, Edit3,
-  ChevronRight, AlertCircle, DollarSign, Clock,
+  ChevronRight, ChevronDown, ChevronUp, AlertCircle, DollarSign, Clock,
   Calculator, Building2, Plus, ArrowLeft, Trash2, Calendar, Search, LayoutGrid, List, User, Edit2
 } from 'lucide-react';
 import { AppContext } from '../App';
@@ -46,23 +46,28 @@ function PayrollHub({ onSelectDraft }) {
   const handleCreateOrUpdate = async () => {
     if (!title || !selectedCompany) return;
     
+    const companiesPayload = selectedCompany === 'ALL' ? [] : [selectedCompany];
+
     if (editingDraftId) {
-      await updateDraftMetadata(editingDraftId, title, [selectedCompany], draftDate ? new Date(draftDate).toISOString() : new Date().toISOString(), periodType);
+      await updateDraftMetadata(editingDraftId, title, companiesPayload, draftDate ? new Date(draftDate).toISOString() : new Date().toISOString(), periodType);
       setShowModal(false);
       showToast('Borrador actualizado', 'success');
     } else {
       const isDuplicate = activePayrolls.some(p => {
-        let pComp = '';
+        let pComp = 'ALL';
         if (Array.isArray(p.companies) && p.companies.length > 0) pComp = p.companies[0];
         else if (typeof p.companies === 'string') {
-          try { const parsed = JSON.parse(p.companies); pComp = parsed[0] || ''; } catch(e) {}
+          try { 
+            const parsed = JSON.parse(p.companies); 
+            if (parsed.length > 0) pComp = parsed[0]; 
+          } catch(e) {}
         }
         return p.title === title || pComp === selectedCompany;
       });
 
       const createAction = async () => {
         try {
-          const newId = await createActivePayroll(title, [selectedCompany], periodType);
+          const newId = await createActivePayroll(title, companiesPayload, periodType);
           setShowModal(false);
           onSelectDraft(newId);
         } catch (err) {
@@ -85,10 +90,13 @@ function PayrollHub({ onSelectDraft }) {
     const dateStr = draft.createdAt ? new Date(draft.createdAt).toISOString().split('T')[0] : '';
     setDraftDate(dateStr);
     
-    let comp = '';
+    let comp = 'ALL';
     if (Array.isArray(draft.companies) && draft.companies.length > 0) comp = draft.companies[0];
     else if (typeof draft.companies === 'string') {
-      try { const parsed = JSON.parse(draft.companies); comp = parsed[0] || ''; } catch(e) {}
+      try { 
+        const parsed = JSON.parse(draft.companies); 
+        if (parsed.length > 0) comp = parsed[0]; 
+      } catch(e) {}
     }
     setSelectedCompany(comp);
     setShowModal(true);
@@ -190,7 +198,7 @@ function PayrollHub({ onSelectDraft }) {
                     try { companiesArr = JSON.parse(draft.companies); } catch(e) {}
                   }
                   if (!companiesArr || companiesArr.length === 0) {
-                    return <Badge size="sm">Todas</Badge>;
+                    return <Badge colorScheme="purple" variant="subtle" size="sm">Todas las empresas</Badge>;
                   }
                   return (
                     <Flex gap={1} wrap="wrap">
@@ -276,6 +284,7 @@ function PayrollHub({ onSelectDraft }) {
                   onChange={e => setSelectedCompany(e.target.value)}
                 >
                   <option value="">Seleccione una empresa...</option>
+                  <option value="ALL">Todas las empresas</option>
                   {companies.map(c => (
                     <option key={c.id} value={c.nombre_comercial || c.nit}>{c.nombre_comercial || c.nit}</option>
                   ))}
@@ -296,7 +305,17 @@ function PayrollHub({ onSelectDraft }) {
 }
 
 function PayrollEditor({ draftId, onBack }) {
-  const { activePayrolls, updateActivePayroll, closePayroll, bonuses, areas, departments } = useContext(DataContext);
+  const { 
+    activePayrolls, 
+    updateActivePayroll, 
+    closePayroll,
+    bonuses,
+    areas,
+    departments,
+    divisions,
+    subdivisions
+  } = useContext(DataContext);
+  
   const { confirmAction, showToast } = useContext(AppContext);
   
   const draft = activePayrolls.find(p => p.id === draftId);
@@ -311,6 +330,9 @@ function PayrollEditor({ draftId, onBack }) {
   // Filtering states
   const [filterArea, setFilterArea] = useState('');
   const [filterDept, setFilterDept] = useState('');
+  const [filterDiv, setFilterDiv] = useState('');
+  const [filterSubdiv, setFilterSubdiv] = useState('');
+  const [filterStatus, setFilterStatus] = useState('ALL');
   const [searchQuery, setSearchQuery] = useState('');
 
   const tab = TABS[tabIndex].id;
@@ -368,17 +390,26 @@ function PayrollEditor({ draftId, onBack }) {
 
   // Filter employees
   const filteredEmployees = useMemo(() => {
+    const normalize = (str) => str ? str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase() : '';
     return data.filter(e => {
-      const fullName = `${e.primer_nombre || e.nombres || ''} ${e.primer_apellido || e.apellidos || ''}`.toLowerCase();
-      const matchSearch = fullName.includes(searchQuery.toLowerCase()) || (e.puesto || '').toLowerCase().includes(searchQuery.toLowerCase());
+      const fullName = [e.primer_nombre, e.segundo_nombre, e.otro_nombre, e.primer_apellido, e.segundo_apellido, e.apellido_casada].filter(Boolean).join(' ');
+      const matchSearch = normalize(fullName).includes(normalize(searchQuery)) || normalize(e.puesto).includes(normalize(searchQuery));
       
       const matchArea = !filterArea || e.areaId?.toString() === filterArea;
-      
       const matchDept = !filterDept || e.departamento_laboral === filterDept || e.departmentId?.toString() === filterDept;
+      const matchDiv = !filterDiv || e.divisionId?.toString() === filterDiv;
+      const matchSubdiv = !filterSubdiv || e.subdivisionId?.toString() === filterSubdiv;
+      
+      let matchStatus = true;
+      if (filterStatus !== 'ALL') {
+        const empStatus = (e.estado || '').toUpperCase();
+        const selStatus = filterStatus.toUpperCase();
+        matchStatus = empStatus === selStatus;
+      }
 
-      return matchSearch && matchArea && matchDept;
+      return matchSearch && matchArea && matchDept && matchDiv && matchSubdiv && matchStatus;
     });
-  }, [data, searchQuery, filterArea, filterDept]);
+  }, [data, searchQuery, filterArea, filterDept, filterDiv, filterSubdiv, filterStatus]);
 
   // General totals calculation
   const totals = useMemo(() => {
@@ -488,13 +519,21 @@ function PayrollEditor({ draftId, onBack }) {
             setEditingCell={setEditingCell}
             areas={areas}
             departments={departments}
+            divisions={divisions}
+            subdivisions={subdivisions}
             filterArea={filterArea}
             setFilterArea={setFilterArea}
             filterDept={filterDept}
             setFilterDept={setFilterDept}
+            filterDiv={filterDiv}
+            setFilterDiv={setFilterDiv}
+            filterSubdiv={filterSubdiv}
+            setFilterSubdiv={setFilterSubdiv}
+            filterStatus={filterStatus}
+            setFilterStatus={setFilterStatus}
             searchQuery={searchQuery}
             setSearchQuery={setSearchQuery}
-            handleClose={onAlertOpen}
+            handleClose={confirmClose}
           />
         )}
         {tab === 'distribution' && <DistributionTab data={data} />}
@@ -533,9 +572,12 @@ function PayrollEditor({ draftId, onBack }) {
 
 function ListadoPagosTab({ 
   data, periodType, onChange, editingCell, setEditingCell, 
-  areas, departments, 
+  areas, departments, divisions, subdivisions,
   filterArea, setFilterArea, 
   filterDept, setFilterDept, 
+  filterDiv, setFilterDiv,
+  filterSubdiv, setFilterSubdiv,
+  filterStatus, setFilterStatus,
   searchQuery, setSearchQuery,
   handleClose 
 }) {
@@ -549,6 +591,50 @@ function ListadoPagosTab({
   // Drawer State
   const { isOpen: isDrawerOpen, onOpen: onDrawerOpen, onClose: onDrawerClose } = useDisclosure();
   const [selectedEmp, setSelectedEmp] = useState(null);
+
+  const EDITABLE_FIELDS = {
+    summary: ['days'],
+    detailed: ['days', 'bonos', 'simplesQty', 'simplesVal', 'doblesQty', 'doblesVal', 'otrosIngresos', 'igss', 'isr', 'cafe', 'cell', 'uniform', 'shoes', 'equipo', 'product', 'bancos', 'otros', 'judiciales', 'seguro', 'parqueo', 'boleto_de_ornato', 'otros_egresos']
+  };
+
+  const handleNavigation = (currentId, currentField, key, shiftKey) => {
+    const fields = EDITABLE_FIELDS[viewMode];
+    const fieldIndex = fields.indexOf(currentField);
+    const empIndex = data.findIndex(e => e.id === currentId);
+    
+    if (fieldIndex === -1 || empIndex === -1) return;
+    
+    let nextEmpIndex = empIndex;
+    let nextFieldIndex = fieldIndex;
+    
+    if (key === 'ArrowDown' || (key === 'Enter' && !shiftKey)) {
+      nextEmpIndex = Math.min(empIndex + 1, data.length - 1);
+    } else if (key === 'ArrowUp' || (key === 'Enter' && shiftKey)) {
+      nextEmpIndex = Math.max(empIndex - 1, 0);
+    } else if (key === 'ArrowRight' || (key === 'Tab' && !shiftKey)) {
+      if (fieldIndex < fields.length - 1) {
+        nextFieldIndex = fieldIndex + 1;
+      } else if (empIndex < data.length - 1) {
+        nextEmpIndex = empIndex + 1;
+        nextFieldIndex = 0;
+      }
+    } else if (key === 'ArrowLeft' || (key === 'Tab' && shiftKey)) {
+      if (fieldIndex > 0) {
+        nextFieldIndex = fieldIndex - 1;
+      } else if (empIndex > 0) {
+        nextEmpIndex = empIndex - 1;
+        nextFieldIndex = fields.length - 1;
+      }
+    }
+    
+    if (nextEmpIndex !== empIndex || nextFieldIndex !== fieldIndex) {
+      setTimeout(() => {
+        setEditingCell({ id: data[nextEmpIndex].id, field: fields[nextFieldIndex] });
+      }, 0);
+    } else if (key === 'Enter' || key === 'Escape') {
+      setEditingCell(null);
+    }
+  };
 
   const handleOpenDrawer = (emp) => {
     setSelectedEmp(emp);
@@ -652,28 +738,64 @@ function ListadoPagosTab({
       <Flex gap={{ base: 2, md: 4 }} wrap="wrap" mb={4} align={{ base: 'stretch', md: 'center' }} justify="space-between" direction={{ base: 'column', md: 'row' }}>
         <HStack spacing={{ base: 2, md: 3 }} wrap="wrap" flex="1">
           <Select 
-            placeholder="Filtrar por Área..." 
-            value={filterArea} 
-            onChange={e => setFilterArea(e.target.value)}
-            w={{ base: '100%', sm: '200px' }}
-            size="sm"
-            borderRadius="md"
-          >
-            {areas.map(a => (
-              <option key={a.id} value={a.id}>{a.nombre_dimension}</option>
-            ))}
-          </Select>
-          <Select 
             placeholder="Filtrar por Departamento..." 
             value={filterDept} 
             onChange={e => setFilterDept(e.target.value)}
-            w={{ base: '100%', sm: '200px' }}
+            w={{ base: '100%', sm: '180px' }}
             size="sm"
             borderRadius="md"
           >
             {departments.map(d => (
-              <option key={d.id} value={d.nombre}>{d.nombre}</option>
+              <option key={d.id} value={d.nombre_dimension}>{d.nombre_dimension}</option>
             ))}
+          </Select>
+          <Select 
+            placeholder="Filtrar por Área..." 
+            value={filterArea} 
+            onChange={e => setFilterArea(e.target.value)}
+            w={{ base: '100%', sm: '180px' }}
+            size="sm"
+            borderRadius="md"
+          >
+            {areas.map(a => (
+              <option key={a.id} value={a.id}>{a.nombre}</option>
+            ))}
+          </Select>
+          <Select 
+            placeholder="Filtrar por División..." 
+            value={filterDiv} 
+            onChange={e => setFilterDiv(e.target.value)}
+            w={{ base: '100%', sm: '180px' }}
+            size="sm"
+            borderRadius="md"
+          >
+            {(divisions || []).map(d => (
+              <option key={d.id} value={d.id}>{d.nombre}</option>
+            ))}
+          </Select>
+          <Select 
+            placeholder="Filtrar por SubDivisión..." 
+            value={filterSubdiv} 
+            onChange={e => setFilterSubdiv(e.target.value)}
+            w={{ base: '100%', sm: '180px' }}
+            size="sm"
+            borderRadius="md"
+          >
+            {(subdivisions || []).map(s => (
+              <option key={s.id} value={s.id}>{s.nombre}</option>
+            ))}
+          </Select>
+          <Select 
+            placeholder="Estado..." 
+            value={filterStatus} 
+            onChange={e => setFilterStatus(e.target.value)}
+            w={{ base: '100%', sm: '120px' }}
+            size="sm"
+            borderRadius="md"
+          >
+            <option value="ALL">Todos</option>
+            <option value="Activo">Activo</option>
+            <option value="De Baja">De Baja</option>
           </Select>
         </HStack>
 
@@ -698,7 +820,7 @@ function ListadoPagosTab({
 
       {/* Spreadsheet Table or Summary View */}
       {viewMode === 'detailed' ? (
-        <TableContainer border="1px solid" borderColor={borderColor} borderRadius="xl" overflowX="auto" bg={tdBg} maxH="550px">
+        <Box border="1px solid" borderColor={borderColor} borderRadius="xl" overflowX="auto" overflowY="auto" bg={tdBg} maxH="550px">
         <Table variant="simple" size="sm" layout="fixed" style={{ borderCollapse: 'separate', borderSpacing: 0, width: 'max-content' }}>
           <Thead position="sticky" top={0} zIndex={15}>
             <Tr>
@@ -800,8 +922,8 @@ function ListadoPagosTab({
                   <Td position="sticky" left={0} zIndex={5} bg={tdBg} borderRight="1px solid" borderColor={borderColor} fontWeight="bold" fontSize="xs">
                     {i + 1}
                   </Td>
-                  <Td position="sticky" left="60px" zIndex={5} bg={tdBg} borderRight="1px solid" borderColor={borderColor} fontWeight="600" color="brand.500" fontSize="xs" isTruncated maxW="200px" title={`${e.primer_nombre || e.nombres || ''} ${e.primer_apellido || e.apellidos || ''}`}>
-                    {`${e.primer_nombre || e.nombres || ''} ${e.primer_apellido || e.apellidos || ''}`}
+                  <Td position="sticky" left="60px" zIndex={5} bg={tdBg} borderRight="1px solid" borderColor={borderColor} fontWeight="600" color="brand.500" fontSize="xs" isTruncated maxW="200px" title={[e.primer_nombre, e.segundo_nombre, e.otro_nombre, e.primer_apellido, e.segundo_apellido, e.apellido_casada].filter(Boolean).join(' ')}>
+                    {[e.primer_nombre, e.segundo_nombre, e.otro_nombre, e.primer_apellido, e.segundo_apellido, e.apellido_casada].filter(Boolean).join(' ')}
                   </Td>
                   <Td position="sticky" left="260px" zIndex={5} bg={tdBg} borderRight="1px solid" borderColor={borderColor} fontSize="xs" isTruncated maxW="120px" title={companies?.find(c => c.id == e.empresa_principal)?.nombre_comercial || e.company || 'Sin Empresa'}>
                     {companies?.find(c => c.id == e.empresa_principal)?.nombre_comercial || e.company || 'Sin Empresa'}
@@ -811,35 +933,35 @@ function ListadoPagosTab({
                   </Td>
 
                   {/* Editable and Calculated Cells */}
-                  <EditableCell id={e.id} field="days" section="root" value={e.days} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={60} />
+                  <EditableCell onNavigate={handleNavigation} id={e.id} field="days" section="root" value={e.days} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={60} />
                   <Td fontFamily="mono" fontSize="xs">{formatQ(baseSalary)}</Td>
                   <Td fontFamily="mono" fontSize="xs">{formatQ(bonusLey)}</Td>
                   <Td fontFamily="mono" fontSize="xs">{formatQ(bonusDec)}</Td>
-                  <EditableCell id={e.id} field="bonos" section="extras" value={e.extras?.bonos || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney />
+                  <EditableCell onNavigate={handleNavigation} id={e.id} field="bonos" section="extras" value={e.extras?.bonos || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney />
                   <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500">{formatQ(devengado)}</Td>
                   
-                  <EditableCell id={e.id} field="simplesQty" section="extras" value={e.extras?.simplesQty || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={60} />
-                  <EditableCell id={e.id} field="simplesVal" section="extras" value={e.extras?.simplesVal || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney />
-                  <EditableCell id={e.id} field="doblesQty" section="extras" value={e.extras?.doblesQty || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={60} />
-                  <EditableCell id={e.id} field="doblesVal" section="extras" value={e.extras?.doblesVal || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney />
-                  <EditableCell id={e.id} field="otrosIngresos" section="extras" value={e.extras?.otrosIngresos || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney />
+                  <EditableCell onNavigate={handleNavigation} id={e.id} field="simplesQty" section="extras" value={e.extras?.simplesQty || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={60} />
+                  <EditableCell onNavigate={handleNavigation} id={e.id} field="simplesVal" section="extras" value={e.extras?.simplesVal || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney />
+                  <EditableCell onNavigate={handleNavigation} id={e.id} field="doblesQty" section="extras" value={e.extras?.doblesQty || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={60} />
+                  <EditableCell onNavigate={handleNavigation} id={e.id} field="doblesVal" section="extras" value={e.extras?.doblesVal || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney />
+                  <EditableCell onNavigate={handleNavigation} id={e.id} field="otrosIngresos" section="extras" value={e.extras?.otrosIngresos || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney />
                   <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="gold.500">{formatQ(salarioTotal)}</Td>
 
-                  <EditableCell id={e.id} field="igss" section="deductions" value={e.deductions?.igss || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
-                  <EditableCell id={e.id} field="isr" section="deductions" value={e.deductions?.isr || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
-                  <EditableCell id={e.id} field="cafe" section="deductions" value={e.deductions?.cafe || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
-                  <EditableCell id={e.id} field="cell" section="deductions" value={e.deductions?.cell || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
-                  <EditableCell id={e.id} field="uniform" section="deductions" value={e.deductions?.uniform || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
-                  <EditableCell id={e.id} field="shoes" section="deductions" value={e.deductions?.shoes || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
-                  <EditableCell id={e.id} field="equipo" section="deductions" value={e.deductions?.equipo || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
-                  <EditableCell id={e.id} field="product" section="deductions" value={e.deductions?.product || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
-                  <EditableCell id={e.id} field="bancos" section="deductions" value={e.deductions?.bancos || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
-                  <EditableCell id={e.id} field="otros" section="deductions" value={e.deductions?.otros || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
-                  <EditableCell id={e.id} field="judiciales" section="deductions" value={e.deductions?.judiciales || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
-                  <EditableCell id={e.id} field="seguro" section="deductions" value={e.deductions?.seguro || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
-                  <EditableCell id={e.id} field="parqueo" section="deductions" value={e.deductions?.parqueo || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
-                  <EditableCell id={e.id} field="boleto_de_ornato" section="deductions" value={e.deductions?.boleto_de_ornato || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={85} isMoney isDanger />
-                  <EditableCell id={e.id} field="otros_egresos" section="deductions" value={e.deductions?.otros_egresos || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={85} isMoney isDanger />
+                  <EditableCell onNavigate={handleNavigation} id={e.id} field="igss" section="deductions" value={e.deductions?.igss || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
+                  <EditableCell onNavigate={handleNavigation} id={e.id} field="isr" section="deductions" value={e.deductions?.isr || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
+                  <EditableCell onNavigate={handleNavigation} id={e.id} field="cafe" section="deductions" value={e.deductions?.cafe || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
+                  <EditableCell onNavigate={handleNavigation} id={e.id} field="cell" section="deductions" value={e.deductions?.cell || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
+                  <EditableCell onNavigate={handleNavigation} id={e.id} field="uniform" section="deductions" value={e.deductions?.uniform || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
+                  <EditableCell onNavigate={handleNavigation} id={e.id} field="shoes" section="deductions" value={e.deductions?.shoes || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
+                  <EditableCell onNavigate={handleNavigation} id={e.id} field="equipo" section="deductions" value={e.deductions?.equipo || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
+                  <EditableCell onNavigate={handleNavigation} id={e.id} field="product" section="deductions" value={e.deductions?.product || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
+                  <EditableCell onNavigate={handleNavigation} id={e.id} field="bancos" section="deductions" value={e.deductions?.bancos || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
+                  <EditableCell onNavigate={handleNavigation} id={e.id} field="otros" section="deductions" value={e.deductions?.otros || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
+                  <EditableCell onNavigate={handleNavigation} id={e.id} field="judiciales" section="deductions" value={e.deductions?.judiciales || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
+                  <EditableCell onNavigate={handleNavigation} id={e.id} field="seguro" section="deductions" value={e.deductions?.seguro || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
+                  <EditableCell onNavigate={handleNavigation} id={e.id} field="parqueo" section="deductions" value={e.deductions?.parqueo || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
+                  <EditableCell onNavigate={handleNavigation} id={e.id} field="boleto_de_ornato" section="deductions" value={e.deductions?.boleto_de_ornato || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={85} isMoney isDanger />
+                  <EditableCell onNavigate={handleNavigation} id={e.id} field="otros_egresos" section="deductions" value={e.deductions?.otros_egresos || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={85} isMoney isDanger />
                   <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="red.500">{formatQ(totalEgresos)}</Td>
                   
                   <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500" bg={useColorModeValue('brand.50', 'brand.900')}>
@@ -904,9 +1026,9 @@ function ListadoPagosTab({
             </Tr>
           </Thead>
         </Table>
-      </TableContainer>
+      </Box>
       ) : (
-        <TableContainer border="1px solid" borderColor={borderColor} borderRadius="xl" overflowX="auto" bg={tdBg} maxH="550px">
+        <Box border="1px solid" borderColor={borderColor} borderRadius="xl" overflowX="auto" overflowY="auto" bg={tdBg} maxH="550px">
         <Table variant="simple" size="sm" layout="fixed" style={{ borderCollapse: 'separate', borderSpacing: 0, width: 'max-content' }}>
           <Thead position="sticky" top={0} zIndex={15}>
             <Tr>
@@ -959,8 +1081,8 @@ function ListadoPagosTab({
                   <Td position="sticky" left={0} zIndex={5} bg={tdBg} borderRight="1px solid" borderColor={borderColor} fontWeight="bold" fontSize="xs">
                     {i + 1}
                   </Td>
-                  <Td position="sticky" left="60px" zIndex={5} bg={tdBg} borderRight="1px solid" borderColor={borderColor} fontWeight="600" color="brand.500" fontSize="xs" isTruncated maxW="200px" title={`${e.primer_nombre || e.nombres || ''} ${e.primer_apellido || e.apellidos || ''}`}>
-                    {`${e.primer_nombre || e.nombres || ''} ${e.primer_apellido || e.apellidos || ''}`}
+                  <Td position="sticky" left="60px" zIndex={5} bg={tdBg} borderRight="1px solid" borderColor={borderColor} fontWeight="600" color="brand.500" fontSize="xs" isTruncated maxW="200px" title={[e.primer_nombre, e.segundo_nombre, e.otro_nombre, e.primer_apellido, e.segundo_apellido, e.apellido_casada].filter(Boolean).join(' ')}>
+                    {[e.primer_nombre, e.segundo_nombre, e.otro_nombre, e.primer_apellido, e.segundo_apellido, e.apellido_casada].filter(Boolean).join(' ')}
                   </Td>
                   <Td position="sticky" left="260px" zIndex={5} bg={tdBg} borderRight="1px solid" borderColor={borderColor} fontSize="xs" isTruncated maxW="120px" title={companies?.find(c => c.id == e.empresa_principal)?.nombre_comercial || e.company || 'Sin Empresa'}>
                     {companies?.find(c => c.id == e.empresa_principal)?.nombre_comercial || e.company || 'Sin Empresa'}
@@ -1015,7 +1137,7 @@ function ListadoPagosTab({
             </Tr>
           </Thead>
         </Table>
-      </TableContainer>
+      </Box>
       )}
 
       {/* Action buttons and indicators in footer */}
@@ -1213,22 +1335,44 @@ function ListadoPagosTab({
 
 function DistributionTab({ data }) {
   const { companies: COMPANIES } = useContext(DataContext);
+  const [expandedCompany, setExpandedCompany] = useState(null);
+
   const companyTotals = COMPANIES.map(c => {
     let salary = 0, bonus = 0, extras = 0, patronal = 0;
-    data.forEach(e => {
+    const employees = [];
+    data.filter(e => (e.estado || '').toUpperCase() === 'ACTIVO').forEach(e => {
       const distData = typeof e.dist === 'string' ? JSON.parse(e.dist) : e.dist;
       const pct = (distData?.[c.id] || 0) / 100;
-      const baseFactor = (e.days || 30) / 30;
-      
-      const sueldoOrd = Number(e.sueldo_ordinario) || 0;
-      const bonInc = Number(e.bon_incentivo) || 0;
-      
-      salary += (sueldoOrd * baseFactor) * pct;
-      bonus += (bonInc * baseFactor) * pct;
-      extras += ((e.extras?.simplesVal || 0) + (e.extras?.doblesVal || 0) + (e.extras?.comisiones || 0) + (e.extras?.otrosIngresos || 0)) * pct;
-      patronal += (sueldoOrd * baseFactor) * CUOTA_PATRONAL_RATE * pct;
+      if (pct > 0) {
+        const baseFactor = (e.days || 30) / 30;
+        const sueldoOrd = Number(e.sueldo_ordinario) || 0;
+        const bonInc = Number(e.bon_incentivo) || 0;
+        
+        const eSalary = (sueldoOrd * baseFactor) * pct;
+        const eBonus = (bonInc * baseFactor) * pct;
+        const eExtras = ((e.extras?.simplesVal || 0) + (e.extras?.doblesVal || 0) + (e.extras?.comisiones || 0) + (e.extras?.otrosIngresos || 0)) * pct;
+        const ePatronal = (sueldoOrd * baseFactor) * CUOTA_PATRONAL_RATE * pct;
+        
+        salary += eSalary;
+        bonus += eBonus;
+        extras += eExtras;
+        patronal += ePatronal;
+
+        const fullName = [e.primer_nombre, e.segundo_nombre, e.otro_nombre, e.primer_apellido, e.segundo_apellido, e.apellido_casada].filter(Boolean).join(' ') || e.nombres || 'Empleado sin nombre';
+
+        employees.push({
+           ...e,
+           fullName,
+           pct,
+           eSalary,
+           eBonus,
+           eExtras,
+           ePatronal,
+           eTotal: eSalary + eBonus + eExtras + ePatronal
+        });
+      }
     });
-    return { ...c, salary, bonus, extras, patronal, total: salary + bonus + extras + patronal };
+    return { ...c, salary, bonus, extras, patronal, total: salary + bonus + extras + patronal, employees };
   }).filter(c => c.total > 0);
   
   const grandTotal = companyTotals.reduce((s, c) => s + c.total, 0);
@@ -1273,23 +1417,69 @@ function DistributionTab({ data }) {
             </Tr>
           </Thead>
           <Tbody>
-            {companyTotals.map(c => (
-              <Tr key={c.id}>
-                <Td>
-                  <Flex align="center" gap={2}>
-                    <Box w="10px" h="10px" borderRadius="full" bg={c.color || 'brand.500'} />
-                    <Text fontSize="sm" fontWeight={600} color="brand.500">{c.nombre_comercial || c.nit}</Text>
-                  </Flex>
-                </Td>
-                <Td fontFamily="mono">{formatQ(c.salary)}</Td>
-                <Td fontFamily="mono">{formatQ(c.bonus)}</Td>
-                <Td fontFamily="mono">{formatQ(c.extras)}</Td>
-                <Td fontFamily="mono" color="orange.400">{formatQ(c.patronal)}</Td>
-                <Td isNumeric>
-                  <Text fontSize="sm" fontFamily="mono" fontWeight={700} color="gold.500">{formatQ(c.total)}</Text>
-                </Td>
-              </Tr>
-            ))}
+            {companyTotals.map(c => {
+              const isExpanded = expandedCompany === c.id;
+              return (
+              <React.Fragment key={c.id}>
+                <Tr 
+                  onClick={() => setExpandedCompany(isExpanded ? null : c.id)}
+                  cursor="pointer"
+                  _hover={{ bg: trackBg }}
+                >
+                  <Td>
+                    <Flex align="center" gap={2}>
+                      <Box w="10px" h="10px" borderRadius="full" bg={c.color || 'brand.500'} />
+                      <Text fontSize="sm" fontWeight={600} color="brand.500">{c.nombre_comercial || c.nit}</Text>
+                    </Flex>
+                  </Td>
+                  <Td fontFamily="mono">{formatQ(c.salary)}</Td>
+                  <Td fontFamily="mono">{formatQ(c.bonus)}</Td>
+                  <Td fontFamily="mono">{formatQ(c.extras)}</Td>
+                  <Td fontFamily="mono" color="orange.400">{formatQ(c.patronal)}</Td>
+                  <Td isNumeric>
+                    <Flex justify="flex-end" align="center" gap={3}>
+                      <Text fontSize="sm" fontFamily="mono" fontWeight={700} color="gold.500">{formatQ(c.total)}</Text>
+                      {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                    </Flex>
+                  </Td>
+                </Tr>
+                {isExpanded && (
+                  <Tr bg={useColorModeValue('gray.50', 'whiteAlpha.50')}>
+                    <Td colSpan={6} p={0}>
+                      <Box p={4} m={2} bg={cardBg} borderRadius="md" border="1px solid" borderColor={borderColor}>
+                        <Text fontSize="sm" fontWeight={600} mb={3}>Empleados que contribuyen a {c.nombre_comercial || c.nit}</Text>
+                        <Table size="sm" variant="simple">
+                          <Thead>
+                            <Tr>
+                              <Th fontSize="xs">Empleado</Th>
+                              <Th fontSize="xs">% Pago</Th>
+                              <Th fontSize="xs">Salario Ord.</Th>
+                              <Th fontSize="xs">Bonos Ley</Th>
+                              <Th fontSize="xs">Extras</Th>
+                              <Th fontSize="xs">Patronal</Th>
+                              <Th fontSize="xs" isNumeric>Total</Th>
+                            </Tr>
+                          </Thead>
+                          <Tbody>
+                            {c.employees.map((emp, idx) => (
+                              <Tr key={emp.id + '-' + idx} _hover={{ bg: trackBg }}>
+                                <Td fontSize="xs" fontWeight={500}>{emp.fullName}</Td>
+                                <Td fontSize="xs">{(emp.pct * 100).toFixed(1)}%</Td>
+                                <Td fontFamily="mono" fontSize="xs">{formatQ(emp.eSalary)}</Td>
+                                <Td fontFamily="mono" fontSize="xs">{formatQ(emp.eBonus)}</Td>
+                                <Td fontFamily="mono" fontSize="xs">{formatQ(emp.eExtras)}</Td>
+                                <Td fontFamily="mono" fontSize="xs" color="orange.400">{formatQ(emp.ePatronal)}</Td>
+                                <Td fontFamily="mono" fontSize="xs" fontWeight={600} color="gold.500" isNumeric>{formatQ(emp.eTotal)}</Td>
+                              </Tr>
+                            ))}
+                          </Tbody>
+                        </Table>
+                      </Box>
+                    </Td>
+                  </Tr>
+                )}
+              </React.Fragment>
+            )})}
             <Tr bg={footerBg}>
               <Td fontWeight={800} color="brand.500">GRAN TOTAL</Td>
               <Td fontFamily="mono" fontWeight={700}>{formatQ(companyTotals.reduce((s, c) => s + c.salary, 0))}</Td>
@@ -1307,7 +1497,7 @@ function DistributionTab({ data }) {
   );
 }
 
-function EditableCell({ id, field, section, value, onChange, editing, setEditing, width, isMoney, isDanger }) {
+function EditableCell({ id, field, section, value, onChange, editing, setEditing, width, isMoney, isDanger, onNavigate }) {
   const isEditing = editing?.id === id && editing?.field === field;
   const hoverBg = useColorModeValue('gray.50', 'whiteAlpha.50');
 
@@ -1326,9 +1516,20 @@ function EditableCell({ id, field, section, value, onChange, editing, setEditing
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
               onChange(id, section, field, e.target.value);
+              if (onNavigate) {
+                onNavigate(id, field, 'Enter', e.shiftKey);
+              } else {
+                setEditing(null);
+              }
+            } else if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab'].includes(e.key)) {
+              e.preventDefault();
+              onChange(id, section, field, e.target.value);
+              if (onNavigate) {
+                onNavigate(id, field, e.key, e.shiftKey);
+              }
+            } else if (e.key === 'Escape') {
               setEditing(null);
             }
-            if (e.key === 'Escape') setEditing(null);
           }}
           w={`${width}px`}
           minW="50px"

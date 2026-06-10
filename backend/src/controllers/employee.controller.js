@@ -27,6 +27,7 @@ const updateEmployee = async (req, res) => {
     await employee.update(req.body);
     res.json(employee);
   } catch (err) {
+    console.error('Update error:', err);
     res.status(400).json({ error: err.message });
   }
 };

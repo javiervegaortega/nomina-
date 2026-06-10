@@ -456,34 +456,56 @@ export function DataProvider({ children }) {
   };
 
   // Employees
-  const addEmployee = async (emp) => {
+  const addEmployee = async (data) => {
     try {
+      const cleanedData = { ...data };
+      Object.keys(cleanedData).forEach(key => {
+        if (cleanedData[key] === '') cleanedData[key] = null;
+      });
+
       const res = await fetch('http://localhost:3000/api/employees', {
         method: 'POST',
         headers: getAuthHeader(),
-        body: JSON.stringify(emp)
+        body: JSON.stringify(cleanedData)
       });
       if (res.ok) {
-        const newE = await res.json();
-        setEmployees([...employees, newE]);
+        const saved = await res.json();
+        setEmployees([...employees, saved]);
+      } else {
+        const errData = await res.json();
+        console.error('Failed to add employee:', errData);
       }
     } catch (err) {
-      setEmployees([...employees, { ...emp, id: Date.now() }]);
+      console.error('Network error during add:', err);
     }
   };
 
   const updateEmployee = async (id, data) => {
     try {
+      // Clean empty strings to null to prevent DB validation errors
+      const cleanedData = { ...data };
+      Object.keys(cleanedData).forEach(key => {
+        if (cleanedData[key] === '') {
+          cleanedData[key] = null;
+        }
+      });
+      
       const res = await fetch(`http://localhost:3000/api/employees/${id}`, {
         method: 'PUT',
         headers: getAuthHeader(),
-        body: JSON.stringify(data)
+        body: JSON.stringify(cleanedData)
       });
       if (res.ok) {
-        setEmployees(employees.map(e => e.id === id ? { ...e, ...data } : e));
+        setEmployees(employees.map(e => e.id === id ? { ...e, ...cleanedData } : e));
+      } else {
+        const errData = await res.json();
+        console.error('Update failed:', errData);
       }
     } catch (err) {
-      setEmployees(employees.map(e => e.id === id ? { ...e, ...data } : e));
+      console.error('Network error during update:', err);
+      // Fallback update on local state if offline, optionally.
+      // But it's better not to falsely update if the backend failed.
+      // We will revert/not update the state if it fails.
     }
   };
 
@@ -717,8 +739,13 @@ export function DataProvider({ children }) {
         const savedDraft = await res.json();
         setActivePayrolls([savedDraft, ...activePayrolls]);
         return savedDraft.id;
+      } else {
+        const errData = await res.json().catch(() => null);
+        console.error('Failed to save active payroll draft:', res.status, errData);
       }
-    } catch(e) {}
+    } catch(e) {
+      console.error('Network error saving active payroll draft:', e);
+    }
     
     // Fallback if API fails
     setActivePayrolls([newDraftData, ...activePayrolls]);
@@ -732,12 +759,18 @@ export function DataProvider({ children }) {
     const draft = updatedDrafts.find(p => p.id === id);
     if (draft) {
       try {
-        await fetch(`http://localhost:3000/api/payroll-drafts/${id}`, {
+        const res = await fetch(`http://localhost:3000/api/payroll-drafts/${id}`, {
           method: 'PUT',
           headers: getAuthHeader(),
           body: JSON.stringify(draft)
         });
-      } catch(e) {}
+        if (!res.ok) {
+          const errData = await res.json().catch(() => null);
+          console.error('Failed to update active payroll draft:', res.status, errData);
+        }
+      } catch(e) {
+        console.error('Network error updating active payroll draft:', e);
+      }
     }
   };
 
@@ -748,12 +781,18 @@ export function DataProvider({ children }) {
     const draft = updatedDrafts.find(p => p.id === id);
     if (draft) {
       try {
-        await fetch(`http://localhost:3000/api/payroll-drafts/${id}`, {
+        const res = await fetch(`http://localhost:3000/api/payroll-drafts/${id}`, {
           method: 'PUT',
           headers: getAuthHeader(),
           body: JSON.stringify(draft)
         });
-      } catch(e) {}
+        if (!res.ok) {
+          const errData = await res.json().catch(() => null);
+          console.error('Failed to update draft metadata:', res.status, errData);
+        }
+      } catch(e) {
+        console.error('Network error updating draft metadata:', e);
+      }
     }
   };
 

@@ -40,7 +40,7 @@ const InfoItem = ({ icon, label, value }) => {
   );
 };
 
-export default function EmployeeViewModal({ isOpen, onClose, employee, companies, onEdit }) {
+export default function EmployeeViewModal({ isOpen, onClose, employee, companies, areas, divisions, subdivisions, onEdit }) {
   const modalBg = useColorModeValue('white', '#0f111a');
   const textColor = useColorModeValue('gray.800', '#e2e8f0');
   const subtextColor = useColorModeValue('gray.500', '#94a3b8');
@@ -50,7 +50,7 @@ export default function EmployeeViewModal({ isOpen, onClose, employee, companies
 
   if (!employee) return null;
 
-  const getFullName = (e) => `${e.primer_nombre || ''} ${e.segundo_nombre || ''} ${e.primer_apellido || ''} ${e.segundo_apellido || ''}`.replace(/\s+/g, ' ').trim() || 'Sin Nombre';
+  const getFullName = (e) => `${e.primer_nombre || ''} ${e.segundo_nombre || ''} ${e.otro_nombre || ''} ${e.primer_apellido || ''} ${e.segundo_apellido || ''}`.replace(/\s+/g, ' ').trim() || 'Sin Nombre';
 
   const companyName = companies?.find(c => c.id === employee.empresa_principal)?.nombre_comercial || 'Sin Asignar';
 
@@ -62,6 +62,10 @@ export default function EmployeeViewModal({ isOpen, onClose, employee, companies
   };
 
   const parsedDist = getDist(employee);
+
+  const areaName = areas?.find(a => String(a.id) === String(employee.areaId))?.nombre || 'Sin Asignar';
+  const divisionName = divisions?.find(d => String(d.id) === String(employee.divisionId))?.nombre || 'Sin Asignar';
+  const subdivisionName = subdivisions?.find(s => String(s.id) === String(employee.subdivisionId))?.nombre || 'Sin Asignar';
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} size="2xl" isCentered>
@@ -96,19 +100,26 @@ export default function EmployeeViewModal({ isOpen, onClose, employee, companies
               </Text>
             </Box>
             <Badge 
-              colorScheme={employee.estado === 'Activo' ? 'green' : 'red'} 
+              colorScheme={employee.estado === 'Activo' ? 'green' : 'yellow'} 
               px={3} py={1} borderRadius="full" fontSize="xs" fontWeight="700"
               boxShadow="sm"
             >
-              {employee.estado || 'Inactivo'}
+              {employee.estado || 'De Baja'}
             </Badge>
           </Flex>
 
           <Grid templateColumns={{ base: '1fr', md: '1fr 1fr' }} gap={5} bg={cardBg} p={5} borderRadius="xl" border="1px solid" borderColor={borderColor}>
             <InfoItem icon={Fingerprint} label="DPI" value={employee.dpi} />
+            <InfoItem icon={Fingerprint} label="NIT" value={employee.nit || 'N/A'} />
+            <InfoItem icon={Fingerprint} label="No. IGSS" value={employee.no_igss || 'N/A'} />
+            <InfoItem icon={Briefcase} label="Puesto" value={employee.puesto || 'N/A'} />
             <InfoItem icon={Building2} label="Empresa Principal" value={companyName} />
             <InfoItem icon={Briefcase} label="Departamento" value={employee.departamento_laboral} />
+            <InfoItem icon={Briefcase} label="Área" value={areaName} />
+            <InfoItem icon={Briefcase} label="División" value={divisionName} />
+            <InfoItem icon={Briefcase} label="Sub División" value={subdivisionName} />
             <InfoItem icon={DollarSign} label="Sueldo Ordinario" value={formatQ(employee.sueldo_ordinario || 0)} />
+            <InfoItem icon={DollarSign} label="No. Cuenta" value={employee.no_cuenta || 'N/A'} />
             <InfoItem icon={Calendar} label="Fecha Ingreso" value={(employee.fecha_ingreso || employee.fecha_inicio || '').split('T')[0]} />
             <InfoItem icon={Award} label="Bonificación Ley" value={formatQ(employee.bonificacion_ley || 250)} />
           </Grid>
