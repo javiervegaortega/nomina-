@@ -21,10 +21,12 @@ import {
   Badge,
   Tooltip,
   useColorModeValue,
+  Skeleton,
+  SkeletonText,
 } from '@chakra-ui/react';
 
 export default function Departments() {
-  const { departments, addDepartment, updateDepartment, deleteDepartment } = useContext(DataContext);
+  const { departments, addDepartment, updateDepartment, deleteDepartment, isLoading } = useContext(DataContext);
   const { confirmAction } = useContext(AppContext);
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -69,6 +71,44 @@ export default function Departments() {
     }
     setShowModal(false);
   };
+
+  if (isLoading) {
+    return (
+      <Box p={{ base: 4, md: 6, lg: 8 }}>
+        <Flex justify="space-between" align="center" mb={6}>
+          <Box>
+            <Skeleton h="28px" w="220px" mb={2} />
+            <Skeleton h="14px" w="280px" />
+          </Box>
+          <Skeleton h="40px" w="180px" borderRadius="lg" />
+        </Flex>
+        <Box border="1px solid" borderColor={tableBorderColor} borderRadius="xl" overflow="hidden">
+          <Table variant="modern" minW="650px">
+            <Thead>
+              <Tr>
+                <Th>ID</Th>
+                <Th>Nombre Dimensión</Th>
+                <Th>Gerente</Th>
+                <Th>Área</Th>
+                <Th textAlign="right">Acciones</Th>
+              </Tr>
+            </Thead>
+            <Tbody>
+              {[1,2,3,4,5,6].map(i => (
+                <Tr key={i}>
+                  <Td><Skeleton h="14px" w="40px" /></Td>
+                  <Td><Skeleton h="14px" w="140px" /></Td>
+                  <Td><Skeleton h="14px" w="100px" /></Td>
+                  <Td><Skeleton h="14px" w="100px" /></Td>
+                  <Td textAlign="right"><Skeleton h="14px" w="80px" ml="auto" /></Td>
+                </Tr>
+              ))}
+            </Tbody>
+          </Table>
+        </Box>
+      </Box>
+    );
+  }
 
   return (
     <Box p={{ base: 4, md: 6, lg: 8 }}>

@@ -40,10 +40,12 @@ import {
   useColorModeValue,
   useDisclosure,
   useToast,
+  Skeleton,
+  SkeletonText,
 } from '@chakra-ui/react';
 
 export default function Commissions() {
-  const { employees, companies, commissions, addCommission, deleteCommission } = useContext(DataContext);
+  const { employees, companies, commissions, addCommission, deleteCommission, isLoading } = useContext(DataContext);
   const { confirmAction } = useContext(AppContext);
   const { isOpen, onOpen, onClose } = useDisclosure();
   const toast = useToast();
@@ -168,6 +170,52 @@ export default function Commissions() {
     const comp = companies.find(c => c.id === Number(id));
     return comp ? (comp.nombre_comercial || comp.name || 'S/N') : '-';
   };
+
+  if (isLoading) {
+    return (
+      <Box p={{ base: 4, md: 6, lg: 8 }}>
+        <Flex justify="space-between" align="center" mb={6}>
+          <Box>
+            <Skeleton h="28px" w="180px" mb={2} />
+            <Skeleton h="14px" w="320px" />
+          </Box>
+          <Skeleton h="40px" w="170px" borderRadius="lg" />
+        </Flex>
+        <Box border="1px solid" borderColor={tableBorderColor} borderRadius="xl" overflow="hidden">
+          <Table variant="modern" minW="850px">
+            <Thead>
+              <Tr>
+                <Th>Empleado</Th>
+                <Th>Empresa</Th>
+                <Th>Fecha</Th>
+                <Th>Mes</Th>
+                <Th>Horas</Th>
+                <Th>Tipo</Th>
+                <Th>Bono</Th>
+                <Th>Estado</Th>
+                <Th textAlign="right">Acciones</Th>
+              </Tr>
+            </Thead>
+            <Tbody>
+              {[1,2,3,4,5,6].map(i => (
+                <Tr key={i}>
+                  <Td><Skeleton h="14px" w="120px" /></Td>
+                  <Td><Skeleton h="14px" w="100px" /></Td>
+                  <Td><Skeleton h="14px" w="80px" /></Td>
+                  <Td><Skeleton h="14px" w="60px" /></Td>
+                  <Td><Skeleton h="14px" w="40px" /></Td>
+                  <Td><Skeleton h="14px" w="60px" /></Td>
+                  <Td><Skeleton h="14px" w="70px" /></Td>
+                  <Td><Skeleton h="14px" w="70px" /></Td>
+                  <Td textAlign="right"><Skeleton h="14px" w="40px" ml="auto" /></Td>
+                </Tr>
+              ))}
+            </Tbody>
+          </Table>
+        </Box>
+      </Box>
+    );
+  }
 
   return (
     <Box p={{ base: 4, md: 6, lg: 8 }}>
@@ -320,7 +368,7 @@ export default function Commissions() {
         </Box>
         {commissions.length > 0 && (
           <Box p={4} borderTop="1px solid" borderColor={tableBorderColor}>
-            <Pagination pagination={pagination} />
+            <Pagination {...pagination} />
           </Box>
         )}
       </Box>

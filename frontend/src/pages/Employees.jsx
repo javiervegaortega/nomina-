@@ -21,11 +21,12 @@ import {
   InputGroup, InputLeftElement, useColorModeValue,
   Modal, ModalOverlay, ModalContent, ModalHeader, ModalBody,
   ModalFooter, ModalCloseButton, FormControl, FormLabel,
-  Textarea, Collapse
+  Textarea, Collapse,
+  Skeleton, SkeletonText, SkeletonCircle
 } from '@chakra-ui/react';
 
 export default function Employees() {
-  const { employees, addEmployee, updateEmployee, deleteEmployee, companies, departments, areas, divisions, subdivisions } = useContext(DataContext);
+  const { employees, addEmployee, updateEmployee, deleteEmployee, companies, departments, areas, divisions, subdivisions, isLoading } = useContext(DataContext);
   
   const INITIAL_FORM = useMemo(() => ({
     estado: 'Activo',
@@ -77,14 +78,14 @@ export default function Employees() {
   const modalBg = useColorModeValue('white', 'gray.800');
   const finiquitoRowBg = useColorModeValue('gray.50', 'gray.700');
 
-  const getFullName = (e) => `${e.primer_nombre || ''} ${e.segundo_nombre || ''} ${e.otro_nombre || ''} ${e.primer_apellido || ''} ${e.segundo_apellido || ''}`.replace(/\s+/g, ' ').trim() || 'Sin Nombre';
+  const getFullName = useCallback((e) => `${e.primer_nombre || ''} ${e.segundo_nombre || ''} ${e.otro_nombre || ''} ${e.primer_apellido || ''} ${e.segundo_apellido || ''}`.replace(/\s+/g, ' ').trim() || 'Sin Nombre', []);
 
-  const getDist = (emp) => {
+  const getDist = useCallback((emp) => {
     if (typeof emp.dist === 'string') {
       try { return JSON.parse(emp.dist); } catch(e) { return {}; }
     }
     return emp.dist || {};
-  };
+  }, []);
 
   const filteredEmployees = useMemo(() => {
     const searchNorm = normalize(debouncedSearch);
@@ -110,23 +111,23 @@ export default function Employees() {
 
   const pagination = usePagination(filteredEmployees, 10);
 
-  const openAdd = () => {
+  const openAdd = useCallback(() => {
     setModalMode('add');
     setCurrentEmp(null);
     setShowModal(true);
-  };
+  }, []);
 
-  const openEdit = (emp) => {
+  const openEdit = useCallback((emp) => {
     setModalMode('edit');
     setCurrentEmp(emp);
     setShowModal(true);
-  };
+  }, []);
 
-  const openView = (emp) => {
+  const openView = useCallback((emp) => {
     setModalMode('view');
     setCurrentEmp(emp);
     setShowModal(true);
-  };
+  }, []);
 
   const handleSave = (formData) => {
     if (modalMode === 'add') {
@@ -143,11 +144,11 @@ export default function Employees() {
     setShowModal(false);
   };
 
-  const handleDelete = (id) => {
+  const handleDelete = useCallback((id) => {
     if (window.confirm("¿Está seguro de eliminar este empleado completamente de la base de datos? (Para historial, use 'Dar de Baja')")) {
       deleteEmployee(id);
     }
-  };
+  }, [deleteEmployee]);
 
   const handleOffboard = () => {
     updateEmployee(offboardState.empId, { 
@@ -158,7 +159,7 @@ export default function Employees() {
     setOffboardState({ show: false, empId: null, reason: '', date: '' });
   };
 
-  const handleGenerateFiniquito = (emp) => {
+  const handleGenerateFiniquito = useCallback((emp) => {
     const baseTotal = Number(emp.sueldo_ordinario || 0) + Number(emp.bon_incentivo || 0);
     const calc = {
       indemnizacion: baseTotal * 1.5,
@@ -168,7 +169,7 @@ export default function Employees() {
     };
     calc.total = calc.indemnizacion + calc.aguinaldoProp + calc.bono14Prop + calc.vacaciones;
     setFiniquitoState({ show: true, emp, calculation: calc });
-  };
+  }, []);
 
   const getEmployeeCompany = (emp) => {
     const companyId = emp?.empresa_principal || emp?.companyId;
@@ -225,6 +226,94 @@ export default function Employees() {
       toast.error('Error al generar el PDF del finiquito', { id: toastId });
     }
   };
+
+  if (isLoading) {
+    return (
+      <Box p={{ base: 3, md: 6, lg: 8 }}>
+        {/* Header skeleton */}
+        <Flex
+          justify="space-between"
+          align={{ base: 'stretch', md: 'center' }}
+          direction={{ base: 'column', md: 'row' }}
+          mb={6}
+          flexWrap="wrap"
+          gap={4}
+        >
+          <Box>
+            <Skeleton h="28px" w="260px" mb={2} borderRadius="md" />
+            <Skeleton h="14px" w="340px" borderRadius="md" />
+          </Box>
+          <HStack spacing={3}>
+            <Skeleton h="40px" w="140px" borderRadius="lg" />
+            <Skeleton h="40px" w="170px" borderRadius="lg" />
+          </HStack>
+        </Flex>
+
+        {/* Search bar skeleton */}
+        <Box
+          bg={cardBg}
+          p={4}
+          mb={5}
+          borderRadius="xl"
+          border="1px solid"
+          borderColor={borderColor}
+        >
+          <Flex gap={3} align="center" flexWrap="wrap">
+            <Skeleton h="40px" flex={1} minW="250px" borderRadius="lg" />
+            <Skeleton h="40px" w="120px" borderRadius="lg" />
+          </Flex>
+        </Box>
+
+        {/* Table skeleton */}
+        <Box
+          bg={cardBg}
+          borderRadius="xl"
+          border="1px solid"
+          borderColor={borderColor}
+          overflow="hidden"
+        >
+          {/* Table header skeleton */}
+          <Flex bg={theadBg} px={4} py={3} gap={4} align="center">
+            <Skeleton h="12px" w="30px" />
+            <Skeleton h="12px" w="120px" />
+            <Skeleton h="12px" w="160px" />
+            <Skeleton h="12px" w="100px" />
+            <Skeleton h="12px" w="100px" />
+            <Skeleton h="12px" w="70px" />
+            <Skeleton h="12px" w="90px" ml="auto" />
+          </Flex>
+          {/* Table rows skeleton */}
+          {[1, 2, 3, 4, 5, 6, 7, 8].map(i => (
+            <Flex
+              key={i}
+              px={4}
+              py={3}
+              gap={4}
+              align="center"
+              borderTop="1px solid"
+              borderColor={borderColor}
+            >
+              <Skeleton h="14px" w="30px" borderRadius="md" />
+              <SkeletonCircle size="32px" />
+              <Box>
+                <Skeleton h="14px" w="150px" mb={1} borderRadius="md" />
+                <Skeleton h="10px" w="100px" borderRadius="md" />
+              </Box>
+              <Skeleton h="20px" w="90px" borderRadius="md" />
+              <Skeleton h="14px" w="100px" borderRadius="md" />
+              <Skeleton h="8px" w="120px" borderRadius="full" />
+              <Skeleton h="22px" w="60px" borderRadius="full" />
+              <HStack spacing={1} ml="auto">
+                <Skeleton h="28px" w="28px" borderRadius="md" />
+                <Skeleton h="28px" w="28px" borderRadius="md" />
+                <Skeleton h="28px" w="28px" borderRadius="md" />
+              </HStack>
+            </Flex>
+          ))}
+        </Box>
+      </Box>
+    );
+  }
 
   return (
     <Box p={{ base: 3, md: 6, lg: 8 }}>
@@ -418,188 +507,25 @@ export default function Employees() {
                   </Td>
                 </Tr>
               ) : (
-                pagination.paginatedData.map((emp) => {
-                  const fullName = getFullName(emp);
-                  const companyName = companies.find(c => c.id === emp.empresa_principal)?.nombre_comercial || 'SIN ASIGNAR';
-                  
-                  return (
-                    <Tr
-                      key={emp.id}
-                      transition="all 0.2s"
-                      _hover={{ bg: hoverBg }}
-                    >
-                      <Td>
-                        <Text fontSize="xs" fontWeight={600} color={textSecondary}>{emp.id}</Text>
-                      </Td>
-                      <Td>
-                        <HStack spacing={3}>
-                          <Avatar
-                            size="sm"
-                            name={fullName}
-                            bg="brand.500"
-                            color="white"
-                            fontSize="0.75rem"
-                            fontWeight={700}
-                          />
-                          <Box>
-                            <Text
-                              fontSize="sm"
-                              fontWeight={600}
-                              color={brandColor}
-                              cursor="pointer"
-                              onClick={() => openView(emp)}
-                              _hover={{ textDecoration: 'underline' }}
-                              transition="all 0.2s"
-                            >
-                              {fullName}
-                            </Text>
-                            <Text fontSize="xs" color={textSecondary}>
-                              {emp.puesto || 'Sin Puesto'}
-                            </Text>
-                          </Box>
-                        </HStack>
-                      </Td>
-                      <Td>
-                        <VStack spacing={1} align="flex-start">
-                          <Badge
-                            variant="outline"
-                            colorScheme="brand"
-                            fontSize="xs"
-                            borderRadius="md"
-                            px={2}
-                          >
-                            {emp.departamento_laboral || 'N/A'}
-                          </Badge>
-                          <Badge
-                            variant="subtle"
-                            colorScheme="gray"
-                            fontSize="xs"
-                            borderRadius="md"
-                            px={2}
-                          >
-                            {companyName}
-                          </Badge>
-                        </VStack>
-                      </Td>
-                      <Td>
-                        <Text fontSize="sm" fontFamily="mono" fontWeight={600} color={accentColor}>
-                          {formatQ(emp.sueldo_ordinario || 0)}
-                        </Text>
-                      </Td>
-                      <Td>
-                        {(() => {
-                          const distObj = getDist(emp);
-                          const activeCompanies = companies.filter(c => (distObj[c.id] || 0) > 0);
-                          const tooltipLabel = activeCompanies.map(c => `${c.nombre_comercial || c.nit}: ${distObj[c.id]}%`).join(' · ');
-                          
-                          return (
-                            <Tooltip
-                              label={tooltipLabel}
-                              placement="top"
-                              hasArrow
-                              borderRadius="md"
-                            >
-                              <Flex
-                                w="120px"
-                                h="8px"
-                                borderRadius="full"
-                                overflow="hidden"
-                                bg={distBarBg}
-                              >
-                                {companies.map(c => {
-                                  const pct = distObj[c.id] || 0;
-                                  return pct > 0 ? (
-                                    <Box
-                                      key={c.id}
-                                      w={`${pct}%`}
-                                      bg={c.color || 'brand.500'}
-                                      transition="width 0.3s"
-                                    />
-                                  ) : null;
-                                })}
-                              </Flex>
-                            </Tooltip>
-                          );
-                        })()}
-                      </Td>
-                      <Td>
-                        <Badge
-                          colorScheme={emp.estado === 'Activo' ? 'green' : 'orange'}
-                          fontWeight={600}
-                          borderRadius="full"
-                          px={3}
-                          py={1}
-                          fontSize="xs"
-                        >
-                          {emp.estado}
-                        </Badge>
-                      </Td>
-                      <Td textAlign="right">
-                        <HStack spacing={{ base: 0, md: 1 }} justify="flex-end">
-                          <Tooltip label="Ver detalle" hasArrow>
-                            <IconButton
-                              aria-label="Ver detalle"
-                              icon={<Eye size={16} />}
-                              size={{ base: 'xs', md: 'sm' }}
-                              variant="ghost"
-                              colorScheme="brand"
-                              onClick={() => openView(emp)}
-                              transition="all 0.3s"
-                            />
-                          </Tooltip>
-                          <Tooltip label="Editar" hasArrow>
-                            <IconButton
-                              aria-label="Editar"
-                              icon={<Edit2 size={16} />}
-                              size={{ base: 'xs', md: 'sm' }}
-                              variant="ghost"
-                              colorScheme="accent"
-                              onClick={() => openEdit(emp)}
-                              transition="all 0.3s"
-                            />
-                          </Tooltip>
-                          {emp.estado === 'Activo' && (
-                            <Tooltip label="Dar de Baja" hasArrow>
-                              <IconButton
-                                aria-label="Dar de Baja"
-                                icon={<X size={16} />}
-                                size={{ base: 'xs', md: 'sm' }}
-                                variant="ghost"
-                                colorScheme="orange"
-                                onClick={() => setOffboardState({ show: true, empId: emp.id, reason: '', date: new Date().toISOString().split('T')[0] })}
-                                transition="all 0.3s"
-                              />
-                            </Tooltip>
-                          )}
-                          {emp.estado === 'De Baja' && (
-                            <Tooltip label="Generar Finiquito" hasArrow>
-                              <IconButton
-                                aria-label="Generar Finiquito"
-                                icon={<FileText size={16} />}
-                                size={{ base: 'xs', md: 'sm' }}
-                                variant="ghost"
-                                colorScheme="blue"
-                                onClick={() => handleGenerateFiniquito(emp)}
-                                transition="all 0.3s"
-                              />
-                            </Tooltip>
-                          )}
-                          <Tooltip label="Eliminar (Permanente)" hasArrow>
-                            <IconButton
-                              aria-label="Eliminar"
-                              icon={<Trash2 size={16} />}
-                              size={{ base: 'xs', md: 'sm' }}
-                              variant="ghost"
-                              colorScheme="red"
-                              onClick={() => handleDelete(emp.id)}
-                              transition="all 0.3s"
-                            />
-                          </Tooltip>
-                        </HStack>
-                      </Td>
-                    </Tr>
-                  );
-                })
+                pagination.paginatedData.map((emp) => (
+                  <EmployeeRow
+                    key={emp.id}
+                    emp={emp}
+                    companies={companies}
+                    hoverBg={hoverBg}
+                    textSecondary={textSecondary}
+                    brandColor={brandColor}
+                    accentColor={accentColor}
+                    distBarBg={distBarBg}
+                    getFullName={getFullName}
+                    getDist={getDist}
+                    openView={openView}
+                    openEdit={openEdit}
+                    setOffboardState={setOffboardState}
+                    handleGenerateFiniquito={handleGenerateFiniquito}
+                    handleDelete={handleDelete}
+                  />
+                ))
               )}
             </Tbody>
           </Table>
@@ -816,3 +742,197 @@ export default function Employees() {
     </Box>
   );
 }
+
+const EmployeeRow = React.memo(({
+  emp,
+  companies,
+  hoverBg,
+  textSecondary,
+  brandColor,
+  accentColor,
+  distBarBg,
+  getFullName,
+  getDist,
+  openView,
+  openEdit,
+  setOffboardState,
+  handleGenerateFiniquito,
+  handleDelete
+}) => {
+  const fullName = getFullName(emp);
+  const companyName = companies.find(c => c.id === emp.empresa_principal)?.nombre_comercial || 'SIN ASIGNAR';
+
+  return (
+    <Tr transition="all 0.2s" _hover={{ bg: hoverBg }}>
+      <Td>
+        <Text fontSize="xs" fontWeight={600} color={textSecondary}>{emp.id}</Text>
+      </Td>
+      <Td>
+        <HStack spacing={3}>
+          <Avatar
+            size="sm"
+            name={fullName}
+            bg="brand.500"
+            color="white"
+            fontSize="0.75rem"
+            fontWeight={700}
+          />
+          <Box>
+            <Text
+              fontSize="sm"
+              fontWeight={600}
+              color={brandColor}
+              cursor="pointer"
+              onClick={() => openView(emp)}
+              _hover={{ textDecoration: 'underline' }}
+              transition="all 0.2s"
+            >
+              {fullName}
+            </Text>
+            <Text fontSize="xs" color={textSecondary}>
+              {emp.puesto || 'Sin Puesto'}
+            </Text>
+          </Box>
+        </HStack>
+      </Td>
+      <Td>
+        <VStack spacing={1} align="flex-start">
+          <Badge
+            variant="outline"
+            colorScheme="brand"
+            fontSize="xs"
+            borderRadius="md"
+            px={2}
+          >
+            {emp.departamento_laboral || 'N/A'}
+          </Badge>
+          <Badge
+            variant="subtle"
+            colorScheme="gray"
+            fontSize="xs"
+            borderRadius="md"
+            px={2}
+          >
+            {companyName}
+          </Badge>
+        </VStack>
+      </Td>
+      <Td>
+        <Text fontSize="sm" fontFamily="mono" fontWeight={600} color={accentColor}>
+          {formatQ(emp.sueldo_ordinario || 0)}
+        </Text>
+      </Td>
+      <Td>
+        {(() => {
+          const distObj = getDist(emp);
+          const activeCompanies = companies.filter(c => (distObj[c.id] || 0) > 0);
+          const tooltipLabel = activeCompanies.map(c => `${c.nombre_comercial || c.nit}: ${distObj[c.id]}%`).join(' · ');
+          
+          return (
+            <Tooltip
+              label={tooltipLabel}
+              placement="top"
+              hasArrow
+              borderRadius="md"
+            >
+              <Flex
+                w="120px"
+                h="8px"
+                borderRadius="full"
+                overflow="hidden"
+                bg={distBarBg}
+              >
+                {companies.map(c => {
+                  const pct = distObj[c.id] || 0;
+                  return pct > 0 ? (
+                    <Box
+                      key={c.id}
+                      w={`${pct}%`}
+                      bg={c.color || 'brand.500'}
+                      transition="width 0.3s"
+                    />
+                  ) : null;
+                })}
+              </Flex>
+            </Tooltip>
+          );
+        })()}
+      </Td>
+      <Td>
+        <Badge
+          colorScheme={emp.estado === 'Activo' ? 'green' : 'orange'}
+          fontWeight={600}
+          borderRadius="full"
+          px={3}
+          py={1}
+          fontSize="xs"
+        >
+          {emp.estado}
+        </Badge>
+      </Td>
+      <Td textAlign="right">
+        <HStack spacing={{ base: 0, md: 1 }} justify="flex-end">
+          <Tooltip label="Ver detalle" hasArrow>
+            <IconButton
+              aria-label="Ver detalle"
+              icon={<Eye size={16} />}
+              size={{ base: 'xs', md: 'sm' }}
+              variant="ghost"
+              colorScheme="brand"
+              onClick={() => openView(emp)}
+              transition="all 0.3s"
+            />
+          </Tooltip>
+          <Tooltip label="Editar" hasArrow>
+            <IconButton
+              aria-label="Editar"
+              icon={<Edit2 size={16} />}
+              size={{ base: 'xs', md: 'sm' }}
+              variant="ghost"
+              colorScheme="accent"
+              onClick={() => openEdit(emp)}
+              transition="all 0.3s"
+            />
+          </Tooltip>
+          {emp.estado === 'Activo' && (
+            <Tooltip label="Dar de Baja" hasArrow>
+              <IconButton
+                aria-label="Dar de Baja"
+                icon={<X size={16} />}
+                size={{ base: 'xs', md: 'sm' }}
+                variant="ghost"
+                colorScheme="orange"
+                onClick={() => setOffboardState({ show: true, empId: emp.id, reason: '', date: new Date().toISOString().split('T')[0] })}
+                transition="all 0.3s"
+              />
+            </Tooltip>
+          )}
+          {emp.estado === 'De Baja' && (
+            <Tooltip label="Generar Finiquito" hasArrow>
+              <IconButton
+                aria-label="Generar Finiquito"
+                icon={<FileText size={16} />}
+                size={{ base: 'xs', md: 'sm' }}
+                variant="ghost"
+                colorScheme="blue"
+                onClick={() => handleGenerateFiniquito(emp)}
+                transition="all 0.3s"
+              />
+            </Tooltip>
+          )}
+          <Tooltip label="Eliminar (Permanente)" hasArrow>
+            <IconButton
+              aria-label="Eliminar"
+              icon={<Trash2 size={16} />}
+              size={{ base: 'xs', md: 'sm' }}
+              variant="ghost"
+              colorScheme="red"
+              onClick={() => handleDelete(emp.id)}
+              transition="all 0.3s"
+            />
+          </Tooltip>
+        </HStack>
+      </Td>
+    </Tr>
+  );
+});

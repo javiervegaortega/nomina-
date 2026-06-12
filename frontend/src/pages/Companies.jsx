@@ -21,10 +21,12 @@ import {
   Badge,
   Tooltip,
   useColorModeValue,
+  Skeleton,
+  SkeletonText,
 } from '@chakra-ui/react';
 
 export default function Companies() {
-  const { companies, addCompany, updateCompany, deleteCompany } = useContext(DataContext);
+  const { companies, addCompany, updateCompany, deleteCompany, isLoading } = useContext(DataContext);
   const { confirmAction } = useContext(AppContext);
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -70,6 +72,42 @@ export default function Companies() {
     }
     setShowModal(false);
   };
+
+  if (isLoading) {
+    return (
+      <Box p={{ base: 4, md: 6, lg: 8 }}>
+        <Flex justify="space-between" align="center" mb={6}>
+          <Box>
+            <Skeleton h="28px" w="220px" mb={2} />
+            <Skeleton h="14px" w="300px" />
+          </Box>
+          <Skeleton h="40px" w="160px" borderRadius="lg" />
+        </Flex>
+        <Box border="1px solid" borderColor={tableBorderColor} borderRadius="xl" overflow="hidden">
+          <Table variant="modern" minW="650px">
+            <Thead>
+              <Tr>
+                <Th>NIT</Th>
+                <Th>Nombre Comercial</Th>
+                <Th>Razón Social</Th>
+                <Th textAlign="right">Acciones</Th>
+              </Tr>
+            </Thead>
+            <Tbody>
+              {[1,2,3,4,5,6].map(i => (
+                <Tr key={i}>
+                  <Td><Skeleton h="14px" w="80px" /></Td>
+                  <Td><Skeleton h="14px" w="140px" /></Td>
+                  <Td><Skeleton h="14px" w="120px" /></Td>
+                  <Td textAlign="right"><Skeleton h="14px" w="80px" ml="auto" /></Td>
+                </Tr>
+              ))}
+            </Tbody>
+          </Table>
+        </Box>
+      </Box>
+    );
+  }
 
   return (
     <Box p={{ base: 4, md: 6, lg: 8 }}>
@@ -243,7 +281,7 @@ export default function Companies() {
         </Box>
         {companies.length > 0 && (
           <Box p={4} borderTop="1px solid" borderColor={tableBorderColor}>
-            <Pagination pagination={pagination} />
+            <Pagination {...pagination} />
           </Box>
         )}
       </Box>

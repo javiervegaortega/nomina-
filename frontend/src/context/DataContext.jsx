@@ -43,6 +43,7 @@ export function DataProvider({ children }) {
   });
 
   const [activePayrolls, setActivePayrolls] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
 
   const [payrollHistory, setPayrollHistory] = useState(() => {
     const saved = localStorage.getItem('nomina-history');
@@ -163,6 +164,8 @@ export function DataProvider({ children }) {
         }
       } catch (err) {
         console.log('⚠️ Backend no disponible o en desarrollo, usando LocalStorage/MockData');
+      } finally {
+        setIsLoading(false);
       }
     };
 
@@ -806,7 +809,7 @@ export function DataProvider({ children }) {
     } catch(e) {}
   };
 
-  const closePayroll = (id) => {
+  const closePayroll = async (id) => {
     const draft = activePayrolls.find(p => p.id === id);
     if (draft) {
       // Calculate totals for history view
@@ -824,7 +827,6 @@ export function DataProvider({ children }) {
 
         const extrasVal = (e.extras?.simplesVal || 0) + (e.extras?.doblesVal || 0) + (e.extras?.comisiones || 0) + (e.extras?.otrosIngresos || 0);
         const bonusesSum = Object.values(e.appliedBonuses || {}).reduce((a, b) => a + b, 0);
-
         const gross = baseSalary + bonusLey + bonusDec + extrasVal + bonusesSum;
         const ded = Object.values(e.deductions || {}).reduce((a, b) => a + b, 0);
         const anticipo = e.anticipo1ra || 0;
@@ -844,28 +846,32 @@ export function DataProvider({ children }) {
         data: draft.employees // The snapshot
       };
 
-      // Save to backend
-      fetch('http://localhost:3000/api/payrolls', {
-        method: 'POST',
-        headers: getAuthHeader(),
-        body: JSON.stringify(historyRecord)
-      }).then(res => {
+      try {
+        const res = await fetch('http://localhost:3000/api/payrolls', {
+          method: 'POST',
+          headers: getAuthHeader(),
+          body: JSON.stringify(historyRecord)
+        });
+        
         if (!res.ok) {
-          if (res.status === 403 || res.status === 401) {
-            console.error('Error de autenticación: Tu sesión ha expirado.');
-            // Idealmente podríamos lanzar un toast o un logout aquí.
-          }
-          throw new Error('Failed to save to history');
+          if (res.status === 413) throw new Error('La nómina es demasiado grande para guardarse (Payload Too Large).');
+          if (res.status === 403 || res.status === 401) throw new Error('Tu sesión ha expirado o no tienes permisos (Error 403/401). Inicia sesión nuevamente.');
+          throw new Error('Error al conectar con el servidor.');
         }
-        return res.json();
-      }).then(() => {
+
+        await res.json();
         setPayrollHistory([historyRecord, ...payrollHistory]);
         deleteActivePayroll(id);
-      }).catch(err => {
+        return { success: true };
+      } catch (err) {
         console.error("No se pudo cerrar la nómina en el servidor", err);
-      });
+        return { success: false, error: err.message };
+      }
     }
+    return { success: false, error: 'Draft no encontrado localmente' };
   };
+  
+  // Retained comment from old implementation
 
   // Deprecated savePayroll (keeping just in case some other code references it, but we won't use it)
   const savePayroll = (payrollData) => {
@@ -886,7 +892,7 @@ export function DataProvider({ children }) {
 
   return (
     <DataContext.Provider value={{
-      companies, departments, employees, bonuses, commissions, payrollHistory, areas, divisions, subdivisions,
+      companies, departments, employees, bonuses, commissions, payrollHistory, areas, divisions, subdivisions, isLoading,
       addCompany, updateCompany, deleteCompany,
       addDepartment, updateDepartment, deleteDepartment,
       addArea, updateArea, deleteArea,

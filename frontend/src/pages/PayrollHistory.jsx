@@ -3,22 +3,41 @@ import { DataContext } from '../context/DataContext';
 import { AppContext } from '../App';
 import usePagination from '../hooks/usePagination';
 import Pagination from '../components/Pagination';
-import { History, Calendar, Trash2, Eye, Download, FileText, CheckCircle2, ArrowLeft, Building2, X, Search } from 'lucide-react';
+import { History, Calendar, Trash2, Eye, Download, FileText, CheckCircle2, ArrowLeft, Building2, X, Search, ChevronDown } from 'lucide-react';
 import { formatQ, CUOTA_LABORAL_RATE, CUOTA_PATRONAL_RATE } from '../data/mockData';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import * as XLSX from 'xlsx';
+
+export const getEmployeeFullName = (e) => {
+  if (!e) return '';
+  const parts = [
+    e.primer_nombre, 
+    e.segundo_nombre, 
+    e.otro_nombre, 
+    e.primer_apellido, 
+    e.segundo_apellido, 
+    e.apellido_casada
+  ].filter(Boolean);
+  
+  if (parts.length > 0) return parts.join(' ');
+  return `${e.nombres || ''} ${e.apellidos || ''}`.trim() || 'Empleado';
+};
+
 import {
   Box, Flex, Heading, Text, Button, Input, Select,
   Table, Thead, Tbody, Tr, Th, Td, TableContainer,
   IconButton, Badge, Avatar, HStack, VStack,
   InputGroup, InputLeftElement, useColorModeValue,
   Modal, ModalOverlay, ModalContent, ModalHeader, ModalBody,
-  ModalFooter, ModalCloseButton, Divider, SimpleGrid, Center
+  ModalFooter, ModalCloseButton, Divider, SimpleGrid, Center,
+  Menu, MenuButton, MenuList, MenuItemOption, MenuOptionGroup,
+  Skeleton, SkeletonText, ButtonGroup
 } from '@chakra-ui/react';
 
+
 export default function PayrollHistory() {
-  const { payrollHistory, deletePayroll, bonuses, companies } = useContext(DataContext);
+  const { payrollHistory, deletePayroll, bonuses, companies, isLoading } = useContext(DataContext);
   const { confirmAction, showToast } = useContext(AppContext);
   const [selectedGroup, setSelectedGroup] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -112,6 +131,50 @@ export default function PayrollHistory() {
 
   if (selectedGroup) {
     return <PayrollHistoryDetail group={selectedGroup} onBack={() => setSelectedGroup(null)} />;
+  }
+
+  if (isLoading) {
+    return (
+      <Box p={{ base: 3, md: 6, lg: 8 }}>
+        <Flex justify="space-between" align={{ base: 'stretch', md: 'center' }} direction={{ base: 'column', md: 'row' }} mb={6} wrap="wrap" gap={4}>
+          <Box>
+            <Skeleton height="28px" width="240px" mb={2} borderRadius="md" />
+            <Skeleton height="16px" width="420px" borderRadius="md" />
+          </Box>
+          <Skeleton height="32px" width="300px" borderRadius="md" />
+        </Flex>
+        <Box maxW="800px" mx="auto">
+          <VStack spacing={8} align="stretch">
+            {[1, 2, 3, 4, 5].map(i => (
+              <Flex key={i} gap={{ base: 3, md: 6 }} align="start">
+                <Skeleton boxSize={{ base: '36px', md: '48px' }} borderRadius="full" flexShrink={0} display={{ base: 'none', sm: 'block' }} />
+                <Box flex="1" p={{ base: 4, md: 6 }} bg={cardBg} borderRadius="xl" border="1px solid" borderColor={borderColor}>
+                  <Flex justify="space-between" align="start" mb={4} wrap="wrap" gap={2}>
+                    <Box flex="1">
+                      <Skeleton height="16px" width="200px" mb={2} borderRadius="md" />
+                      <Skeleton height="12px" width="100px" mb={2} borderRadius="md" />
+                      <Skeleton height="10px" width="260px" borderRadius="md" />
+                    </Box>
+                    <HStack spacing={1}>
+                      <Skeleton boxSize="32px" borderRadius="md" />
+                      <Skeleton boxSize="32px" borderRadius="md" />
+                    </HStack>
+                  </Flex>
+                  <SimpleGrid columns={{ base: 1, sm: 3 }} spacing={4} p={4} bg={useColorModeValue('gray.50', 'whiteAlpha.50')} borderRadius="lg" border="1px solid" borderColor={borderColor}>
+                    {[1, 2, 3].map(j => (
+                      <Box key={j}>
+                        <Skeleton height="10px" width="90px" mb={2} borderRadius="md" />
+                        <Skeleton height="16px" width="120px" borderRadius="md" />
+                      </Box>
+                    ))}
+                  </SimpleGrid>
+                </Box>
+              </Flex>
+            ))}
+          </VStack>
+        </Box>
+      </Box>
+    );
   }
 
   return (
@@ -237,11 +300,107 @@ export default function PayrollHistory() {
     </Box>
   );
 }
+function calculateGroupTotals(groupData, periodType) {
+  let totSalarioOrd = 0, totBonInc = 0, totBonDec = 0, totBonos = 0, totDevengado = 0;
+  let totHorasSimples = 0, totValSimple = 0, totHorasDobles = 0, totValDouble = 0, totOtrosIngresos = 0, totSalarioTotal = 0;
+  let totIgss = 0, totIsr = 0, totCafe = 0, totCell = 0, totUniform = 0, totShoes = 0, totEquipo = 0, totProduct = 0, totBancos = 0, totOtros = 0, totJudiciales = 0, totSeguro = 0, totParqueo = 0, totBoleta = 0, totOtrosEgresos = 0, totTotalEgresos = 0;
+  let totLiquido = 0, totQuincena1 = 0, totQuincena2 = 0;
+
+  groupData.forEach(e => {
+    const baseFactor = (e.days || 30) / 30;
+    const sueldoOrd = Number(e.sueldo_ordinario) || 0;
+    const bonInc = Number(e.bon_incentivo) || 0;
+    const bonDec = Number(e.bon_dec_37_2001) || 0;
+
+    const baseSalary = sueldoOrd * baseFactor;
+    const bonusLey = bonInc * baseFactor;
+    const bonusDec = bonDec * baseFactor;
+    const bonos = Number(e.extras?.bonos) || 0;
+    const devengado = baseSalary + bonusLey + bonusDec + bonos;
+
+    const simplesQty = Number(e.extras?.simplesQty) || 0;
+    const simplesVal = Number(e.extras?.simplesVal) || 0;
+    const doblesQty = Number(e.extras?.doblesQty) || 0;
+    const doblesVal = Number(e.extras?.doblesVal) || 0;
+    const otrosIngresos = Number(e.extras?.otrosIngresos) || 0;
+    const salarioTotal = devengado + simplesVal + doblesVal + otrosIngresos;
+
+    const igss = Number(e.deductions?.igss) || 0;
+    const isr = Number(e.deductions?.isr) || 0;
+    const cafe = Number(e.deductions?.cafe) || 0;
+    const cell = Number(e.deductions?.cell) || 0;
+    const uniform = Number(e.deductions?.uniform) || 0;
+    const shoes = Number(e.deductions?.shoes) || 0;
+    const equipo = Number(e.deductions?.equipo) || 0;
+    const product = Number(e.deductions?.product) || 0;
+    const bancos = Number(e.deductions?.bancos) || 0;
+    const otros = Number(e.deductions?.otros) || 0;
+    const judiciales = Number(e.deductions?.judiciales) || 0;
+    const seguro = Number(e.deductions?.seguro) || 0;
+    const parqueo = Number(e.deductions?.parqueo) || 0;
+    const boleto_de_ornato = Number(e.deductions?.boleto_de_ornato) || 0;
+    const otros_egresos = Number(e.deductions?.otros_egresos) || 0;
+    const anticipo = Number(e.anticipo1ra) || 0;
+    
+    const totalEgresos = igss + isr + cafe + cell + uniform + shoes + equipo + product + bancos + otros + judiciales + seguro + parqueo + boleto_de_ornato + otros_egresos;
+    const liquido = salarioTotal - totalEgresos;
+    const q1 = periodType === '2da' ? anticipo : liquido;
+    const q2 = periodType === '2da' ? liquido - anticipo : 0;
+
+    totSalarioOrd += baseSalary;
+    totBonInc += bonusLey;
+    totBonDec += bonusDec;
+    totBonos += bonos;
+    totDevengado += devengado;
+    totHorasSimples += simplesQty;
+    totValSimple += simplesVal;
+    totHorasDobles += doblesQty;
+    totValDouble += doblesVal;
+    totOtrosIngresos += otrosIngresos;
+    totSalarioTotal += salarioTotal;
+
+    totIgss += igss;
+    totIsr += isr;
+    totCafe += cafe;
+    totCell += cell;
+    totUniform += uniform;
+    totShoes += shoes;
+    totEquipo += equipo;
+    totProduct += product;
+    totBancos += bancos;
+    totOtros += otros;
+    totJudiciales += judiciales;
+    totSeguro += seguro;
+    totParqueo += parqueo;
+    totBoleta += boleto_de_ornato;
+    totOtrosEgresos += otros_egresos;
+    totTotalEgresos += totalEgresos;
+    totLiquido += liquido;
+    totQuincena1 += q1;
+    totQuincena2 += q2;
+  });
+
+  return {
+    totSalarioOrd, totBonInc, totBonDec, totBonos, totDevengado,
+    totHorasSimples, totValSimple, totHorasDobles, totValDouble, totOtrosIngresos, totSalarioTotal,
+    totIgss, totIsr, totCafe, totCell, totUniform, totShoes, totEquipo, totProduct, totBancos, totOtros, totJudiciales, totSeguro, totParqueo, totBoleta, totOtrosEgresos, totTotalEgresos,
+    totLiquido, totQuincena1, totQuincena2
+  };
+}
 
 function PayrollHistoryDetail({ group, onBack }) {
-  const { bonuses } = useContext(DataContext);
+  const { bonuses, areas, departments, divisions, subdivisions } = useContext(DataContext);
   const { showToast } = useContext(AppContext);
   const [selectedVoucherEmp, setSelectedVoucherEmp] = useState(null);
+
+  // Filter states
+  const [filterArea, setFilterArea] = useState([]);
+  const [filterDept, setFilterDept] = useState([]);
+  const [filterDiv, setFilterDiv] = useState([]);
+  const [filterSubdiv, setFilterSubdiv] = useState([]);
+  const [filterStatus, setFilterStatus] = useState('Activo');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [viewMode, setViewMode] = useState('detailed');
 
   // Combine and calculate
   const { data, totals } = useMemo(() => {
@@ -287,8 +446,71 @@ function PayrollHistoryDetail({ group, onBack }) {
       });
     });
     
-    return { data: emps, totals: { grossTotal, dedTotal, patronalTotal, netTotal: grossTotal - dedTotal } };
-  }, [group]);
+    // Apply filters
+    const filteredEmps = emps.filter(e => {
+      if (filterStatus === 'Activo' && String(e.estado).toLowerCase() !== 'activo') return false;
+      if (filterStatus === 'De Baja' && String(e.estado).toLowerCase() !== 'de baja') return false;
+      
+      if (filterDept.length > 0 && !filterDept.includes(e.departamento_laboral)) return false;
+      if (filterArea.length > 0 && !filterArea.includes(String(e.areaId))) return false;
+      if (filterDiv.length > 0 && !filterDiv.includes(String(e.divisionId))) return false;
+      if (filterSubdiv.length > 0 && !filterSubdiv.includes(String(e.subdivisionId))) return false;
+      
+      if (searchQuery) {
+        const term = searchQuery.toLowerCase();
+        const fullName = getEmployeeFullName(e).toLowerCase();
+        const job = (e.puesto || '').toLowerCase();
+        if (!fullName.includes(term) && !job.includes(term)) return false;
+      }
+      return true;
+    });
+
+    // Recalculate totals for filtered emps
+    let fGrossTotal = 0, fDedTotal = 0, fPatronalTotal = 0;
+    filteredEmps.forEach(e => {
+      fGrossTotal += e.calculated.gross;
+      fDedTotal += e.calculated.ded;
+      fPatronalTotal += e.calculated.baseSalary * CUOTA_PATRONAL_RATE;
+    });
+    
+    return { data: filteredEmps, totals: { grossTotal: fGrossTotal, dedTotal: fDedTotal, patronalTotal: fPatronalTotal, netTotal: fGrossTotal - fDedTotal } };
+  }, [group, filterStatus, filterDept, filterArea, filterDiv, filterSubdiv, searchQuery]);
+
+  const groupedData = useMemo(() => {
+    if (filterDept.length === 0 && filterArea.length === 0 && filterDiv.length === 0 && filterSubdiv.length === 0) {
+      return [{ title: '', data }];
+    }
+
+    const groups = {};
+    data.forEach(e => {
+      const keyParts = [];
+      if (filterDept.length > 0) {
+        keyParts.push(`Depto: ${e.departamento_laboral || 'Sin Departamento'}`);
+      }
+      if (filterDiv.length > 0) {
+        const divName = divisions?.find(d => String(d.id) === String(e.divisionId))?.nombre || 'Sin División';
+        keyParts.push(`División: ${divName}`);
+      }
+      if (filterArea.length > 0) {
+        const areaName = areas?.find(a => String(a.id) === String(e.areaId))?.nombre || 'Sin Área';
+        keyParts.push(`Área: ${areaName}`);
+      }
+      if (filterSubdiv.length > 0) {
+        const subdivName = subdivisions?.find(s => String(s.id) === String(e.subdivisionId))?.nombre || 'Sin Subdivisión';
+        keyParts.push(`Subdivisión: ${subdivName}`);
+      }
+      
+      const key = keyParts.length > 0 ? keyParts.join(' | ') : 'Otros';
+      
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(e);
+    });
+
+    return Object.keys(groups).sort().map(key => ({
+      title: key,
+      data: groups[key]
+    }));
+  }, [data, filterDept, filterArea, filterDiv, filterSubdiv, divisions, areas, subdivisions]);
 
   const exportExcel = () => {
     showToast('Generando Excel...', 'success');
@@ -296,7 +518,7 @@ function PayrollHistoryDetail({ group, onBack }) {
     const rows = data.map((e, idx) => {
       const row = {
         'No.': idx + 1,
-        'Nombre': `${e.primer_nombre || e.nombres || ''} ${e.primer_apellido || e.apellidos || ''}`,
+        'Nombre': getEmployeeFullName(e),
         'Empresa': e.company,
         'Puesto': e.puesto || 'N/A',
         'Días Laborados': e.days || 30,
@@ -355,7 +577,7 @@ function PayrollHistoryDetail({ group, onBack }) {
       const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
       
       pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-      pdf.save(`Boleta_${selectedVoucherEmp.primer_nombre || selectedVoucherEmp.nombres || 'Empleado'}.pdf`);
+      pdf.save(`Boleta_${getEmployeeFullName(selectedVoucherEmp).replace(/[^a-z0-9]/gi, '_')}.pdf`);
     } catch (err) {
       console.error(err);
       showToast('Error al generar PDF', 'error');
@@ -367,98 +589,12 @@ function PayrollHistoryDetail({ group, onBack }) {
   const tdBg = useColorModeValue('white', 'gray.800');
   const hoverBg = useColorModeValue('gray.50', 'whiteAlpha.50');
 
-  // Compute footer totals for history detail
-  const columnTotals = useMemo(() => {
-    let totSalarioOrd = 0, totBonInc = 0, totBonDec = 0, totBonos = 0, totDevengado = 0;
-    let totHorasSimples = 0, totValSimple = 0, totHorasDobles = 0, totValDouble = 0, totOtrosIngresos = 0, totSalarioTotal = 0;
-    let totIgss = 0, totIsr = 0, totCafe = 0, totCell = 0, totUniform = 0, totShoes = 0, totEquipo = 0, totProduct = 0, totBancos = 0, totOtros = 0, totJudiciales = 0, totSeguro = 0, totParqueo = 0, totBoleta = 0, totOtrosEgresos = 0, totTotalEgresos = 0;
-    let totLiquido = 0, totQuincena1 = 0, totQuincena2 = 0;
 
-    data.forEach(e => {
-      const baseFactor = (e.days || 30) / 30;
-      const sueldoOrd = Number(e.sueldo_ordinario) || 0;
-      const bonInc = Number(e.bon_incentivo) || 0;
-      const bonDec = Number(e.bon_dec_37_2001) || 0;
-
-      const baseSalary = sueldoOrd * baseFactor;
-      const bonusLey = bonInc * baseFactor;
-      const bonusDec = bonDec * baseFactor;
-      const bonos = Number(e.extras?.bonos) || 0;
-      const devengado = baseSalary + bonusLey + bonusDec + bonos;
-
-      const simplesQty = Number(e.extras?.simplesQty) || 0;
-      const simplesVal = Number(e.extras?.simplesVal) || 0;
-      const doblesQty = Number(e.extras?.doblesQty) || 0;
-      const doblesVal = Number(e.extras?.doblesVal) || 0;
-      const otrosIngresos = Number(e.extras?.otrosIngresos) || 0;
-      const salarioTotal = devengado + simplesVal + doblesVal + otrosIngresos;
-
-      const igss = Number(e.deductions?.igss) || 0;
-      const isr = Number(e.deductions?.isr) || 0;
-      const cafe = Number(e.deductions?.cafe) || 0;
-      const cell = Number(e.deductions?.cell) || 0;
-      const uniform = Number(e.deductions?.uniform) || 0;
-      const shoes = Number(e.deductions?.shoes) || 0;
-      const equipo = Number(e.deductions?.equipo) || 0;
-      const product = Number(e.deductions?.product) || 0;
-      const bancos = Number(e.deductions?.bancos) || 0;
-      const otros = Number(e.deductions?.otros) || 0;
-      const judiciales = Number(e.deductions?.judiciales) || 0;
-      const seguro = Number(e.deductions?.seguro) || 0;
-      const parqueo = Number(e.deductions?.parqueo) || 0;
-      const boleto_de_ornato = Number(e.deductions?.boleto_de_ornato) || 0;
-      const otros_egresos = Number(e.deductions?.otros_egresos) || 0;
-      const anticipo = Number(e.anticipo1ra) || 0;
-      const is2da = group.periodType === '2da';
-      
-      const totalEgresos = igss + isr + cafe + cell + uniform + shoes + equipo + product + bancos + otros + judiciales + seguro + parqueo + boleto_de_ornato + otros_egresos;
-      const liquido = salarioTotal - totalEgresos;
-      const q1 = is2da ? anticipo : liquido;
-      const q2 = is2da ? liquido - anticipo : 0;
-
-      totSalarioOrd += baseSalary;
-      totBonInc += bonusLey;
-      totBonDec += bonusDec;
-      totBonos += bonos;
-      totDevengado += devengado;
-      totHorasSimples += simplesQty;
-      totValSimple += simplesVal;
-      totHorasDobles += doblesQty;
-      totValDouble += doblesVal;
-      totOtrosIngresos += otrosIngresos;
-      totSalarioTotal += salarioTotal;
-
-      totIgss += igss;
-      totIsr += isr;
-      totCafe += cafe;
-      totCell += cell;
-      totUniform += uniform;
-      totShoes += shoes;
-      totEquipo += equipo;
-      totProduct += product;
-      totBancos += bancos;
-      totOtros += otros;
-      totJudiciales += judiciales;
-      totSeguro += seguro;
-      totParqueo += parqueo;
-      totBoleta += boleto_de_ornato;
-      totOtrosEgresos += otros_egresos;
-      totTotalEgresos += totalEgresos;
-      totLiquido += liquido;
-      totQuincena1 += q1;
-      totQuincena2 += q2;
-    });
-
-    return {
-      totSalarioOrd, totBonInc, totBonDec, totBonos, totDevengado,
-      totHorasSimples, totValSimple, totHorasDobles, totValDouble, totOtrosIngresos, totSalarioTotal,
-      totIgss, totIsr, totCafe, totCell, totUniform, totShoes, totEquipo, totProduct, totBancos, totOtros, totJudiciales, totSeguro, totParqueo, totBoleta, totOtrosEgresos, totTotalEgresos,
-      totLiquido, totQuincena1, totQuincena2
-    };
-  }, [data, group.periodType]);
 
   return (
-    <Box p={{ base: 3, md: 6, lg: 8 }}>
+    <Box p={{ base: 3, md: 6, lg: 8 }} sx={{ '@media print': { p: 0 } }}>
+      {/* Screen-only content */}
+      <Box sx={{ '@media print': { display: 'none' } }}>
       {/* Header */}
       <Flex justify="space-between" align={{ base: 'stretch', md: 'center' }} direction={{ base: 'column', md: 'row' }} mb={6} wrap="wrap" gap={4}>
         <Flex align="center" gap={4}>
@@ -476,10 +612,120 @@ function PayrollHistoryDetail({ group, onBack }) {
             </Text>
           </Box>
         </Flex>
-        <Button colorScheme="brand" leftIcon={<Download size={16} />} onClick={exportExcel} size={{ base: 'sm', md: 'md' }}>
-          <Text display={{ base: 'none', sm: 'inline' }}>Exportar Reporte Total (Excel)</Text>
-          <Text display={{ base: 'inline', sm: 'none' }}>Exportar Excel</Text>
-        </Button>
+        <Flex gap={2} wrap="wrap">
+          <Button colorScheme="brand" leftIcon={<Download size={16} />} onClick={exportExcel} size={{ base: 'sm', md: 'md' }}>
+            <Text display={{ base: 'none', sm: 'inline' }}>Exportar Excel</Text>
+            <Text display={{ base: 'inline', sm: 'none' }}>Excel</Text>
+          </Button>
+          <Button colorScheme="blue" leftIcon={<FileText size={16} />} onClick={() => window.print()} size={{ base: 'sm', md: 'md' }}>
+            Imprimir Boletas (PDF)
+          </Button>
+        </Flex>
+      </Flex>
+
+      {/* Filters bar */}
+      <Flex gap={{ base: 2, md: 4 }} wrap="wrap" mb={4} align={{ base: 'stretch', md: 'center' }} justify="space-between" direction={{ base: 'column', md: 'row' }}>
+        <HStack spacing={{ base: 2, md: 3 }} wrap="wrap" flex="1">
+          <Menu closeOnSelect={false}>
+            <MenuButton as={Button} size="sm" variant="outline" rightIcon={<ChevronDown size={14}/>} w={{ base: '100%', sm: '180px' }} textAlign="left" fontWeight="normal" bg={tdBg} borderRadius="md" px={3}>
+              {filterDept.length > 0 ? `${filterDept.length} Deptos...` : 'Departamento...'}
+            </MenuButton>
+            <MenuList maxH="300px" overflowY="auto" zIndex={100} boxShadow="lg">
+              <MenuOptionGroup type="checkbox" value={filterDept} onChange={setFilterDept}>
+                {(departments || []).map(d => (
+                  <MenuItemOption key={d.id} value={d.nombre_dimension} fontSize="sm">{d.nombre_dimension}</MenuItemOption>
+                ))}
+              </MenuOptionGroup>
+            </MenuList>
+          </Menu>
+
+          <Menu closeOnSelect={false}>
+            <MenuButton as={Button} size="sm" variant="outline" rightIcon={<ChevronDown size={14}/>} w={{ base: '100%', sm: '180px' }} textAlign="left" fontWeight="normal" bg={tdBg} borderRadius="md" px={3}>
+              {filterArea.length > 0 ? `${filterArea.length} Áreas...` : 'Área...'}
+            </MenuButton>
+            <MenuList maxH="300px" overflowY="auto" zIndex={100} boxShadow="lg">
+              <MenuOptionGroup type="checkbox" value={filterArea} onChange={setFilterArea}>
+                {(areas || []).map(a => (
+                  <MenuItemOption key={a.id} value={String(a.id)} fontSize="sm">{a.nombre}</MenuItemOption>
+                ))}
+              </MenuOptionGroup>
+            </MenuList>
+          </Menu>
+
+          <Menu closeOnSelect={false}>
+            <MenuButton as={Button} size="sm" variant="outline" rightIcon={<ChevronDown size={14}/>} w={{ base: '100%', sm: '180px' }} textAlign="left" fontWeight="normal" bg={tdBg} borderRadius="md" px={3}>
+              {filterDiv.length > 0 ? `${filterDiv.length} Divisiones...` : 'División...'}
+            </MenuButton>
+            <MenuList maxH="300px" overflowY="auto" zIndex={100} boxShadow="lg">
+              <MenuOptionGroup type="checkbox" value={filterDiv} onChange={setFilterDiv}>
+                {(divisions || []).map(d => (
+                  <MenuItemOption key={d.id} value={String(d.id)} fontSize="sm">{d.nombre}</MenuItemOption>
+                ))}
+              </MenuOptionGroup>
+            </MenuList>
+          </Menu>
+
+          <Menu closeOnSelect={false}>
+            <MenuButton as={Button} size="sm" variant="outline" rightIcon={<ChevronDown size={14}/>} w={{ base: '100%', sm: '180px' }} textAlign="left" fontWeight="normal" bg={tdBg} borderRadius="md" px={3}>
+              {filterSubdiv.length > 0 ? `${filterSubdiv.length} Subdiv...` : 'Subdivisión...'}
+            </MenuButton>
+            <MenuList maxH="300px" overflowY="auto" zIndex={100} boxShadow="lg">
+              <MenuOptionGroup type="checkbox" value={filterSubdiv} onChange={setFilterSubdiv}>
+                {(subdivisions || []).map(s => (
+                  <MenuItemOption key={s.id} value={String(s.id)} fontSize="sm">{s.nombre}</MenuItemOption>
+                ))}
+              </MenuOptionGroup>
+            </MenuList>
+          </Menu>
+          
+          <Select 
+            placeholder="Estado..." 
+            value={filterStatus} 
+            onChange={e => setFilterStatus(e.target.value)}
+            w={{ base: '100%', sm: '120px' }}
+            size="sm"
+            borderRadius="md"
+          >
+            <option value="ALL">Todos</option>
+            <option value="Activo">Activo</option>
+            <option value="De Baja">De Baja</option>
+          </Select>
+        </HStack>
+
+        <HStack maxW={{ base: '100%', lg: '600px' }} spacing={{ base: 2, md: 3 }} w={{ base: '100%', md: 'auto' }} flexWrap={{ base: 'wrap', lg: 'nowrap' }}>
+          <InputGroup size="sm" w={{ base: '100%', lg: '300px' }}>
+            <InputLeftElement pointerEvents="none">
+              <Search size={14} color="gray.400" />
+            </InputLeftElement>
+            <Input 
+              placeholder="Buscar por nombre o puesto..." 
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              bg={tdBg}
+              borderRadius="md"
+            />
+          </InputGroup>
+          <ButtonGroup size="sm" isAttached variant="outline">
+            <Button 
+              isActive={viewMode === 'summary'} 
+              onClick={() => setViewMode('summary')}
+              bg={viewMode === 'summary' ? 'brand.500' : tdBg}
+              color={viewMode === 'summary' ? 'white' : 'inherit'}
+              _hover={{ bg: viewMode === 'summary' ? 'brand.600' : hoverBg }}
+            >
+              Resumen
+            </Button>
+            <Button 
+              isActive={viewMode === 'detailed'} 
+              onClick={() => setViewMode('detailed')}
+              bg={viewMode === 'detailed' ? 'brand.500' : tdBg}
+              color={viewMode === 'detailed' ? 'white' : 'inherit'}
+              _hover={{ bg: viewMode === 'detailed' ? 'brand.600' : hoverBg }}
+            >
+              Detallada
+            </Button>
+          </ButtonGroup>
+        </HStack>
       </Flex>
 
       {/* Summary strip */}
@@ -509,7 +755,17 @@ function PayrollHistoryDetail({ group, onBack }) {
         Desglose Completo de Pagos
       </Heading>
 
-      <TableContainer border="1px solid" borderColor={borderColor} borderRadius="xl" overflowX="auto" bg={tdBg} maxH="500px">
+      {groupedData.map((groupData, gIdx) => {
+        const groupTotals = calculateGroupTotals(groupData.data, group.periodType);
+        return (
+          <Box key={gIdx} mb={8}>
+            {groupData.title && (
+              <Flex align="center" justify="space-between" mb={3} p={3} bg="blue.50" _dark={{ bg: 'blue.900' }} borderRadius="md" borderLeft="4px solid" borderColor="brand.500">
+                <Heading size="sm" color="brand.700" _dark={{ color: 'brand.200' }}>{groupData.title}</Heading>
+                <Badge colorScheme="blue" variant="solid">{groupData.data.length} Empleados</Badge>
+              </Flex>
+            )}
+            <Box border="1px solid" borderColor={borderColor} borderRadius="xl" overflowX="auto" overflowY="auto" bg={tdBg} maxH="550px">
         <Table variant="simple" size="sm" layout="fixed" style={{ borderCollapse: 'separate', borderSpacing: 0, width: 'max-content' }}>
           <Thead position="sticky" top={0} zIndex={15}>
             <Tr bg={theadBg}>
@@ -520,32 +776,40 @@ function PayrollHistoryDetail({ group, onBack }) {
               
               <Th w="75px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Días Lab.</Th>
               <Th w="120px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">S. Ordinario</Th>
-              <Th w="120px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Bon. Incentivo</Th>
-              <Th w="140px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Bono Dec. 37-2001</Th>
-              <Th w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Bonos</Th>
-              <Th w="120px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="brand.500">T. Devengado</Th>
-              <Th w="80px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Hrs Simples</Th>
-              <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Val Hrs Simp</Th>
-              <Th w="80px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Hrs Dobles</Th>
-              <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Val Hrs Dobl</Th>
-              <Th w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Otros Ingr.</Th>
+              {viewMode === 'detailed' && (
+                <>
+                  <Th w="120px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Bon. Incentivo</Th>
+                  <Th w="140px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Bono Dec. 37-2001</Th>
+                  <Th w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Bonos</Th>
+                  <Th w="120px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="brand.500">T. Devengado</Th>
+                  <Th w="80px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Hrs Simples</Th>
+                  <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Val Hrs Simp</Th>
+                  <Th w="80px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Hrs Dobles</Th>
+                  <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Val Hrs Dobl</Th>
+                  <Th w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Otros Ingr.</Th>
+                </>
+              )}
               <Th w="130px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="gold.500">Salario Total</Th>
               
-              <Th w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">IGSS</Th>
-              <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">ISR</Th>
-              <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Cafetería</Th>
-              <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Celular</Th>
-              <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Uniforme</Th>
-              <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Calzado</Th>
-              <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Equipo</Th>
-              <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Producto</Th>
-              <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Bancos</Th>
-              <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Otros</Th>
-              <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Judiciales</Th>
-              <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Seguro</Th>
-              <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Parqueo</Th>
-              <Th w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Bol. Ornato</Th>
-              <Th w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Otros Egr.</Th>
+              {viewMode === 'detailed' && (
+                <>
+                  <Th w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">IGSS</Th>
+                  <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">ISR</Th>
+                  <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Cafetería</Th>
+                  <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Celular</Th>
+                  <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Uniforme</Th>
+                  <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Calzado</Th>
+                  <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Equipo</Th>
+                  <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Producto</Th>
+                  <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Bancos</Th>
+                  <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Otros</Th>
+                  <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Judiciales</Th>
+                  <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Seguro</Th>
+                  <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Parqueo</Th>
+                  <Th w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Bol. Ornato</Th>
+                  <Th w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Otros Egr.</Th>
+                </>
+              )}
               <Th w="130px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.500">Total Egresos</Th>
               
               <Th w="120px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="brand.500">Liquido a Recibir</Th>
@@ -559,7 +823,7 @@ function PayrollHistoryDetail({ group, onBack }) {
             </Tr>
           </Thead>
           <Tbody>
-            {data.map((e, idx) => {
+            {groupData.data.map((e, idx) => {
               const { baseSalary, bonusLey, bonusDec, bonos, extrasTotal, gross, ded, net } = e.calculated;
               const anticipo = e.anticipo1ra || 0;
               const is2da = group.periodType === '2da';
@@ -572,7 +836,7 @@ function PayrollHistoryDetail({ group, onBack }) {
                     {idx + 1}
                   </Td>
                   <Td position="sticky" left="60px" zIndex={5} bg={tdBg} borderRight="1px solid" borderColor={borderColor} fontWeight="600" color="brand.500" fontSize="xs" isTruncated maxW="200px">
-                    {`${e.primer_nombre || e.nombres || ''} ${e.primer_apellido || e.apellidos || ''}`}
+                    {getEmployeeFullName(e)}
                   </Td>
                   <Td position="sticky" left="260px" zIndex={5} bg={tdBg} borderRight="1px solid" borderColor={borderColor} fontSize="xs" isTruncated maxW="120px">
                     {e.company || 'Sin empresa'}
@@ -583,33 +847,41 @@ function PayrollHistoryDetail({ group, onBack }) {
 
                   <Td fontSize="xs">{e.days || 30}</Td>
                   <Td fontFamily="mono" fontSize="xs">{formatQ(baseSalary)}</Td>
-                  <Td fontFamily="mono" fontSize="xs">{formatQ(bonusLey)}</Td>
-                  <Td fontFamily="mono" fontSize="xs">{formatQ(bonusDec)}</Td>
-                  <Td fontFamily="mono" fontSize="xs">{formatQ(bonos)}</Td>
-                  <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500">{formatQ(gross)}</Td>
-                  
-                  <Td fontSize="xs">{e.extras?.simplesQty || 0}</Td>
-                  <Td fontFamily="mono" fontSize="xs">{formatQ(e.extras?.simplesVal || 0)}</Td>
-                  <Td fontSize="xs">{e.extras?.doblesQty || 0}</Td>
-                  <Td fontFamily="mono" fontSize="xs">{formatQ(e.extras?.doblesVal || 0)}</Td>
-                  <Td fontFamily="mono" fontSize="xs">{formatQ(e.extras?.otrosIngresos || 0)}</Td>
+                  {viewMode === 'detailed' && (
+                    <>
+                      <Td fontFamily="mono" fontSize="xs">{formatQ(bonusLey)}</Td>
+                      <Td fontFamily="mono" fontSize="xs">{formatQ(bonusDec)}</Td>
+                      <Td fontFamily="mono" fontSize="xs">{formatQ(bonos)}</Td>
+                      <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500">{formatQ(gross)}</Td>
+                      
+                      <Td fontSize="xs">{e.extras?.simplesQty || 0}</Td>
+                      <Td fontFamily="mono" fontSize="xs">{formatQ(e.extras?.simplesVal || 0)}</Td>
+                      <Td fontSize="xs">{e.extras?.doblesQty || 0}</Td>
+                      <Td fontFamily="mono" fontSize="xs">{formatQ(e.extras?.doblesVal || 0)}</Td>
+                      <Td fontFamily="mono" fontSize="xs">{formatQ(e.extras?.otrosIngresos || 0)}</Td>
+                    </>
+                  )}
                   <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="gold.500">{formatQ(gross + (e.extras?.simplesVal || 0) + (e.extras?.doblesVal || 0) + (e.extras?.otrosIngresos || 0) - (baseSalary + bonusLey + bonusDec + bonos))}</Td>
 
-                  <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.igss || 0)}</Td>
-                  <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.isr || 0)}</Td>
-                  <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.cafe || 0)}</Td>
-                  <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.cell || 0)}</Td>
-                  <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.uniform || 0)}</Td>
-                  <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.shoes || 0)}</Td>
-                  <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.equipo || 0)}</Td>
-                  <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.product || 0)}</Td>
-                  <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.bancos || 0)}</Td>
-                  <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.otros || 0)}</Td>
-                  <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.judiciales || 0)}</Td>
-                  <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.seguro || 0)}</Td>
-                  <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.parqueo || 0)}</Td>
-                  <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.boleto_de_ornato || 0)}</Td>
-                  <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.otros_egresos || 0)}</Td>
+                  {viewMode === 'detailed' && (
+                    <>
+                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.igss || 0)}</Td>
+                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.isr || 0)}</Td>
+                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.cafe || 0)}</Td>
+                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.cell || 0)}</Td>
+                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.uniform || 0)}</Td>
+                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.shoes || 0)}</Td>
+                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.equipo || 0)}</Td>
+                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.product || 0)}</Td>
+                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.bancos || 0)}</Td>
+                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.otros || 0)}</Td>
+                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.judiciales || 0)}</Td>
+                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.seguro || 0)}</Td>
+                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.parqueo || 0)}</Td>
+                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.boleto_de_ornato || 0)}</Td>
+                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.otros_egresos || 0)}</Td>
+                    </>
+                  )}
                   <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="red.500">{formatQ(ded)}</Td>
                   
                   <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500">{formatQ(net)}</Td>
@@ -642,49 +914,53 @@ function PayrollHistoryDetail({ group, onBack }) {
               <Th position="sticky" left="260px" zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor}></Th>
               <Th position="sticky" left="380px" zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor} boxShadow="4px 0 8px -4px rgba(0,0,0,0.15)"></Th>
               
-              <Th>{data.length} Emps</Th>
-              <Th fontFamily="mono" fontSize="xs">{formatQ(columnTotals.totSalarioOrd)}</Th>
-              <Th fontFamily="mono" fontSize="xs">{formatQ(columnTotals.totBonInc)}</Th>
-              <Th fontFamily="mono" fontSize="xs">{formatQ(columnTotals.totBonDec)}</Th>
-              <Th fontFamily="mono" fontSize="xs">{formatQ(columnTotals.totBonos)}</Th>
-              <Th fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500">{formatQ(columnTotals.totDevengado)}</Th>
+              <Th>{groupData.data.length} Empleados</Th>
+              <Th fontFamily="mono" fontSize="xs">{formatQ(groupTotals.totSalarioOrd)}</Th>
+              <Th fontFamily="mono" fontSize="xs">{formatQ(groupTotals.totBonInc)}</Th>
+              <Th fontFamily="mono" fontSize="xs">{formatQ(groupTotals.totBonDec)}</Th>
+              <Th fontFamily="mono" fontSize="xs">{formatQ(groupTotals.totBonos)}</Th>
+              <Th fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500">{formatQ(groupTotals.totDevengado)}</Th>
               
-              <Th>{columnTotals.totHorasSimples}</Th>
-              <Th fontFamily="mono" fontSize="xs">{formatQ(columnTotals.totValSimple)}</Th>
-              <Th>{columnTotals.totHorasDobles}</Th>
-              <Th fontFamily="mono" fontSize="xs">{formatQ(columnTotals.totValDouble)}</Th>
-              <Th fontFamily="mono" fontSize="xs">{formatQ(columnTotals.totOtrosIngresos)}</Th>
-              <Th fontFamily="mono" fontSize="xs" fontWeight="bold" color="gold.500">{formatQ(columnTotals.totSalarioTotal)}</Th>
+              <Th>{groupTotals.totHorasSimples}</Th>
+              <Th fontFamily="mono" fontSize="xs">{formatQ(groupTotals.totValSimple)}</Th>
+              <Th>{groupTotals.totHorasDobles}</Th>
+              <Th fontFamily="mono" fontSize="xs">{formatQ(groupTotals.totValDouble)}</Th>
+              <Th fontFamily="mono" fontSize="xs">{formatQ(groupTotals.totOtrosIngresos)}</Th>
+              <Th fontFamily="mono" fontSize="xs" fontWeight="bold" color="gold.500">{formatQ(groupTotals.totSalarioTotal)}</Th>
               
-              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totIgss)}</Th>
-              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totIsr)}</Th>
-              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totCafe)}</Th>
-              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totCell)}</Th>
-              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totUniform)}</Th>
-              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totShoes)}</Th>
-              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totEquipo)}</Th>
-              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totProduct)}</Th>
-              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totBancos)}</Th>
-              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totOtros)}</Th>
-              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totJudiciales)}</Th>
-              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totSeguro)}</Th>
-              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totParqueo)}</Th>
-              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totBoleta)}</Th>
-              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totOtrosEgresos)}</Th>
-              <Th fontFamily="mono" fontSize="xs" fontWeight="bold" color="red.500">{formatQ(columnTotals.totTotalEgresos)}</Th>
+              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totIgss)}</Th>
+              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totIsr)}</Th>
+              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totCafe)}</Th>
+              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totCell)}</Th>
+              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totUniform)}</Th>
+              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totShoes)}</Th>
+              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totEquipo)}</Th>
+              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totProduct)}</Th>
+              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totBancos)}</Th>
+              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totOtros)}</Th>
+              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totJudiciales)}</Th>
+              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totSeguro)}</Th>
+              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totParqueo)}</Th>
+              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totBoleta)}</Th>
+              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totOtrosEgresos)}</Th>
+              <Th fontFamily="mono" fontSize="xs" fontWeight="bold" color="red.500">{formatQ(groupTotals.totTotalEgresos)}</Th>
               
-              <Th fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500">{formatQ(columnTotals.totLiquido)}</Th>
+              <Th fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500">{formatQ(groupTotals.totLiquido)}</Th>
               {group.periodType === '2da' && (
                 <>
-                  <Th fontFamily="mono" fontSize="xs">{formatQ(columnTotals.totQuincena1)}</Th>
-                  <Th fontFamily="mono" fontSize="xs">{formatQ(columnTotals.totQuincena2)}</Th>
+                  <Th fontFamily="mono" fontSize="xs">{formatQ(groupTotals.totQuincena1)}</Th>
+                  <Th fontFamily="mono" fontSize="xs">{formatQ(groupTotals.totQuincena2)}</Th>
+
                 </>
               )}
               <Th></Th>
             </Tr>
           </Thead>
         </Table>
-      </TableContainer>
+        </Box>
+          </Box>
+        );
+      })}
 
       {/* Voucher slip display Modal */}
       {selectedVoucherEmp && (
@@ -697,147 +973,8 @@ function PayrollHistoryDetail({ group, onBack }) {
             <ModalCloseButton />
             <ModalBody p={0} bg="white">
               {/* Captured printable voucher container */}
-              <Box id="voucher-content" p={8} bg="white" color="gray.800" fontFamily="sans-serif">
-                <Flex justify="space-between" borderBottom="2px solid" borderColor="gray.200" pb={4} mb={6}>
-                  <Box>
-                    <Heading size="md" fontWeight={800} color="gray.900">
-                      {selectedVoucherEmp.company}
-                    </Heading>
-                    <Text fontSize="xs" color="gray.500" mt={1}>
-                      Recibo de Pago de Planilla
-                    </Text>
-                  </Box>
-                  <VStack align="end" spacing={1}>
-                    <Text fontSize="sm" fontWeight={700} color="gray.700">
-                      Periodo: {group.title}
-                    </Text>
-                    <Text fontSize="xs" color="gray.500">
-                      Fecha de Pago: {new Date(group.date).toLocaleDateString()}
-                    </Text>
-                  </VStack>
-                </Flex>
-
-                <Flex justify="space-between" mb={8} wrap="wrap" gap={4}>
-                  <Box>
-                    <Text fontSize="9px" color="gray.400" textTransform="uppercase" letterSpacing="wider">Empleado</Text>
-                    <Text fontSize="md" fontWeight={800} color="gray.900">
-                      {`${selectedVoucherEmp.primer_nombre || selectedVoucherEmp.nombres || ''} ${selectedVoucherEmp.primer_apellido || selectedVoucherEmp.apellidos || ''}`}
-                    </Text>
-                    <Text fontSize="xs" color="gray.600">
-                      Puesto: {selectedVoucherEmp.puesto || 'N/A'}
-                    </Text>
-                  </Box>
-                  <VStack align="end" spacing={1}>
-                    <Text fontSize="9px" color="gray.400" textTransform="uppercase" letterSpacing="wider">Depósito Bancario</Text>
-                    <Text fontSize="xs" fontWeight={700} color="gray.900">
-                      {selectedVoucherEmp.banco || 'N/A'} - {selectedVoucherEmp.no_cuenta || 'N/A'}
-                    </Text>
-                    <Text fontSize="xs" color="gray.600">
-                      Afiliación IGSS: {selectedVoucherEmp.no_igss || 'N/A'}
-                    </Text>
-                  </VStack>
-                </Flex>
-
-                <SimpleGrid columns={{ base: 1, md: 2 }} spacing={{ base: 6, md: 10 }} mb={8}>
-                  {/* Income column */}
-                  <Box>
-                    <Heading size="xs" borderBottom="1px solid" borderColor="gray.200" pb={2} mb={3} color="gray.900">
-                      Ingresos
-                    </Heading>
-                    <VStack align="stretch" spacing={2} fontSize="xs">
-                      <Flex justify="space-between">
-                        <Text>Salario Ordinario</Text>
-                        <Text fontFamily="mono" fontWeight={600}>{formatQ(selectedVoucherEmp.calculated.baseSalary)}</Text>
-                      </Flex>
-                      <Flex justify="space-between">
-                        <Text>Bono Incentivo (Ley)</Text>
-                        <Text fontFamily="mono" fontWeight={600}>{formatQ(selectedVoucherEmp.calculated.bonusLey)}</Text>
-                      </Flex>
-                      <Flex justify="space-between">
-                        <Text>Bono Decreto 37-2001</Text>
-                        <Text fontFamily="mono" fontWeight={600}>{formatQ(selectedVoucherEmp.calculated.bonusDec)}</Text>
-                      </Flex>
-                      {selectedVoucherEmp.calculated.bonos > 0 && (
-                        <Flex justify="space-between">
-                          <Text>Otros Bonos</Text>
-                          <Text fontFamily="mono" fontWeight={600}>{formatQ(selectedVoucherEmp.calculated.bonos)}</Text>
-                        </Flex>
-                      )}
-                      {selectedVoucherEmp.calculated.extrasTotal > 0 && (
-                        <Flex justify="space-between">
-                          <Text>Horas Extras y Otros</Text>
-                          <Text fontFamily="mono" fontWeight={600}>{formatQ(selectedVoucherEmp.calculated.extrasTotal)}</Text>
-                        </Flex>
-                      )}
-                      <Flex justify="space-between" borderTop="1px dashed" borderColor="gray.300" pt={2} fontWeight={700} color="gray.900">
-                        <Text>Total Ingresos Brutos</Text>
-                        <Text fontFamily="mono">{formatQ(selectedVoucherEmp.calculated.gross)}</Text>
-                      </Flex>
-                    </VStack>
-                  </Box>
-
-                  {/* Deductions column */}
-                  <Box>
-                    <Heading size="xs" borderBottom="1px solid" borderColor="gray.200" pb={2} mb={3} color="gray.900">
-                      Deducciones
-                    </Heading>
-                    <VStack align="stretch" spacing={2} fontSize="xs">
-                      {Object.entries(selectedVoucherEmp.deductions || {}).map(([key, val]) => {
-                        const numVal = Number(val) || 0;
-                        if (numVal <= 0) return null;
-                        
-                        // Map technical names to readable labels
-                        const labelMap = {
-                          igss: 'IGSS Laboral (4.83%)',
-                          isr: 'ISR Retención',
-                          cafe: 'Cafetería',
-                          cell: 'Consumo Celular',
-                          uniform: 'Descuento Uniforme',
-                          shoes: 'Descuento Calzado',
-                          equipo: 'Descuento Equipo',
-                          product: 'Compra Producto',
-                          bancos: 'Retención Bancos',
-                          otros: 'Otros Descuentos',
-                          judiciales: 'Retención Judicial',
-                          seguro: 'Seguro Médico/Vida',
-                          parqueo: 'Servicio Parqueo',
-                          boleto_de_ornato: 'Boleta de Ornato',
-                          otros_egresos: 'Otros Egresos'
-                        };
-
-                        return (
-                          <Flex justify="space-between" key={key} color="red.600">
-                            <Text>{labelMap[key] || key}</Text>
-                            <Text fontFamily="mono" fontWeight={600}>{formatQ(numVal)}</Text>
-                          </Flex>
-                        );
-                      })}
-                      <Flex justify="space-between" borderTop="1px dashed" borderColor="gray.300" pt={2} fontWeight={700} color="red.600">
-                        <Text>Total Egresos</Text>
-                        <Text fontFamily="mono">{formatQ(selectedVoucherEmp.calculated.ded)}</Text>
-                      </Flex>
-                    </VStack>
-                  </Box>
-                </SimpleGrid>
-
-                {/* Net Pay Box */}
-                <Flex bg="gray.100" p={4} borderRadius="lg" justify="space-between" align="center" mb={8}>
-                  <Text fontSize="sm" fontWeight={800} color="gray.900">LÍQUIDO A RECIBIR</Text>
-                  <Text fontFamily="mono" fontSize="xl" fontWeight={900} color="green.500">
-                    {formatQ(selectedVoucherEmp.calculated.net)}
-                  </Text>
-                </Flex>
-
-                {/* Signature Lines */}
-                <Flex justify="space-between" align="end" mt={12} pt={6} borderTop="1px solid" borderColor="gray.100" direction={{ base: 'column', sm: 'row' }} gap={4}>
-                  <Box w={{ base: '100%', sm: '200px' }} textAlign="center">
-                    <Box borderBottom="1px solid" borderColor="gray.400" h="40px" />
-                    <Text fontSize="10px" color="gray.400" mt={2}>Firma del Empleado</Text>
-                  </Box>
-                  <Text fontSize="9px" color="gray.400">
-                    Generado el {new Date(group.date).toLocaleDateString()}
-                  </Text>
-                </Flex>
+              <Box id="voucher-content" p={{ base: 4, md: 8 }}>
+                <BoletaTemplate emp={selectedVoucherEmp} group={group} />
               </Box>
             </ModalBody>
             <ModalFooter bg={tdBg} borderTop="1px solid" borderColor={borderColor}>
@@ -849,6 +986,202 @@ function PayrollHistoryDetail({ group, onBack }) {
           </ModalContent>
         </Modal>
       )}
+      </Box>
+
+      {/* Hidden Print Container for Bulk Export */}
+      <Box display="none" sx={{ '@media print': { display: 'block', bg: 'white', color: 'black' } }}>
+        {(() => {
+          const allPrintableEmployees = groupedData.flatMap(g => g.data);
+          if (allPrintableEmployees.length === 0) return null;
+          const chunks = [];
+          for (let i = 0; i < allPrintableEmployees.length; i += 2) {
+            chunks.push(allPrintableEmployees.slice(i, i + 2));
+          }
+          return chunks.map((chunk, idx) => (
+            <Box 
+              key={`page-${idx}`} 
+              sx={{ 
+                pageBreakAfter: idx === chunks.length - 1 ? 'auto' : 'always',
+                pageBreakInside: 'avoid',
+                height: '100vh',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'flex-start',
+                p: 0,
+                pt: 4
+              }}
+            >
+              {/* Top Half: Employee 1 */}
+              <Flex gap={8} w="100%" h="48%">
+                <Box flex={1} border="1px solid #ddd" borderRadius="md" p={4}><BoletaTemplate emp={chunk[0]} group={group} isPrint /></Box>
+                <Box flex={1} border="1px solid #ddd" borderRadius="md" p={4}><BoletaTemplate emp={chunk[0]} group={group} isPrint /></Box>
+              </Flex>
+              
+              {/* Divider */}
+              <Divider borderStyle="dashed" borderColor="gray.400" my={4} />
+              
+              {/* Bottom Half: Employee 2 (if exists) */}
+              {chunk[1] ? (
+                <Flex gap={8} w="100%" h="48%">
+                  <Box flex={1} border="1px solid #ddd" borderRadius="md" p={4}><BoletaTemplate emp={chunk[1]} group={group} isPrint /></Box>
+                  <Box flex={1} border="1px solid #ddd" borderRadius="md" p={4}><BoletaTemplate emp={chunk[1]} group={group} isPrint /></Box>
+                </Flex>
+              ) : (
+                <Flex gap={8} w="100%" h="48%" opacity={0}></Flex>
+              )}
+            </Box>
+          ));
+        })()}
+      </Box>
+
+    </Box>
+  );
+}
+
+function BoletaTemplate({ emp, group, isPrint }) {
+  if (!emp) return null;
+
+  const labelMap = {
+    igss: 'IGSS Laboral (4.83%)',
+    isr: 'ISR Retención',
+    cafe: 'Cafetería',
+    cell: 'Consumo Celular',
+    uniform: 'Descuento Uniforme',
+    shoes: 'Descuento Calzado',
+    equipo: 'Descuento Equipo',
+    product: 'Compra Producto',
+    bancos: 'Retención Bancos',
+    otros: 'Otros Descuentos',
+    judiciales: 'Retención Judicial',
+    seguro: 'Seguro Médico/Vida',
+    parqueo: 'Servicio Parqueo',
+    boleto_de_ornato: 'Boleta de Ornato',
+    otros_egresos: 'Otros Egresos'
+  };
+
+  return (
+    <Box w="100%" fontFamily="sans-serif">
+      <Flex justify="space-between" borderBottom="2px solid" borderColor="gray.200" pb={3} mb={4}>
+        <Box>
+          <Heading size="sm" fontWeight={800} color="gray.900">
+            {emp.company}
+          </Heading>
+          <Text fontSize="2xs" color="gray.500" mt={1}>
+            Recibo de Pago de Planilla
+          </Text>
+        </Box>
+        <VStack align="end" spacing={0}>
+          <Text fontSize="xs" fontWeight={700} color="gray.700">
+            Periodo: {group.title}
+          </Text>
+          <Text fontSize="2xs" color="gray.500">
+            Fecha de Pago: {new Date(group.date).toLocaleDateString()}
+          </Text>
+        </VStack>
+      </Flex>
+
+      <Flex justify="space-between" mb={4} wrap="wrap" gap={2}>
+        <Box>
+          <Text fontSize="8px" color="gray.400" textTransform="uppercase" letterSpacing="wider">Empleado</Text>
+          <Text fontSize="sm" fontWeight={800} color="gray.900">
+            {getEmployeeFullName(emp)}
+          </Text>
+          <Text fontSize="2xs" color="gray.600">
+            Puesto: {emp.puesto || 'N/A'}
+          </Text>
+        </Box>
+        <VStack align="end" spacing={0}>
+          <Text fontSize="8px" color="gray.400" textTransform="uppercase" letterSpacing="wider">Depósito Bancario</Text>
+          <Text fontSize="2xs" fontWeight={700} color="gray.900">
+            {emp.banco || 'N/A'} - {emp.no_cuenta || 'N/A'}
+          </Text>
+          <Text fontSize="2xs" color="gray.600">
+            Afiliación IGSS: {emp.no_igss || 'N/A'}
+          </Text>
+        </VStack>
+      </Flex>
+
+      <SimpleGrid columns={2} spacing={6} mb={4}>
+        {/* Income column */}
+        <Box>
+          <Heading size="2xs" borderBottom="1px solid" borderColor="gray.200" pb={1} mb={2} color="gray.900">
+            Ingresos
+          </Heading>
+          <VStack align="stretch" spacing={1} fontSize="2xs">
+            <Flex justify="space-between">
+              <Text>Salario Ordinario</Text>
+              <Text fontFamily="mono" fontWeight={600}>{formatQ(emp.calculated.baseSalary)}</Text>
+            </Flex>
+            <Flex justify="space-between">
+              <Text>Bono Incentivo (Ley)</Text>
+              <Text fontFamily="mono" fontWeight={600}>{formatQ(emp.calculated.bonusLey)}</Text>
+            </Flex>
+            <Flex justify="space-between">
+              <Text>Bono Decreto 37-2001</Text>
+              <Text fontFamily="mono" fontWeight={600}>{formatQ(emp.calculated.bonusDec)}</Text>
+            </Flex>
+            {emp.calculated.bonos > 0 && (
+              <Flex justify="space-between">
+                <Text>Otros Bonos</Text>
+                <Text fontFamily="mono" fontWeight={600}>{formatQ(emp.calculated.bonos)}</Text>
+              </Flex>
+            )}
+            {emp.calculated.extrasTotal > 0 && (
+              <Flex justify="space-between">
+                <Text>Horas Extras y Otros</Text>
+                <Text fontFamily="mono" fontWeight={600}>{formatQ(emp.calculated.extrasTotal)}</Text>
+              </Flex>
+            )}
+            <Flex justify="space-between" borderTop="1px dashed" borderColor="gray.300" pt={1} fontWeight={700} color="gray.900">
+              <Text>Total Ingresos</Text>
+              <Text fontFamily="mono">{formatQ(emp.calculated.gross)}</Text>
+            </Flex>
+          </VStack>
+        </Box>
+
+        {/* Deductions column */}
+        <Box>
+          <Heading size="2xs" borderBottom="1px solid" borderColor="gray.200" pb={1} mb={2} color="gray.900">
+            Deducciones
+          </Heading>
+          <VStack align="stretch" spacing={1} fontSize="2xs">
+            {Object.entries(emp.deductions || {}).map(([key, val]) => {
+              const numVal = Number(val) || 0;
+              if (numVal <= 0) return null;
+              
+              return (
+                <Flex justify="space-between" key={key} color="red.600">
+                  <Text>{labelMap[key] || key}</Text>
+                  <Text fontFamily="mono" fontWeight={600}>{formatQ(numVal)}</Text>
+                </Flex>
+              );
+            })}
+            <Flex justify="space-between" borderTop="1px dashed" borderColor="gray.300" pt={1} fontWeight={700} color="red.600">
+              <Text>Total Egresos</Text>
+              <Text fontFamily="mono">{formatQ(emp.calculated.ded)}</Text>
+            </Flex>
+          </VStack>
+        </Box>
+      </SimpleGrid>
+
+      {/* Net Pay Box */}
+      <Flex bg="gray.100" p={2} borderRadius="md" justify="space-between" align="center" mb={6}>
+        <Text fontSize="xs" fontWeight={800} color="gray.900">LÍQUIDO A RECIBIR</Text>
+        <Text fontFamily="mono" fontSize="md" fontWeight={900} color="green.500">
+          {formatQ(emp.calculated.net)}
+        </Text>
+      </Flex>
+
+      {/* Signature Lines */}
+      <Flex justify="space-between" align="end" mt={isPrint ? 4 : 8} pt={4} borderTop="1px solid" borderColor="gray.100" direction="row" gap={4}>
+        <Box w="150px" textAlign="center">
+          <Box borderBottom="1px solid" borderColor="gray.400" h="20px" />
+          <Text fontSize="8px" color="gray.400" mt={1}>Firma del Empleado</Text>
+        </Box>
+        <Text fontSize="7px" color="gray.400">
+          Generado el {new Date().toLocaleDateString()}
+        </Text>
+      </Flex>
     </Box>
   );
 }

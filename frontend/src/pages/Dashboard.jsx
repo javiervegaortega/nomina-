@@ -4,7 +4,7 @@ import {
   HStack, VStack, Center, useColorModeValue, Badge,
   Modal, ModalOverlay, ModalContent, ModalHeader, ModalBody, ModalFooter,
   ModalCloseButton, FormControl, FormLabel, Select, Radio, RadioGroup, Stack,
-  Divider,
+  Divider, Skeleton, SkeletonText, SkeletonCircle,
 } from '@chakra-ui/react';
 import {
   DollarSign, Users, TrendingUp, ArrowUpRight, ArrowDownRight,
@@ -27,7 +27,7 @@ import {
 const DEFAULT_PERIOD = { mode: PERIOD_MODES.LATEST, month: '', payrollId: '' };
 
 export default function Dashboard() {
-  const { employees, companies, payrollHistory, departments, activePayrolls } = useContext(DataContext);
+  const { employees, companies, payrollHistory, departments, activePayrolls, isLoading } = useContext(DataContext);
 
   const [period, setPeriod] = useState(DEFAULT_PERIOD);
   const [draftPeriod, setDraftPeriod] = useState(DEFAULT_PERIOD);
@@ -228,6 +228,67 @@ export default function Dashboard() {
   const deptCountBg = useColorModeValue('gray.100', 'whiteAlpha.100');
   const deptCountColor = useColorModeValue('gray.600', 'gray.300');
   const modalBg = useColorModeValue('white', 'gray.800');
+
+  if (isLoading) {
+    return (
+      <Box px={{ base: 3, md: 6, lg: 8 }} py={{ base: 3, md: 6, lg: 8 }}>
+        <Flex justify="space-between" align="center" mb={8}>
+          <Box>
+            <Skeleton h="28px" w="200px" mb={2} borderRadius="md" />
+            <Skeleton h="16px" w="350px" borderRadius="md" />
+          </Box>
+          <HStack spacing={3}>
+            <Skeleton h="40px" w="100px" borderRadius="lg" />
+            <Skeleton h="40px" w="100px" borderRadius="lg" />
+          </HStack>
+        </Flex>
+        <SimpleGrid columns={{ base: 1, sm: 2, lg: 4 }} spacing={5} mb={8}>
+          {[1,2,3,4].map(i => (
+            <Box key={i} bg={cardBg} border="1px solid" borderColor={borderColor} borderRadius="xl" p={5}>
+              <Flex justify="space-between" align="flex-start">
+                <Box flex={1}>
+                  <Skeleton h="12px" w="120px" mb={3} />
+                  <Skeleton h="24px" w="150px" mb={2} />
+                  <Skeleton h="12px" w="80px" />
+                </Box>
+                <SkeletonCircle size="48px" />
+              </Flex>
+            </Box>
+          ))}
+        </SimpleGrid>
+        <SimpleGrid columns={{ base: 1, md: 2 }} spacing={5} mb={8}>
+          {[1,2].map(i => (
+            <Box key={i} bg={cardBg} border="1px solid" borderColor={borderColor} borderRadius="xl" p={6}>
+              <Skeleton h="18px" w="200px" mb={5} />
+              <VStack spacing={4} align="stretch">
+                {[1,2,3].map(j => (
+                  <Box key={j}>
+                    <Flex justify="space-between" mb={1}>
+                      <Skeleton h="14px" w="120px" />
+                      <Skeleton h="14px" w="80px" />
+                    </Flex>
+                    <Skeleton h="6px" borderRadius="full" />
+                  </Box>
+                ))}
+              </VStack>
+            </Box>
+          ))}
+        </SimpleGrid>
+        <SimpleGrid columns={{ base: 1, md: 2 }} spacing={5}>
+          {[1,2].map(i => (
+            <Box key={i} bg={cardBg} border="1px solid" borderColor={borderColor} borderRadius="xl" p={6}>
+              <Skeleton h="18px" w="180px" mb={4} />
+              <VStack spacing={3} align="stretch">
+                {[1,2,3,4].map(j => (
+                  <Skeleton key={j} h="44px" borderRadius="lg" />
+                ))}
+              </VStack>
+            </Box>
+          ))}
+        </SimpleGrid>
+      </Box>
+    );
+  }
 
   return (
     <Box px={{ base: 3, md: 6, lg: 8 }} py={{ base: 3, md: 6, lg: 8 }}>

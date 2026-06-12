@@ -32,7 +32,7 @@ export const AppContext = createContext();
 // Layout with Sidebar for main app pages
 function MainLayout() {
   return (
-    <Flex h="100vh" overflow="hidden">
+    <Flex h="100vh" overflow="hidden" sx={{ '@media print': { h: 'auto', overflow: 'visible' } }}>
       <Sidebar />
       <Box
         as="main"
@@ -40,6 +40,7 @@ function MainLayout() {
         overflow="auto"
         bg="chakra-body-bg"
         pt={{ base: '60px', md: 0 }}
+        sx={{ '@media print': { overflow: 'visible', h: 'auto' } }}
       >
         <Outlet />
       </Box>

@@ -5,9 +5,16 @@ import usePagination from '../hooks/usePagination';
 import Pagination from '../components/Pagination';
 import { Plus, Edit2, Trash2, X, Check, Gift, Users } from 'lucide-react';
 import { formatQ } from '../data/mockData';
+import {
+  Box,
+  Flex,
+  Skeleton,
+  SkeletonText,
+  SimpleGrid,
+} from '@chakra-ui/react';
 
 export default function Bonuses() {
-  const { bonuses, addBonus, updateBonus, deleteBonus, employees } = useContext(DataContext);
+  const { bonuses, addBonus, updateBonus, deleteBonus, employees, isLoading } = useContext(DataContext);
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState({ name: '', type: 'fijo', assignments: {} });
@@ -61,6 +68,45 @@ export default function Bonuses() {
     delete newAssign[empId];
     setForm({ ...form, assignments: newAssign });
   };
+
+  if (isLoading) {
+    return (
+      <Box p={{ base: 4, md: 6, lg: 8 }}>
+        <Flex justify="space-between" align="center" mb={6}>
+          <Box>
+            <Skeleton h="28px" w="200px" mb={2} />
+            <Skeleton h="14px" w="320px" />
+          </Box>
+          <Skeleton h="40px" w="140px" borderRadius="lg" />
+        </Flex>
+        <SimpleGrid columns={{ base: 1, sm: 2, lg: 3 }} spacing={5}>
+          {[1,2,3,4,5,6].map(i => (
+            <Box key={i} p={5} borderRadius="xl" border="1px solid" borderColor="gray.200" _dark={{ borderColor: 'whiteAlpha.100' }}>
+              <Flex gap={3} align="center" mb={5}>
+                <Skeleton w="44px" h="44px" borderRadius="md" />
+                <Box flex={1}>
+                  <Skeleton h="16px" w="70%" mb={2} />
+                  <Skeleton h="12px" w="40%" />
+                </Box>
+              </Flex>
+              <Box p={4} borderRadius="md" bg="gray.50" _dark={{ bg: 'whiteAlpha.50' }}>
+                <Flex justify="space-between">
+                  <Box>
+                    <Skeleton h="10px" w="50px" mb={2} />
+                    <Skeleton h="16px" w="90px" />
+                  </Box>
+                  <Box textAlign="right">
+                    <Skeleton h="10px" w="80px" mb={2} />
+                    <Skeleton h="20px" w="100px" />
+                  </Box>
+                </Flex>
+              </Box>
+            </Box>
+          ))}
+        </SimpleGrid>
+      </Box>
+    );
+  }
 
   return (
     <>
@@ -134,7 +180,7 @@ export default function Bonuses() {
             </div>
           )}
         </div>
-        {bonuses.length > 0 && <Pagination pagination={pagination} />}
+        {bonuses.length > 0 && <Pagination {...pagination} />}
       </div>
 
       {showModal && (

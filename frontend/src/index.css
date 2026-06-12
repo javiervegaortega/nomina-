@@ -1231,3 +1231,35 @@ th {
   resize: horizontal;
   overflow: hidden;
 }
+
+/* ============================
+   PRINT STYLES
+   ============================ */
+@media print {
+  @page {
+    margin: 0.5cm;
+  }
+  
+  body, html, #root, .app-layout {
+    height: auto !important;
+    overflow: visible !important;
+    background: white !important;
+  }
+  
+  nav, aside, .mobile-menu-btn, header {
+    display: none !important;
+  }
+  
+  main, .main-content {
+    overflow: visible !important;
+    height: auto !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+  
+  /* Reset chakra layout constraints for printing */
+  .chakra-ui-light, .chakra-ui-dark, [data-theme], [class*="chakra-"] {
+    overflow: visible !important;
+    height: auto !important;
+  }
+}
