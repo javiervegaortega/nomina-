@@ -616,7 +616,7 @@ export function DataProvider({ children }) {
       const month = targetDate.getMonth();
       const year = targetDate.getFullYear();
       
-      const history1ra = payrollHistory.find(h => {
+      const histories1ra = payrollHistory.filter(h => {
         if (h.periodType !== '1ra') return false;
         const hDate = new Date(h.createdAt || h.closedAt || Date.now());
         if (hDate.getMonth() !== month || hDate.getFullYear() !== year) return false;
@@ -626,22 +626,28 @@ export function DataProvider({ children }) {
         else if (typeof h.companies === 'string') {
           try { hComps = JSON.parse(h.companies); } catch(e) {}
         }
-        return selectedCompanyIds.some(id => hComps.includes(id));
+        if (selectedCompanyIds.length === 0) return true; // If we selected ALL companies, include all 1st quincenas
+        if (hComps.length === 0 || hComps.includes('ALL')) return true; // If history was for ALL companies, include it
+        return selectedCompanyIds.some(id => hComps.some(hc => String(hc) === String(id)));
       });
 
-      if (history1ra) {
-        let emps = [];
-        if (typeof history1ra.data === 'string') {
-          try { emps = JSON.parse(history1ra.data); } catch(e) {}
-        } else if (Array.isArray(history1ra.data)) {
-          emps = history1ra.data;
-        } else if (typeof history1ra.employees === 'string') {
-          try { emps = JSON.parse(history1ra.employees); } catch(e) {}
-        } else if (Array.isArray(history1ra.employees)) {
-          emps = history1ra.employees;
-        }
-        emps.forEach(emp => {
-          firstQuincenaPayouts[emp.id] = emp.netTotal || 0;
+      if (histories1ra.length > 0) {
+        histories1ra.forEach(history1ra => {
+          let emps = [];
+          if (typeof history1ra.data === 'string') {
+            try { emps = JSON.parse(history1ra.data); } catch(e) {}
+          } else if (Array.isArray(history1ra.data)) {
+            emps = history1ra.data;
+          } else if (typeof history1ra.employees === 'string') {
+            try { emps = JSON.parse(history1ra.employees); } catch(e) {}
+          } else if (Array.isArray(history1ra.employees)) {
+            emps = history1ra.employees;
+          }
+          emps.forEach(emp => {
+            if (emp.netTotal) {
+              firstQuincenaPayouts[emp.id] = emp.netTotal;
+            }
+          });
         });
       }
     }
