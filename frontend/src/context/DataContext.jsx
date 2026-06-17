@@ -163,7 +163,6 @@ export function DataProvider({ children }) {
           if (Array.isArray(apiCommissions)) setCommissions(apiCommissions);
         }
       } catch (err) {
-        console.log('⚠️ Backend no disponible o en desarrollo, usando LocalStorage/MockData');
       } finally {
         setIsLoading(false);
       }
@@ -193,8 +192,6 @@ export function DataProvider({ children }) {
         setCompanies([...companies, newC]);
       }
     } catch (err) {
-      console.error(err);
-      // Fallback
       setCompanies([...companies, { ...company, id: Date.now().toString() }]);
     }
   };
@@ -475,11 +472,9 @@ export function DataProvider({ children }) {
         const saved = await res.json();
         setEmployees([...employees, saved]);
       } else {
-        const errData = await res.json();
-        console.error('Failed to add employee:', errData);
+        await res.json();
       }
     } catch (err) {
-      console.error('Network error during add:', err);
     }
   };
 
@@ -501,11 +496,9 @@ export function DataProvider({ children }) {
       if (res.ok) {
         setEmployees(employees.map(e => e.id === id ? { ...e, ...cleanedData } : e));
       } else {
-        const errData = await res.json();
-        console.error('Update failed:', errData);
+        await res.json();
       }
     } catch (err) {
-      console.error('Network error during update:', err);
       // Fallback update on local state if offline, optionally.
       // But it's better not to falsely update if the backend failed.
       // We will revert/not update the state if it fails.
@@ -749,11 +742,9 @@ export function DataProvider({ children }) {
         setActivePayrolls([savedDraft, ...activePayrolls]);
         return savedDraft.id;
       } else {
-        const errData = await res.json().catch(() => null);
-        console.error('Failed to save active payroll draft:', res.status, errData);
+        await res.json().catch(() => null);
       }
     } catch(e) {
-      console.error('Network error saving active payroll draft:', e);
     }
     
     // Fallback if API fails
@@ -774,11 +765,9 @@ export function DataProvider({ children }) {
           body: JSON.stringify(draft)
         });
         if (!res.ok) {
-          const errData = await res.json().catch(() => null);
-          console.error('Failed to update active payroll draft:', res.status, errData);
+          await res.json().catch(() => null);
         }
       } catch(e) {
-        console.error('Network error updating active payroll draft:', e);
       }
     }
   };
@@ -796,11 +785,9 @@ export function DataProvider({ children }) {
           body: JSON.stringify(draft)
         });
         if (!res.ok) {
-          const errData = await res.json().catch(() => null);
-          console.error('Failed to update draft metadata:', res.status, errData);
+          await res.json().catch(() => null);
         }
       } catch(e) {
-        console.error('Network error updating draft metadata:', e);
       }
     }
   };
@@ -870,7 +857,6 @@ export function DataProvider({ children }) {
         deleteActivePayroll(id);
         return { success: true };
       } catch (err) {
-        console.error("No se pudo cerrar la nómina en el servidor", err);
         return { success: false, error: err.message };
       }
     }

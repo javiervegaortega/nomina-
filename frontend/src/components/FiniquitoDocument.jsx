@@ -28,8 +28,8 @@ export default function FiniquitoDocument({ emp, calculation, company }) {
   return (
     <div
       style={{
-        width: '794px',
-        minHeight: '1123px',
+        width: '816px', // Letter width at 96dpi
+        minHeight: '1056px', // Letter height at 96dpi
         backgroundColor: '#ffffff',
         color: '#1a1a1a',
         fontFamily: "'Segoe UI', Arial, sans-serif",

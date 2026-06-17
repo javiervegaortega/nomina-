@@ -68,7 +68,6 @@ export default function PayrollHistory() {
         try { emps = JSON.parse(emps); } catch(e) { emps = []; }
       }
       if (!Array.isArray(emps)) emps = [];
-
       groups[t].employeesCount += emps.length;
 
       let grossSum = 0;
@@ -505,7 +504,7 @@ function PayrollHistoryDetail({ group, onBack }) {
       if (!groups[key]) groups[key] = [];
       groups[key].push(e);
     });
-
+    
     return Object.keys(groups).sort().map(key => ({
       title: key,
       data: groups[key]
@@ -862,7 +861,6 @@ function PayrollHistoryDetail({ group, onBack }) {
       pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
       pdf.save(`Boleta_${getEmployeeFullName(selectedVoucherEmp).replace(/[^a-z0-9]/gi, '_')}.pdf`);
     } catch (err) {
-      console.error(err);
       showToast('Error al generar PDF', 'error');
     }
   };

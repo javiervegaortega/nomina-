@@ -196,7 +196,6 @@ export default function Dashboard() {
       toast.success('Reporte Excel generado');
       setShowReportModal(false);
     } catch (err) {
-      console.error(err);
       toast.error('Error al generar el Excel');
     } finally {
       setExporting(null);
@@ -210,7 +209,6 @@ export default function Dashboard() {
       toast.success('Reporte PDF generado');
       setShowReportModal(false);
     } catch (err) {
-      console.error(err);
       toast.error('Error al generar el PDF');
     } finally {
       setExporting(null);
