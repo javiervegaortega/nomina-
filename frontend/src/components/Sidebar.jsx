@@ -9,7 +9,7 @@ import {
 import { AppContext } from '../App';
 import { AuthContext } from '../context/AuthContext';
 import {
-  Box, Flex, Text, IconButton, Tooltip, Divider, VStack,
+  Box, Flex, Text, IconButton, Tooltip, Divider, VStack, Image,
   useColorModeValue, useBreakpointValue,
   Drawer, DrawerOverlay, DrawerContent, DrawerCloseButton,
 } from '@chakra-ui/react';
@@ -73,28 +73,26 @@ export default function Sidebar() {
         position="relative"
       >
         <Flex
-          w="38px"
-          h="38px"
-          minW="38px"
+          w="44px"
+          h="44px"
+          minW="44px"
           borderRadius="lg"
-          bgGradient="linear(135deg, #0ea5e9, #0284c7)"
+          bg="transparent"
           align="center"
           justify="center"
-          color="white"
-          boxShadow="0 4px 12px rgba(14,165,233,0.35)"
           cursor={!mobile && isCollapsed ? "pointer" : "default"}
           onClick={() => !mobile && isCollapsed && setIsCollapsed(false)}
         >
-          <Hexagon size={20} strokeWidth={2.5} />
+          <Image src="/favicon.png" boxSize="40px" objectFit="contain" />
         </Flex>
 
         {(mobile || !isCollapsed) && (
-          <Box flex={1} whiteSpace="nowrap" opacity={1} transition="opacity 0.2s">
+          <Box flex={1} whiteSpace="nowrap" opacity={1} transition="opacity 0.2s" ml={2}>
             <Text fontWeight={800} fontSize="md" lineHeight="1.2" letterSpacing="-0.5px" color={textPrimary}>
               Nómina
             </Text>
             <Text fontSize="0.68rem" color={brandSubtitle}>
-              Sistema de Nómina
+              Sistema de Planilla
             </Text>
           </Box>
         )}

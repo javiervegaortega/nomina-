@@ -43,22 +43,7 @@ export function AuthProvider({ children }) {
     }
   };
 
-  const register = async (name, username, email, password) => {
-    try {
-      const res = await fetch('http://localhost:3000/api/auth/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, username, email, password })
-      });
-      const data = await res.json();
-      
-      if (!res.ok) throw new Error(data.error || 'Error al registrarse');
-      
-      return { success: true };
-    } catch (err) {
-      return { success: false, error: err.message };
-    }
-  };
+
 
   const logout = () => {
     setToken(null);
@@ -68,7 +53,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, token, loading, login, register, logout }}>
+    <AuthContext.Provider value={{ user, token, loading, login, logout }}>
       {!loading && children}
     </AuthContext.Provider>
   );

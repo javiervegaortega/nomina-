@@ -23,7 +23,7 @@ import PayrollHistory from './pages/PayrollHistory';
 import Settings from './pages/Settings';
 import Commissions from './pages/Commissions';
 import Login from './pages/auth/Login';
-import Register from './pages/auth/Register';
+
 import ForgotPassword from './pages/auth/ForgotPassword';
 import './index.css';
 
@@ -99,7 +99,7 @@ function AppContent() {
               {/* Auth Routes */}
               <Route element={<AuthLayout />}>
                 <Route path="/login" element={<Login />} />
-                <Route path="/register" element={<Register />} />
+
                 <Route path="/forgot-password" element={<ForgotPassword />} />
               </Route>
 

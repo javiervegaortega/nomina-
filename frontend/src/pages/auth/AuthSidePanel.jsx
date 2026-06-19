@@ -1,6 +1,6 @@
 import React from 'react';
 import { Hexagon } from 'lucide-react';
-import { Box, Flex, Heading, Text, Center, useColorModeValue } from '@chakra-ui/react';
+import { Box, Flex, Heading, Text, Center, Image, useColorModeValue } from '@chakra-ui/react';
 
 export default function AuthSidePanel() {
   const bgGradient = useColorModeValue(
@@ -44,11 +44,9 @@ export default function AuthSidePanel() {
       />
 
       <Box position="relative" zIndex={1} maxW="md">
-        <Flex align="center" gap={3} mb={10}>
-          <Center w="48px" h="48px" bg="whiteAlpha.200" borderRadius="xl" backdropFilter="blur(10px)">
-            <Hexagon size={28} strokeWidth={2.5} color="white" />
-          </Center>
-          <Text fontSize="xl" fontWeight={800} letterSpacing="-0.03em">
+        <Flex align="center" gap={4} mb={10}>
+          <Image src="/favicon.png" boxSize="96px" objectFit="contain" borderRadius="2xl" shadow="lg" />
+          <Text fontSize="3xl" fontWeight={800} letterSpacing="-0.03em" color="white">
             Nómina
           </Text>
         </Flex>

@@ -846,6 +846,220 @@ function PayrollHistoryDetail({ group, onBack }) {
     XLSX.writeFile(wb, `Recibo_IGSS_${group.title.replace(/[^a-z0-9]/gi, '_')}.xlsx`);
   };
 
+  const exportExcelLibroSalarios = () => {
+    showToast('Generando Libro de Salarios...', 'success');
+    
+    // Agrupar por empresa para hojas separadas (opcional, o todo junto)
+    const comps = {};
+    data.forEach(e => {
+      const compName = companies?.find(c => c.id == e.empresa_principal)?.nombre_comercial || e.company || 'Sin Empresa';
+      if (!comps[compName]) comps[compName] = [];
+      comps[compName].push(e);
+    });
+
+    const wb = XLSX.utils.book_new();
+
+    Object.keys(comps).forEach(compName => {
+      let counter = 1;
+      const rows = comps[compName].map(e => {
+        const net = e.calculated?.net || 0;
+        const base = e.salario_base || 0;
+        const devengado = e.calculated?.proportionalSalary || 0;
+        const isr = e.calculated?.isr || 0;
+        const igss = e.calculated?.igss || 0;
+        const bono = e.calculated?.bono || e.bono_incentivo || 0;
+        const anticipo = e.calculated?.deduction_anticipo || 0;
+        const otherDed = e.calculated?.deduction_other || 0;
+        const totalDed = e.calculated?.totalDeductions || 0;
+        const totalDev = e.calculated?.gross || 0;
+        const horasExtra = e.calculated?.extraHoursAmt || 0;
+        const days = e.calculated?.workedDays || 15;
+
+        return {
+          'No.': counter++,
+          'Nombre Completo': getEmployeeFullName(e),
+          'Puesto / Ocupación': e.puesto || '',
+          'Sueldo Ordinario Base': base,
+          'Días Trabajados': days,
+          'Sueldo Devengado': devengado,
+          'Horas Extras': horasExtra,
+          'Bonificación Incentivo': bono,
+          'Total Devengado': totalDev,
+          'Descuento IGSS': igss,
+          'Descuento ISR': isr,
+          'Otros Descuentos': anticipo + otherDed,
+          'Total Descuentos': totalDed,
+          'Sueldo Líquido a Recibir': net,
+          'Firma del Empleado': '_______________________'
+        };
+      });
+
+      const ws = XLSX.utils.json_to_sheet(rows);
+
+      // Widths
+      ws['!cols'] = [
+        { wch: 5 },  // No.
+        { wch: 35 }, // Nombre
+        { wch: 20 }, // Puesto
+        { wch: 15 }, // Base
+        { wch: 12 }, // Dias
+        { wch: 15 }, // Sueldo dev.
+        { wch: 15 }, // Horas
+        { wch: 15 }, // Bono
+        { wch: 15 }, // Total dev
+        { wch: 15 }, // IGSS
+        { wch: 15 }, // ISR
+        { wch: 15 }, // Otros Desc
+        { wch: 15 }, // Total Desc
+        { wch: 18 }, // Liquido
+        { wch: 30 }, // Firma
+      ];
+
+      let sheetName = compName.substring(0, 31).replace(/[\\/*?:[\]]/g, '');
+      if (!sheetName) sheetName = "Empresa";
+      XLSX.utils.book_append_sheet(wb, ws, sheetName);
+    });
+
+    XLSX.writeFile(wb, `Libro_Salarios_${group.title.replace(/[^a-z0-9]/gi, '_')}.xlsx`);
+  };
+
+  const cleanName = (name) => name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/,/g, "").toUpperCase();
+  const getConcept = () => `pago salario de ${group.periodType === '2da' ? '2DA' : '1RA'} quincena ${group.title.replace(/[^a-zA-Z0-9 ]/g, '')}`;
+
+  const exportPlantillaPromerica = () => {
+    showToast('Generando Plantilla Promerica...', 'success');
+    const comps = {};
+    data.forEach(e => {
+      const compName = companies?.find(c => c.id == e.empresa_principal)?.nombre_comercial || e.company || 'Sin Empresa';
+      if (!comps[compName]) comps[compName] = [];
+      comps[compName].push(e);
+    });
+
+    const wb = XLSX.utils.book_new();
+
+    Object.keys(comps).forEach(compName => {
+      const aoa = [];
+      const concepto = getConcept();
+      let totalPlantilla = 0;
+      let totalCheques = 0;
+      
+      const transfers = comps[compName].filter(e => String(e.tipo_de_pago).toLowerCase() !== 'cheque');
+      const cheques = comps[compName].filter(e => String(e.tipo_de_pago).toLowerCase() === 'cheque');
+
+      transfers.forEach(e => {
+        const net = e.calculated?.net || 0;
+        totalPlantilla += net;
+        aoa.push([
+          e.numero_cuenta || '',
+          cleanName(getEmployeeFullName(e)),
+          net.toFixed(2),
+          concepto
+        ]);
+      });
+
+      aoa.push(['', '', '']); // empty row
+      aoa.push(['', 'Total Plantilla de ' + compName.toUpperCase(), totalPlantilla.toFixed(2), '']);
+      aoa.push(['', '', '']); // empty row
+
+      if (cheques.length > 0) {
+        cheques.forEach(e => {
+          const net = e.calculated?.net || 0;
+          totalCheques += net;
+          aoa.push([
+            'CHEQUE',
+            cleanName(getEmployeeFullName(e)),
+            net.toFixed(2),
+            concepto
+          ]);
+        });
+        aoa.push(['', '', '']);
+        aoa.push(['', 'Total Cheques', totalCheques.toFixed(2), '']);
+      }
+      
+      aoa.push(['', '', '']);
+      aoa.push(['', 'Total Nómina', (totalPlantilla + totalCheques).toFixed(2), '']);
+
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      ws['!cols'] = [{ wch: 20 }, { wch: 40 }, { wch: 15 }, { wch: 50 }];
+      
+      let sheetName = compName.substring(0, 31).replace(/[\\/*?:[\]]/g, '');
+      if (!sheetName) sheetName = "Empresa";
+      XLSX.utils.book_append_sheet(wb, ws, sheetName);
+    });
+
+    XLSX.writeFile(wb, `Plantilla_Promerica_${group.title.replace(/[^a-z0-9]/gi, '_')}.xlsx`);
+  };
+
+  const exportPlantillaIndustrial = () => {
+    showToast('Generando Plantilla Industrial...', 'success');
+    const comps = {};
+    data.forEach(e => {
+      const compName = companies?.find(c => c.id == e.empresa_principal)?.nombre_comercial || e.company || 'Sin Empresa';
+      if (!comps[compName]) comps[compName] = [];
+      comps[compName].push(e);
+    });
+
+    const wb = XLSX.utils.book_new();
+
+    Object.keys(comps).forEach(compName => {
+      const aoa = [];
+      const concepto = getConcept();
+      let totalPlantilla = 0;
+      let totalCheques = 0;
+      let correlativo = 1;
+      
+      const transfers = comps[compName].filter(e => String(e.tipo_de_pago).toLowerCase() !== 'cheque');
+      const cheques = comps[compName].filter(e => String(e.tipo_de_pago).toLowerCase() === 'cheque');
+
+      transfers.forEach(e => {
+        const net = e.calculated?.net || 0;
+        totalPlantilla += net;
+        const ind = e.tipo_cuenta?.toLowerCase() === 'ahorro' ? 2 : 1;
+        aoa.push([
+          ind,
+          e.numero_cuenta || '',
+          correlativo++,
+          cleanName(getEmployeeFullName(e)),
+          net.toFixed(2),
+          concepto
+        ]);
+      });
+
+      aoa.push(['', '', '', '', '']); // empty row
+      aoa.push(['', '', 'TOTAL PLANTILLA', totalPlantilla.toFixed(2), '']);
+      aoa.push(['', '', '', '', '']); // empty row
+
+      if (cheques.length > 0) {
+        cheques.forEach(e => {
+          const net = e.calculated?.net || 0;
+          totalCheques += net;
+          aoa.push([
+            1, // Assuming 1 for checks
+            'CHEQUE',
+            correlativo++,
+            cleanName(getEmployeeFullName(e)),
+            net.toFixed(2),
+            concepto
+          ]);
+        });
+        aoa.push(['', '', '', '', '']);
+        aoa.push(['', '', 'TOTAL CHEQUES', totalCheques.toFixed(2), '']);
+      }
+      
+      aoa.push(['', '', '', '', '']);
+      aoa.push(['', '', 'Total Nómina', (totalPlantilla + totalCheques).toFixed(2), '']);
+
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      ws['!cols'] = [{ wch: 5 }, { wch: 20 }, { wch: 10 }, { wch: 40 }, { wch: 15 }, { wch: 50 }];
+      
+      let sheetName = compName.substring(0, 31).replace(/[\\/*?:[\]]/g, '');
+      if (!sheetName) sheetName = "Empresa";
+      XLSX.utils.book_append_sheet(wb, ws, sheetName);
+    });
+
+    XLSX.writeFile(wb, `Plantilla_Industrial_${group.title.replace(/[^a-z0-9]/gi, '_')}.xlsx`);
+  };
+
   const exportPDF = async () => {
     showToast('Generando PDF...', 'success');
     const element = document.getElementById('voucher-content');
@@ -904,6 +1118,10 @@ function PayrollHistoryDetail({ group, onBack }) {
               <MenuItem onClick={exportExcelCheques}>Sol. Cheques</MenuItem>
               <MenuItem onClick={exportExcelVerificador}>Verificador de Pagos</MenuItem>
               <MenuItem onClick={exportExcelIgss}>Recibo e IGSS</MenuItem>
+              <MenuItem onClick={exportExcelLibroSalarios} fontWeight="bold" color="purple.500">Libro de Salarios</MenuItem>
+              <Divider my={1} />
+              <MenuItem onClick={exportPlantillaPromerica} color="green.600" fontWeight="bold">Plantilla Banco Promerica</MenuItem>
+              <MenuItem onClick={exportPlantillaIndustrial} color="blue.600" fontWeight="bold">Plantilla Banco Industrial</MenuItem>
             </MenuList>
           </Menu>
           <Button colorScheme="blue" leftIcon={<FileText size={16} />} onClick={() => window.print()} size={{ base: 'sm', md: 'md' }}>

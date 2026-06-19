@@ -130,14 +130,6 @@ export default function Login() {
               </VStack>
             </form>
 
-            <Box textAlign="center" mt={6}>
-              <Text fontSize="sm" color={mutedColor}>
-                ¿No tienes cuenta?{' '}
-                <ChakraLink as={Link} to="/register" color="brand.500" fontWeight={600}>
-                  Crea una cuenta
-                </ChakraLink>
-              </Text>
-            </Box>
           </VStack>
         </Box>
       </Flex>

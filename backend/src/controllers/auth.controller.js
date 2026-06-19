@@ -4,38 +4,6 @@ const { User } = require('../models');
 const { Op } = require('sequelize');
 require('dotenv').config();
 
-const register = async (req, res) => {
-  try {
-    const { name, username, email, password } = req.body;
-    
-    const existingUser = await User.findOne({ 
-      where: { 
-        [Op.or]: [
-          { email },
-          { username: username || '' }
-        ]
-      } 
-    });
-    if (existingUser) {
-      return res.status(400).json({ error: 'El correo o nombre de usuario ya está registrado.' });
-    }
-
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password, salt);
-
-    const newUser = await User.create({
-      name,
-      username,
-      email,
-      password: hashedPassword
-    });
-
-    res.status(201).json({ message: 'Usuario creado exitosamente.' });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-};
-
 const login = async (req, res) => {
   try {
     const identifier = req.body.email; 
@@ -76,6 +44,5 @@ const login = async (req, res) => {
 };
 
 module.exports = {
-  register,
   login
 };

@@ -7,6 +7,7 @@ import {
 import { AppContext } from '../App';
 import { DataContext } from '../context/DataContext';
 import { CUOTA_PATRONAL_RATE, CUOTA_LABORAL_RATE, formatQ } from '../data/mockData';
+import EmployeeIncidences from '../components/EmployeeIncidences';
 import {
   Box, Flex, Text, Heading, Button, SimpleGrid, Avatar, IconButton,
   Modal, ModalOverlay, ModalContent, ModalHeader, ModalBody, ModalFooter, ModalCloseButton,
@@ -411,6 +412,54 @@ function PayrollEditor({ draftId, onBack }) {
     updateActivePayroll(draftId, newData);
   };
 
+  const handleSaveIncidence = (empId, newIncidence, dQ) => {
+    const newData = data.map(emp => {
+      if (emp.id === empId) {
+        const currentDays = emp.days || 30;
+        const updated = {
+          ...emp,
+          days: Math.max(0, currentDays - dQ),
+          incidences: [...(emp.incidences || []), newIncidence]
+        };
+        // Recalculate igss based on new days
+        const baseFactor = updated.days / 30;
+        const sueldoOrd = Number(emp.sueldo_ordinario) || 0;
+        const baseSalary = sueldoOrd * baseFactor;
+        updated.deductions = { ...updated.deductions, igss: Number((baseSalary * 0.0483).toFixed(2)) || 0 };
+        
+        if (selectedEmp && selectedEmp.id === empId) setSelectedEmp(updated);
+        return updated;
+      }
+      return emp;
+    });
+    updateActivePayroll(draftId, newData);
+    showToast('Incidencia guardada', 'success');
+  };
+
+  const handleDeleteIncidence = (empId, incId, daysToRestore) => {
+    const newData = data.map(emp => {
+      if (emp.id === empId) {
+        const filtered = (emp.incidences || []).filter(i => i.id !== incId);
+        const updated = {
+          ...emp,
+          days: (emp.days || 30) + daysToRestore,
+          incidences: filtered
+        };
+        // Recalculate igss based on new days
+        const baseFactor = updated.days / 30;
+        const sueldoOrd = Number(emp.sueldo_ordinario) || 0;
+        const baseSalary = sueldoOrd * baseFactor;
+        updated.deductions = { ...updated.deductions, igss: Number((baseSalary * 0.0483).toFixed(2)) || 0 };
+
+        if (selectedEmp && selectedEmp.id === empId) setSelectedEmp(updated);
+        return updated;
+      }
+      return emp;
+    });
+    updateActivePayroll(draftId, newData);
+    showToast('Incidencia eliminada', 'info');
+  };
+
   const confirmClose = async () => {
     const result = await closePayroll(draftId);
     if (result.success) {
@@ -494,6 +543,7 @@ function PayrollEditor({ draftId, onBack }) {
           </Box>
         </Flex>
         <Flex gap={2}>
+
           <Button 
             bg="red.500"
             color="white"
@@ -570,6 +620,8 @@ function PayrollEditor({ draftId, onBack }) {
             searchQuery={searchQuery}
             setSearchQuery={setSearchQuery}
             handleClose={confirmClose}
+            handleSaveIncidence={handleSaveIncidence}
+            handleDeleteIncidence={handleDeleteIncidence}
           />
         )}
         {tab === 'distribution' && <DistributionTab data={data} />}
@@ -602,6 +654,8 @@ function PayrollEditor({ draftId, onBack }) {
           </AlertDialogContent>
         </AlertDialogOverlay>
       </AlertDialog>
+
+
     </Box>
   );
 }
@@ -703,7 +757,7 @@ function ListadoPagosTab({
   filterSubdiv, setFilterSubdiv,
   filterStatus, setFilterStatus,
   searchQuery, setSearchQuery,
-  handleClose 
+  handleClose, handleSaveIncidence, handleDeleteIncidence
 }) {
   const { companies } = useContext(DataContext);
   const [viewMode, setViewMode] = useState('summary');
@@ -1229,44 +1283,7 @@ function ListadoPagosTab({
       })}
 
       {/* Action buttons and indicators in footer */}
-      <Flex justify="space-between" align="center" mt={6} wrap="wrap" gap={4}>
-        <Flex gap={3} wrap="wrap">
-          <Button 
-            variant="outline" 
-            colorScheme="brand" 
-            size="sm" 
-            isDisabled 
-            onClick={() => showToast('Configuración de Plantilla Proquima pendiente.', 'info')}
-          >
-            Plantilla Proquima (Pendiente)
-          </Button>
-          <Button 
-            variant="outline" 
-            colorScheme="brand" 
-            size="sm" 
-            isDisabled 
-            onClick={() => showToast('Configuración de Plantilla Unhesa pendiente.', 'info')}
-          >
-            Plantilla Unhesa (Pendiente)
-          </Button>
-          <Button 
-            variant="outline" 
-            size="sm" 
-            isDisabled 
-            onClick={() => showToast('Reporte de Cheques pendiente de configuración.', 'info')}
-          >
-            Reporte Cheques (Pendiente)
-          </Button>
-          <Button 
-            variant="outline" 
-            size="sm" 
-            isDisabled 
-            onClick={() => showToast('Verificador de Pago pendiente de configuración.', 'info')}
-          >
-            Verificador De Pago (Pendiente)
-          </Button>
-        </Flex>
-      </Flex>
+
 
       {/* Employee Drawer */}
       <Drawer isOpen={isDrawerOpen} placement="right" onClose={onDrawerClose} size={{ base: 'full', md: 'md' }}>
@@ -1289,6 +1306,7 @@ function ListadoPagosTab({
                 <TabList bg={theadBg} position="sticky" top={0} zIndex={5}>
                   <Tab fontWeight="semibold">Ingresos Extras</Tab>
                   <Tab fontWeight="semibold">Deducciones</Tab>
+                  <Tab fontWeight="semibold">Incidencias</Tab>
                 </TabList>
 
                 <TabPanels>
@@ -1403,6 +1421,15 @@ function ListadoPagosTab({
                         </FormControl>
                       ))}
                     </SimpleGrid>
+                  </TabPanel>
+
+                  {/* Tab 3: Incidences */}
+                  <TabPanel p={4}>
+                    <EmployeeIncidences 
+                      employee={selectedEmp} 
+                      onSave={handleSaveIncidence} 
+                      onDelete={handleDeleteIncidence} 
+                    />
                   </TabPanel>
                 </TabPanels>
               </Tabs>

@@ -3,8 +3,8 @@ import {
   Modal, ModalOverlay, ModalContent, ModalHeader, ModalFooter, ModalBody, ModalCloseButton,
   Button, Select, Flex, Box, Text, Table, Thead, Tbody, Tr, Th, Td, Badge, Icon, HStack, VStack, Avatar, useColorModeValue
 } from '@chakra-ui/react';
-import { Printer, Cake, CalendarDays, Gift } from 'lucide-react';
-import { jsPDF } from 'jspdf';
+import { Download, Cake, CalendarDays, Gift, Image as ImageIcon } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import html2canvas from 'html2canvas';
 
 const MESES = [
@@ -71,33 +71,53 @@ const CumpleanerosModal = ({ isOpen, onClose, employees = [], areas = [] }) => {
       .sort((a, b) => a.bDay - b.bDay);
   }, [employees, selectedMonth, selectedYear, areas]);
 
-  const handleExportPDF = async () => {
-    if (!printRef.current) return;
+  const handleExportExcel = () => {
+    if (birthdays.length === 0) return;
     setIsExporting(true);
     try {
-      // Configuramos el color de fondo en la captura para que el PDF siempre salga en blanco independientemente del modo oscuro
-      const canvas = await html2canvas(printRef.current, { scale: 2, backgroundColor: '#ffffff' });
-      const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF('p', 'mm', 'letter');
-      const pdfW = pdf.internal.pageSize.getWidth();
-      const pdfH = pdf.internal.pageSize.getHeight();
-      const imgH = (canvas.height * pdfW) / canvas.width;
+      const exportData = birthdays.map(b => ({
+        'Nombre': b.nombreCompleto,
+        'Area': b.area,
+        'Día de cumpleaños': b.bDay,
+        'Día de Descanso': b.restDay,
+        'Notas': (b.dayOfWeek === 0 || b.dayOfWeek === 6) ? `(Movido a ${b.dayOfWeek === 6 ? 'Viernes' : 'Lunes'})` : ''
+      }));
 
-      if (imgH <= pdfH) {
-        pdf.addImage(imgData, 'PNG', 0, 0, pdfW, imgH);
-      } else {
-        let position = 0;
-        let leftHeight = imgH;
-        while (leftHeight > 0) {
-          pdf.addImage(imgData, 'PNG', 0, position, pdfW, imgH);
-          leftHeight -= pdfH;
-          position -= pdfH;
-          if (leftHeight > 0) pdf.addPage();
-        }
-      }
+      const ws = XLSX.utils.json_to_sheet(exportData);
+      ws['!cols'] = [
+        { wch: 40 }, // Nombre
+        { wch: 30 }, // Area
+        { wch: 20 }, // Día cumple
+        { wch: 20 }, // Día descanso
+        { wch: 20 }, // Notas
+      ];
+
+      const wb = XLSX.utils.book_new();
       const monthName = MESES.find(m => m.val === selectedMonth)?.label;
-      pdf.save(`Cumpleaneros_${monthName}_${selectedYear}.pdf`);
+      XLSX.utils.book_append_sheet(wb, ws, 'Cumpleañeros');
+      XLSX.writeFile(wb, `Cumpleaneros_${monthName}_${selectedYear}.xlsx`);
     } catch (error) {
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleExportImage = async () => {
+    if (!printRef.current || birthdays.length === 0) return;
+    setIsExporting(true);
+    try {
+      const canvas = await html2canvas(printRef.current, { 
+        scale: 2, 
+        useCORS: true, 
+        backgroundColor: null 
+      });
+      const imgData = canvas.toDataURL('image/png');
+      const link = document.createElement('a');
+      link.download = `Cumpleaneros_${monthLabel}_${selectedYear}.png`;
+      link.href = imgData;
+      link.click();
+    } catch (error) {
+      console.error("Error generating image:", error);
     } finally {
       setIsExporting(false);
     }
@@ -144,7 +164,7 @@ const CumpleanerosModal = ({ isOpen, onClose, employees = [], areas = [] }) => {
               <Flex justify="space-between" align="center" mb={8} borderBottom="2px solid" borderColor="purple.500" pb={4}>
                 <HStack>
                   <Icon as={Gift} color="purple.500" boxSize={8} />
-                  <Text fontSize="2xl" fontWeight="black" color={textTitle} fontFamily="serif">
+                  <Text fontSize="2xl" fontWeight="black" color={textTitle}>
                     Cumpleañeros del mes de {monthLabel} de {selectedYear}
                   </Text>
                 </HStack>
@@ -210,16 +230,70 @@ const CumpleanerosModal = ({ isOpen, onClose, employees = [], areas = [] }) => {
         <ModalFooter bg={bgBody} borderTopWidth="1px" borderColor={borderColor} borderBottomRadius="md">
           <Button variant="ghost" mr={3} onClick={onClose} color={textPrimary}>Cerrar</Button>
           <Button 
-            leftIcon={<Printer size={18} />} 
+            leftIcon={<ImageIcon size={18} />} 
+            colorScheme="pink" 
+            onClick={handleExportImage} 
+            isLoading={isExporting}
+            loadingText="Generando..."
+            mr={3}
+          >
+            Exportar a Imagen
+          </Button>
+          <Button 
+            leftIcon={<Download size={18} />} 
             colorScheme="purple" 
-            onClick={handleExportPDF} 
+            onClick={handleExportExcel} 
             isLoading={isExporting}
             loadingText="Generando..."
           >
-            Exportar a PDF
+            Exportar a Excel
           </Button>
         </ModalFooter>
       </ModalContent>
+      
+      {/* Hidden template for image export */}
+      <Box
+        position="absolute"
+        left="-9999px"
+        top="-9999px"
+        width="1024px"
+        minHeight="768px"
+        ref={printRef}
+        bgImage="url('/birthday_bg.png')"
+        bgSize="100% 100%"
+        bgPosition="center"
+        bgRepeat="no-repeat"
+        p={10}
+        fontFamily="sans-serif"
+      >
+        <Box mt="180px" px={12}>
+          <Text fontSize="3xl" fontWeight="black" color="blue.800" textAlign="center" mb={6} textTransform="uppercase">
+            Cumpleañeros del mes de {monthLabel}
+          </Text>
+          <Box bg="whiteAlpha.900" borderRadius="md" p={4} shadow="xl">
+            <Table variant="simple" size="md">
+              <Thead bg="blue.100">
+                <Tr>
+                  <Th color="blue.900" border="1px solid" borderColor="blue.300">Nombre</Th>
+                  <Th color="blue.900" border="1px solid" borderColor="blue.300">Área</Th>
+                  <Th color="blue.900" border="1px solid" borderColor="blue.300" textAlign="center">Día de cumpleaños</Th>
+                  <Th color="blue.900" border="1px solid" borderColor="blue.300" textAlign="center">Día de Descanso</Th>
+                </Tr>
+              </Thead>
+              <Tbody>
+                {birthdays.map((b, i) => (
+                  <Tr key={i} bg={i % 2 === 0 ? "white" : "gray.50"}>
+                    <Td border="1px solid" borderColor="blue.200" fontWeight="500" color="gray.800">{b.nombreCompleto}</Td>
+                    <Td border="1px solid" borderColor="blue.200" color="gray.700">{b.area}</Td>
+                    <Td border="1px solid" borderColor="blue.200" textAlign="center" fontWeight="bold" color="purple.600">{b.bDay}</Td>
+                    <Td border="1px solid" borderColor="blue.200" textAlign="center" fontWeight="bold" color="green.600">{b.restDay}</Td>
+                  </Tr>
+                ))}
+              </Tbody>
+            </Table>
+          </Box>
+        </Box>
+      </Box>
     </Modal>
   );
 };

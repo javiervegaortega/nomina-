@@ -870,16 +870,7 @@ export default function Employees() {
               <MenuItem onClick={() => handleOpenReport('completo')}>Reporte Completo</MenuItem>
             </MenuList>
           </Menu>
-          <Button
-            variant="outline"
-            leftIcon={<Download size={16} style={{ transform: 'rotate(180deg)' }} />}
-            onClick={() => setShowImport(true)}
-            borderRadius="lg"
-            transition="all 0.3s"
-            _hover={{ shadow: 'md' }}
-          >
-            Importar CSV
-          </Button>
+
           <Button
             variant="outline"
             colorScheme="purple"
