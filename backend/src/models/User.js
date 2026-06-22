@@ -28,6 +28,10 @@ module.exports = (sequelize) => {
     role: {
       type: DataTypes.STRING,
       defaultValue: 'admin'
+    },
+    idDepartamento: {
+      type: DataTypes.STRING,
+      allowNull: true
     }
   });
 

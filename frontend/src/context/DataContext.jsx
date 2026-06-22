@@ -42,6 +42,7 @@ export function DataProvider({ children }) {
     return saved ? JSON.parse(saved) : [];
   });
 
+  const [operationLogs, setOperationLogs] = useState([]);
   const [activePayrolls, setActivePayrolls] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -455,6 +456,49 @@ export function DataProvider({ children }) {
     }
   };
 
+  
+  // Operation Logs
+  const addOperationLog = async (data) => {
+    try {
+      const res = await fetch('http://localhost:3000/api/operation-logs', {
+        method: 'POST',
+        headers: getAuthHeader(),
+        body: JSON.stringify(data)
+      });
+      if (res.ok) {
+        const newLog = await res.json();
+        const emp = employees.find(e => e.id === newLog.employeeId);
+        if (emp) newLog.Employee = { id: emp.id, primer_nombre: emp.primer_nombre, primer_apellido: emp.primer_apellido, empresa_principal: emp.empresa_principal };
+        setOperationLogs(prev => [...prev, newLog]);
+      }
+    } catch (e) {}
+  };
+
+  const updateOperationLogStatus = async (id, status, periodAssigned = null) => {
+    try {
+      const res = await fetch(`http://localhost:3000/api/operation-logs/${id}/status`, {
+        method: 'PUT',
+        headers: getAuthHeader(),
+        body: JSON.stringify({ status, periodAssigned })
+      });
+      if (res.ok) {
+        setOperationLogs(prev => prev.map(l => l.id === id ? { ...l, status, periodAssigned } : l));
+      }
+    } catch (e) {}
+  };
+
+  const deleteOperationLog = async (id) => {
+    try {
+      const res = await fetch(`http://localhost:3000/api/operation-logs/${id}`, {
+        method: 'DELETE',
+        headers: getAuthHeader()
+      });
+      if (res.ok) {
+        setOperationLogs(prev => prev.filter(l => l.id !== id));
+      }
+    } catch (e) {}
+  };
+
   // Employees
   const addEmployee = async (data) => {
     try {
@@ -675,6 +719,17 @@ export function DataProvider({ children }) {
           totalBonos += (Number(c.monto_bono) || 0);
         });
 
+        // Calculate operation logs (APPROVED_MANAGER)
+        const empOpLogs = operationLogs.filter(l => l.employeeId === e.id && l.status === 'APPROVED_MANAGER');
+        empOpLogs.forEach(l => {
+          if (l.type === 'HORA_EXTRA') {
+            if (l.hourType === 'SIMPLE') qtySimples += Number(l.hoursQty) || 0;
+            else if (l.hourType === 'DOBLE' || l.hourType === 'NOCTURNA') qtyDobles += Number(l.hoursQty) || 0;
+          } else if (l.type === 'BONO') {
+            totalBonos += Number(l.bonusAmount) || 0;
+          }
+        });
+
         // 1 normal hour = BaseSalary / 30 / 8
         const hourlyRate = baseSalary / 30 / 8;
         const valSimples = qtySimples * hourlyRate * 1.5;
@@ -711,6 +766,7 @@ export function DataProvider({ children }) {
             comisiones: 0,
             otrosIngresos: Number(e.otro_ingresos) || 0,
           },
+          operationLogs: empOpLogs,
           appliedBonuses: bonuses.reduce((acc, b) => {
             acc[b.id] = b.assignments?.[e.id] || 0;
             return acc;
@@ -894,6 +950,7 @@ export function DataProvider({ children }) {
       addEmployeeRecord, updateEmployeeRecord, deleteEmployeeRecord,
       addBonus, updateBonus, deleteBonus,
       addCommission, updateCommission, deleteCommission,
+      operationLogs, addOperationLog, updateOperationLogStatus, deleteOperationLog,
       activePayrolls, createActivePayroll, updateActivePayroll, updateDraftMetadata, deleteActivePayroll, closePayroll,
       savePayroll, deletePayroll
     }}>

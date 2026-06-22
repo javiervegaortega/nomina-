@@ -10,14 +10,11 @@ const INCIDENCE_TYPES = [
   'Suspensión laboral',
   'Suspensión IGSS',
   'Baja',
-  'Permiso sin goce de sueldo',
-  'Vacaciones',
-  'Enfermedad común',
-  'Otro'
+  'Alta'
 ];
 
 const getFormLayout = (type) => {
-  if (type === 'Falta justificada' || type === 'Baja') return 'SINGLE_DATE';
+  if (type === 'Falta justificada' || type === 'Baja' || type === 'Alta') return 'SINGLE_DATE';
   if (type === 'Falta injustificada') return 'SINGLE_DATE_WITH_7TH';
   return 'RANGE_QUINCENA';
 };
@@ -120,7 +117,9 @@ export default function EmployeeIncidences({ employee, onSave, onDelete }) {
         {type && (layout === 'SINGLE_DATE' || layout === 'SINGLE_DATE_WITH_7TH') && (
           <HStack spacing={3}>
             <FormControl flex={1}>
-              <FormLabel fontSize="xs" mb={1} color="gray.500">{type === 'Baja' ? 'Fecha Baja' : 'Fecha Descuento'}</FormLabel>
+              <FormLabel fontSize="xs" mb={1} color="gray.500">
+                {type === 'Baja' ? 'Fecha Baja' : type === 'Alta' ? 'Fecha Alta' : 'Fecha Descuento'}
+              </FormLabel>
               <Input size="sm" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} borderRadius="md" />
             </FormControl>
             {layout === 'SINGLE_DATE_WITH_7TH' ? (

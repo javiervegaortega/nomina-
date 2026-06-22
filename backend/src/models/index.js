@@ -14,6 +14,8 @@ const EmployeeRecord = require('./EmployeeRecord')(sequelize);
 const PayrollDraft = require('./PayrollDraft')(sequelize);
 const PayrollDraftEmployee = require('./PayrollDraftEmployee')(sequelize);
 const Commission = require('./Commission')(sequelize);
+const EmployeeIncidence = require('./EmployeeIncidence')(sequelize);
+const OperationLog = require('./OperationLog')(sequelize);
 
 // Definir asociaciones
 Company.hasMany(Employee, { foreignKey: 'companyId' });
@@ -27,6 +29,12 @@ Area.belongsTo(Division, { foreignKey: 'divisionId', as: 'divisionData' });
 
 Employee.hasMany(EmployeeRecord, { foreignKey: 'employeeId', as: 'records' });
 EmployeeRecord.belongsTo(Employee, { foreignKey: 'employeeId' });
+
+Employee.hasMany(EmployeeIncidence, { foreignKey: 'employeeId', as: 'incidences' });
+EmployeeIncidence.belongsTo(Employee, { foreignKey: 'employeeId' });
+
+Employee.hasMany(OperationLog, { foreignKey: 'employeeId', as: 'operationLogs' });
+OperationLog.belongsTo(Employee, { foreignKey: 'employeeId' });
 
 PayrollDraft.hasMany(PayrollDraftEmployee, { foreignKey: 'draftId', as: 'draftEmployees', onDelete: 'CASCADE' });
 PayrollDraftEmployee.belongsTo(PayrollDraft, { foreignKey: 'draftId' });
@@ -46,5 +54,7 @@ module.exports = {
   EmployeeRecord,
   PayrollDraft,
   PayrollDraftEmployee,
-  Commission
+  Commission,
+  EmployeeIncidence,
+  OperationLog
 };

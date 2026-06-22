@@ -22,6 +22,7 @@ import Bonuses from './pages/Bonuses';
 import PayrollHistory from './pages/PayrollHistory';
 import Settings from './pages/Settings';
 import Commissions from './pages/Commissions';
+import OperationLogs from './pages/OperationLogs';
 import Login from './pages/auth/Login';
 
 import ForgotPassword from './pages/auth/ForgotPassword';
@@ -118,6 +119,7 @@ function AppContent() {
                   <Route path="/companies" element={<Companies />} />
                   <Route path="/bonuses" element={<Bonuses />} />
                   <Route path="/commissions" element={<Commissions />} />
+                  <Route path="/operations" element={<OperationLogs />} />
                   <Route path="/settings" element={<Settings />} />
                 </Route>
               </Route>

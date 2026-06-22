@@ -55,8 +55,9 @@ export default function Sidebar() {
     { to: '/divisions', label: 'Divisiones', icon: Briefcase },
     { to: '/subdivisions', label: 'Subdivisiones', icon: Split },
     { to: '/companies', label: 'Empresas', icon: Building2 },
-    { to: '/bonuses', label: 'Bonos', icon: Gift },
+    { to: '/bonuses', label: 'Tipos Bonos', icon: Gift },
     { to: '/commissions', label: 'Comisiones', icon: Clock },
+    { to: '/operations', label: 'Reporte Operativo', icon: Gift },
   ];
 
   // Shared nav content renderer (used by both mobile drawer and desktop sidebar)

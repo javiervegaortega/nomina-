@@ -344,7 +344,9 @@ function PayrollEditor({ draftId, onBack }) {
     areas,
     departments,
     divisions,
-    subdivisions
+    subdivisions,
+    addIncidence,
+    deleteIncidence
   } = useContext(DataContext);
   
   const { confirmAction, showToast } = useContext(AppContext);
@@ -412,14 +414,22 @@ function PayrollEditor({ draftId, onBack }) {
     updateActivePayroll(draftId, newData);
   };
 
-  const handleSaveIncidence = (empId, newIncidence, dQ) => {
+  const handleSaveIncidence = async (empId, newIncidence, dQ) => {
+    // 1. Call API to save incidence globally
+    const { success, incidence: dbIncidence } = await addIncidence(empId, newIncidence);
+    if (!success) {
+      showToast('Error al guardar incidencia', 'error');
+      return;
+    }
+
+    // 2. Update local payroll draft data
     const newData = data.map(emp => {
       if (emp.id === empId) {
         const currentDays = emp.days || 30;
         const updated = {
           ...emp,
           days: Math.max(0, currentDays - dQ),
-          incidences: [...(emp.incidences || []), newIncidence]
+          incidences: [...(emp.incidences || []), dbIncidence]
         };
         // Recalculate igss based on new days
         const baseFactor = updated.days / 30;
@@ -436,7 +446,15 @@ function PayrollEditor({ draftId, onBack }) {
     showToast('Incidencia guardada', 'success');
   };
 
-  const handleDeleteIncidence = (empId, incId, daysToRestore) => {
+  const handleDeleteIncidence = async (empId, incId, daysToRestore) => {
+    // 1. Call API to delete incidence globally
+    const { success } = await deleteIncidence(empId, incId);
+    if (!success) {
+      showToast('Error al eliminar incidencia', 'error');
+      return;
+    }
+
+    // 2. Update local payroll draft data
     const newData = data.map(emp => {
       if (emp.id === empId) {
         const filtered = (emp.incidences || []).filter(i => i.id !== incId);
@@ -1307,6 +1325,7 @@ function ListadoPagosTab({
                   <Tab fontWeight="semibold">Ingresos Extras</Tab>
                   <Tab fontWeight="semibold">Deducciones</Tab>
                   <Tab fontWeight="semibold">Incidencias</Tab>
+                  <Tab fontWeight="semibold" color="brand.500">Detalle Operativo</Tab>
                 </TabList>
 
                 <TabPanels>
@@ -1430,6 +1449,30 @@ function ListadoPagosTab({
                       onSave={handleSaveIncidence} 
                       onDelete={handleDeleteIncidence} 
                     />
+                  </TabPanel>
+
+                  {/* Tab 4: Operativo */}
+                  <TabPanel p={4}>
+                    <VStack align="stretch" spacing={3}>
+                      {selectedEmp.operationLogs && selectedEmp.operationLogs.length > 0 ? (
+                        selectedEmp.operationLogs.map(log => (
+                          <Box key={log.id} p={3} bg="gray.800" borderRadius="md" borderLeft="3px solid" borderLeftColor={log.type === 'BONO' ? 'brand.400' : 'yellow.400'}>
+                            <HStack justify="space-between" mb={1}>
+                              <Badge colorScheme={log.type === 'BONO' ? 'brand' : 'yellow'}>{log.type === 'BONO' ? 'Bono' : 'Hrs Extras'}</Badge>
+                              <Text fontSize="xs" color="gray.400">{log.date}</Text>
+                            </HStack>
+                            <Text fontSize="sm" fontWeight="bold" mb={1}>
+                              {log.type === 'BONO' ? `Monto: Q${log.bonusAmount}` : `${log.hoursQty} hrs (${log.hourType})`}
+                            </Text>
+                            <Text fontSize="xs" color="gray.300">{log.taskDescription}</Text>
+                          </Box>
+                        ))
+                      ) : (
+                        <Text fontSize="sm" color="gray.500" textAlign="center" mt={4}>
+                          No hay reportes operativos asociados a esta quincena.
+                        </Text>
+                      )}
+                    </VStack>
                   </TabPanel>
                 </TabPanels>
               </Tabs>
