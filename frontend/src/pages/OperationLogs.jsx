@@ -3,25 +3,43 @@ import {
   Box, Heading, Table, Thead, Tbody, Tr, Th, Td, IconButton, Button,
   HStack, Select, Input, Badge, useDisclosure, Modal, ModalOverlay,
   ModalContent, ModalHeader, ModalBody, ModalFooter, FormControl, FormLabel,
-  VStack, Text, Checkbox
+  VStack, Text, Checkbox, CheckboxGroup, useColorModeValue, Tooltip, Divider, Grid, GridItem,
+  AlertDialog, AlertDialogBody, AlertDialogFooter, AlertDialogHeader, AlertDialogContent, AlertDialogOverlay,
+  Tabs, TabList, Tab, TabPanels, TabPanel
 } from '@chakra-ui/react';
-import { Plus, Check, X, Trash2, Edit } from 'lucide-react';
+import { Plus, Check, X, Trash2, Eye } from 'lucide-react';
 import { toast } from 'sonner';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
 
 export default function OperationLogs() {
-  const { employees, operationLogs, addOperationLog, updateOperationLogStatus, deleteOperationLog } = useContext(DataContext);
+  const { employees, departments, companies, operationLogs, addOperationLog, updateOperationLogStatus, deleteOperationLog } = useContext(DataContext);
   const { user } = useContext(AuthContext);
   const [filterMonth, setFilterMonth] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
   const [filterType, setFilterType] = useState('ALL');
   const [filterStatus, setFilterStatus] = useState('ALL');
+  const [tabIndex, setTabIndex] = useState(0);
   const { isOpen, onOpen, onClose } = useDisclosure();
+  const { isOpen: isDetailsOpen, onOpen: onDetailsOpen, onClose: onDetailsClose } = useDisclosure();
+  const [selectedLog, setSelectedLog] = useState(null);
+  const [selectedRowIds, setSelectedRowIds] = useState([]);
+
+  const [confirmState, setConfirmState] = useState({ isOpen: false, action: null, data: null });
+  const cancelRef = React.useRef();
+
+  const isManagerOrAdmin = ['gerente', 'nomina', 'admin'].includes(user?.role?.toLowerCase());
+
+  const bg = useColorModeValue('white', 'gray.800');
+  const textColor = useColorModeValue('gray.800', 'white');
+  const mutedTextColor = useColorModeValue('gray.600', 'gray.400');
+  const theadBg = useColorModeValue('gray.50', 'gray.900');
+  const theadTextColor = useColorModeValue('gray.600', 'gray.400');
 
   const availableEmployees = useMemo(() => {
     let filtered = employees;
     
-    if (user && user.idDepartamento) {
+    // Only restrict by the user's own department if they are NOT a manager/admin/nomina
+    if (user && user.idDepartamento && !isManagerOrAdmin) {
       const normalize = (str) => (str ? str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase() : "");
       const userDept = normalize(user.idDepartamento);
       
@@ -41,10 +59,14 @@ export default function OperationLogs() {
         const nameB = [b.primer_nombre, b.segundo_nombre, b.otro_nombre, b.primer_apellido, b.segundo_apellido].filter(Boolean).join(' ').trim();
         return nameA.localeCompare(nameB);
       });
-  }, [employees, user]);
+  }, [employees, user, isManagerOrAdmin]);
+
+  const [modalDeptFilter, setModalDeptFilter] = useState('ALL');
+  const [modalSearchQuery, setModalSearchQuery] = useState('');
 
   const [formData, setFormData] = useState({
-    employeeId: '',
+    employeeIds: [],
+    companyId: '',
     date: new Date().toISOString().slice(0, 10),
     type: 'HORA_EXTRA',
     hoursQty: 0,
@@ -54,66 +76,157 @@ export default function OperationLogs() {
     taskDescription: ''
   });
 
+  const filteredModalEmployees = useMemo(() => {
+    const normalize = (str) => {
+      if (!str) return '';
+      return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+    };
+
+    let result = availableEmployees;
+
+    if (modalDeptFilter !== 'ALL') {
+      const selectedDept = departments.find(d => d.id.toString() === modalDeptFilter.toString());
+      if (selectedDept) {
+        const deptNameNorm = normalize(selectedDept.nombre_dimension);
+        result = result.filter(emp => normalize(emp.departamento_laboral) === deptNameNorm);
+      }
+    }
+
+    if (modalSearchQuery.trim()) {
+      const query = normalize(modalSearchQuery);
+      result = result.filter(emp => {
+        const fullName = [emp.primer_nombre, emp.segundo_nombre, emp.otro_nombre, emp.primer_apellido, emp.segundo_apellido].filter(Boolean).join(' ');
+        return normalize(fullName).includes(query);
+      });
+    }
+
+    return result;
+  }, [availableEmployees, modalDeptFilter, departments, modalSearchQuery]);
+
+  const handleSelectAllEmployees = () => {
+    if (formData.employeeIds.length === filteredModalEmployees.length) {
+      setFormData({ ...formData, employeeIds: [] });
+    } else {
+      setFormData({ ...formData, employeeIds: filteredModalEmployees.map(e => e.id.toString()) });
+    }
+  };
+
   const filteredLogs = useMemo(() => {
     return operationLogs.filter(log => {
       if (filterMonth && !log.date.startsWith(filterMonth)) return false;
       if (filterType !== 'ALL' && log.type !== filterType) return false;
       if (filterStatus !== 'ALL' && log.status !== filterStatus) return false;
+      
+      if (tabIndex === 0) {
+        if (log.status !== 'PENDING_MANAGER') return false;
+      } else {
+        if (log.status === 'PENDING_MANAGER') return false;
+      }
+
       return true;
     }).sort((a, b) => new Date(b.date) - new Date(a.date));
-  }, [operationLogs, filterMonth, filterType, filterStatus]);
+  }, [operationLogs, filterMonth, filterType, filterStatus, tabIndex]);
 
   const handleSave = () => {
-    if (!formData.employeeId || !formData.date || !formData.taskDescription) {
-      toast.warning('Completa los campos requeridos');
+    if (formData.employeeIds.length === 0 || !formData.date || !formData.taskDescription || !formData.companyId) {
+      toast.warning('Selecciona al menos un empleado, la empresa y completa los campos requeridos');
       return;
     }
-    
-    const payload = {
-      ...formData,
-      employeeId: Number(formData.employeeId),
-      hoursQty: formData.type === 'HORA_EXTRA' ? Number(formData.hoursQty) : 0,
-      bonusQty: formData.type === 'BONO' ? Number(formData.bonusQty) : 0,
-      bonusAmount: formData.type === 'BONO' ? Number(formData.bonusAmount) : 0,
-    };
-
-    addOperationLog(payload);
-    onClose();
-    toast.success('Registro agregado exitosamente');
+    setConfirmState({ isOpen: true, action: 'SAVE', data: null });
   };
 
-  const handleApprove = async (id) => {
-    await updateOperationLogStatus(id, 'APPROVED_MANAGER');
-    toast.success('Solicitud aprobada');
-  };
+  const handleApprove = (id) => setConfirmState({ isOpen: true, action: 'APPROVE', data: id });
+  const handleReject = (id) => setConfirmState({ isOpen: true, action: 'REJECT', data: id });
+  const handleDelete = (id) => setConfirmState({ isOpen: true, action: 'DELETE', data: id });
 
-  const handleReject = async (id) => {
-    await updateOperationLogStatus(id, 'REJECTED');
-    toast.error('Solicitud rechazada');
-  };
+  const handleBulkApprove = () => setConfirmState({ isOpen: true, action: 'BULK_APPROVE', data: null });
+  const handleBulkReject = () => setConfirmState({ isOpen: true, action: 'BULK_REJECT', data: null });
 
-  const handleDelete = async (id) => {
-    await deleteOperationLog(id);
-    toast.success('Registro eliminado');
+  const executeConfirm = async () => {
+    const { action, data } = confirmState;
+    setConfirmState({ isOpen: false, action: null, data: null });
+
+    try {
+      if (action === 'SAVE') {
+        const promises = formData.employeeIds.map(empId => {
+          const payload = {
+            ...formData,
+            employeeId: Number(empId),
+            companyId: Number(formData.companyId),
+            hoursQty: formData.type === 'HORA_EXTRA' ? Number(formData.hoursQty) : 0,
+            bonusQty: formData.type === 'BONO' ? Number(formData.bonusQty) : 0,
+            bonusAmount: formData.type === 'BONO' ? Number(formData.bonusAmount) : 0,
+          };
+          delete payload.employeeIds;
+          return addOperationLog(payload);
+        });
+        await Promise.all(promises);
+        
+        onClose();
+        setFormData(prev => ({ ...prev, employeeIds: [] }));
+        setModalDeptFilter('ALL');
+        toast.success(`Se agregaron ${formData.employeeIds.length} registros exitosamente`);
+      } else if (action === 'APPROVE') {
+        await updateOperationLogStatus(data, 'APPROVED_MANAGER');
+        toast.success('Solicitud aprobada');
+      } else if (action === 'REJECT') {
+        await updateOperationLogStatus(data, 'REJECTED');
+        toast.error('Solicitud rechazada');
+      } else if (action === 'BULK_APPROVE') {
+        const promises = selectedRowIds.map(id => updateOperationLogStatus(id, 'APPROVED_MANAGER'));
+        await Promise.all(promises);
+        setSelectedRowIds([]);
+        toast.success(`${selectedRowIds.length} solicitudes aprobadas`);
+      } else if (action === 'BULK_REJECT') {
+        const promises = selectedRowIds.map(id => updateOperationLogStatus(id, 'REJECTED'));
+        await Promise.all(promises);
+        setSelectedRowIds([]);
+        toast.error(`${selectedRowIds.length} solicitudes rechazadas`);
+      } else if (action === 'DELETE') {
+        await deleteOperationLog(data);
+        toast.success('Registro eliminado');
+      }
+    } catch (e) {
+      toast.error('Hubo un error al procesar la acción');
+    }
   };
 
   const getStatusBadge = (status) => {
+    const badgeProps = { variant: "subtle", borderRadius: "full", px: 2.5, py: 0.5, textTransform: "capitalize", fontWeight: "medium", fontSize: "xs" };
     switch(status) {
-      case 'PENDING_MANAGER': return <Badge px={2} py={1} borderRadius="md" bg="yellow.500" color="yellow.900" textTransform="uppercase" fontWeight="bold" fontSize="xs" boxShadow="sm">Pdte. Gerente</Badge>;
-      case 'APPROVED_MANAGER': return <Badge px={2} py={1} borderRadius="md" bg="blue.500" color="white" textTransform="uppercase" fontWeight="bold" fontSize="xs" boxShadow="sm">Aprobado</Badge>;
-      case 'REJECTED': return <Badge px={2} py={1} borderRadius="md" bg="red.500" color="white" textTransform="uppercase" fontWeight="bold" fontSize="xs" boxShadow="sm">Rechazado</Badge>;
-      case 'PROCESSED_PAYROLL': return <Badge px={2} py={1} borderRadius="md" bg="green.500" color="white" textTransform="uppercase" fontWeight="bold" fontSize="xs" boxShadow="sm">En Nómina</Badge>;
-      default: return <Badge>{status}</Badge>;
+      case 'PENDING_MANAGER': return <Badge colorScheme="yellow" {...badgeProps}>Pdte. Gerente</Badge>;
+      case 'APPROVED_MANAGER': return <Badge colorScheme="blue" {...badgeProps}>Aprobado</Badge>;
+      case 'REJECTED': return <Badge colorScheme="red" {...badgeProps}>Rechazado</Badge>;
+      case 'PROCESSED_PAYROLL': return <Badge colorScheme="green" {...badgeProps}>En Nómina</Badge>;
+      default: return <Badge {...badgeProps}>{status}</Badge>;
+    }
+  };
+
+  const pendingVisibleLogs = filteredLogs.filter(l => l.status === 'PENDING_MANAGER');
+  
+  const handleSelectAllRows = () => {
+    if (selectedRowIds.length === pendingVisibleLogs.length && pendingVisibleLogs.length > 0) {
+      setSelectedRowIds([]);
+    } else {
+      setSelectedRowIds(pendingVisibleLogs.map(l => l.id));
+    }
+  };
+
+  const toggleRowSelection = (id) => {
+    if (selectedRowIds.includes(id)) {
+      setSelectedRowIds(prev => prev.filter(rowId => rowId !== id));
+    } else {
+      setSelectedRowIds(prev => [...prev, id]);
     }
   };
 
   return (
     <Box p={6}>
       <HStack justify="space-between" mb={6}>
-        <Heading size="md" color="white">Reporte de Operaciones (Bonos y Horas)</Heading>
+        <Heading size="md" color={textColor}>Reporte de Operaciones (Bonos y Horas)</Heading>
         <Button leftIcon={<Plus size={16} />} colorScheme="brand" onClick={() => {
           setFormData({
-            employeeId: '', date: new Date().toISOString().slice(0, 10), type: 'HORA_EXTRA',
+            employeeIds: [], companyId: '', date: new Date().toISOString().slice(0, 10), type: 'HORA_EXTRA',
             hoursQty: 0, hourType: 'SIMPLE', bonusQty: 1, bonusAmount: 0, taskDescription: ''
           });
           onOpen();
@@ -122,13 +235,20 @@ export default function OperationLogs() {
         </Button>
       </HStack>
 
-      <HStack mb={4} spacing={4} bg="gray.800" p={4} borderRadius="lg">
+      <Tabs variant="soft-rounded" colorScheme="brand" mb={4} index={tabIndex} onChange={(idx) => { setTabIndex(idx); setFilterStatus('ALL'); }}>
+        <TabList>
+          <Tab>Solicitudes Activas</Tab>
+          <Tab>Historial de Solicitudes</Tab>
+        </TabList>
+      </Tabs>
+
+      <HStack mb={4} spacing={4} bg={bg} p={4} borderRadius="lg" shadow="sm">
         <FormControl w="200px">
-          <FormLabel fontSize="xs" color="gray.400">Mes</FormLabel>
+          <FormLabel fontSize="xs" color={mutedTextColor}>Mes</FormLabel>
           <Input type="month" value={filterMonth} onChange={(e) => setFilterMonth(e.target.value)} size="sm" />
         </FormControl>
         <FormControl w="150px">
-          <FormLabel fontSize="xs" color="gray.400">Tipo</FormLabel>
+          <FormLabel fontSize="xs" color={mutedTextColor}>Tipo</FormLabel>
           <Select size="sm" value={filterType} onChange={(e) => setFilterType(e.target.value)}>
             <option value="ALL">Todos</option>
             <option value="HORA_EXTRA">Horas Extras</option>
@@ -136,34 +256,78 @@ export default function OperationLogs() {
           </Select>
         </FormControl>
         <FormControl w="150px">
-          <FormLabel fontSize="xs" color="gray.400">Estado</FormLabel>
+          <FormLabel fontSize="xs" color={mutedTextColor}>Estado</FormLabel>
           <Select size="sm" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
             <option value="ALL">Todos</option>
-            <option value="PENDING_MANAGER">Pendientes</option>
-            <option value="APPROVED_MANAGER">Aprobados</option>
-            <option value="PROCESSED_PAYROLL">Procesados</option>
+            {tabIndex === 0 ? (
+              <>
+                <option value="PENDING_MANAGER">Pendientes</option>
+              </>
+            ) : (
+              <>
+                <option value="APPROVED_MANAGER">Aprobados</option>
+                <option value="PROCESSED_PAYROLL">Procesados</option>
+                <option value="REJECTED">Rechazados</option>
+              </>
+            )}
           </Select>
         </FormControl>
       </HStack>
 
-      <Box bg="gray.800" borderRadius="lg" overflow="hidden" overflowX="auto">
+      {selectedRowIds.length > 0 && isManagerOrAdmin && (
+        <HStack mb={4} p={3} bg="blue.50" borderRadius="md" shadow="sm" justify="space-between">
+          <Text fontSize="sm" fontWeight="bold" color="blue.700">
+            {selectedRowIds.length} solicitudes seleccionadas
+          </Text>
+          <HStack>
+            <Button size="sm" colorScheme="orange" onClick={handleBulkReject}>Rechazar Seleccionados</Button>
+            <Button size="sm" colorScheme="blue" onClick={handleBulkApprove}>Aprobar Seleccionados</Button>
+          </HStack>
+        </HStack>
+      )}
+
+      <Box bg={bg} borderRadius="lg" overflow="hidden" overflowX="auto" shadow="sm">
         <Table variant="simple" size="sm">
-          <Thead bg="gray.900">
+          <Thead bg={theadBg}>
             <Tr>
-              <Th color="gray.400">Fecha</Th>
-              <Th color="gray.400">Empleado</Th>
-              <Th color="gray.400">Tipo</Th>
-              <Th color="gray.400">Detalle (Horas/Monto)</Th>
-              <Th color="gray.400">Tarea</Th>
-              <Th color="gray.400">Estado</Th>
-              <Th color="gray.400">Acciones</Th>
+              {isManagerOrAdmin && (
+                <Th w="40px">
+                  <Checkbox 
+                    colorScheme="brand" 
+                    isChecked={selectedRowIds.length === pendingVisibleLogs.length && pendingVisibleLogs.length > 0}
+                    isIndeterminate={selectedRowIds.length > 0 && selectedRowIds.length < pendingVisibleLogs.length}
+                    onChange={handleSelectAllRows}
+                    isDisabled={pendingVisibleLogs.length === 0}
+                  />
+                </Th>
+              )}
+              <Th color={theadTextColor}>Fecha</Th>
+              <Th color={theadTextColor}>Empresa</Th>
+              <Th color={theadTextColor}>Empleado</Th>
+              <Th color={theadTextColor}>Tipo</Th>
+              <Th color={theadTextColor}>Detalle (Horas/Monto)</Th>
+              <Th color={theadTextColor}>Tarea</Th>
+              <Th color={theadTextColor}>Estado</Th>
+              <Th color={theadTextColor}>Acciones</Th>
             </Tr>
           </Thead>
           <Tbody>
             {filteredLogs.map(log => (
               <Tr key={log.id}>
+                {isManagerOrAdmin && (
+                  <Td>
+                    {log.status === 'PENDING_MANAGER' ? (
+                      <Checkbox 
+                        colorScheme="brand" 
+                        isChecked={selectedRowIds.includes(log.id)} 
+                        onChange={() => toggleRowSelection(log.id)} 
+                      />
+                    ) : null}
+                  </Td>
+                )}
                 <Td>{log.date}</Td>
-                <Td>{log.Employee ? `${log.Employee.primer_nombre} ${log.Employee.primer_apellido}` : 'Desconocido'}</Td>
+                <Td>{log.companyData ? log.companyData.nombre_comercial : 'S/E'}</Td>
+                <Td>{log.Employee ? [log.Employee.primer_nombre, log.Employee.segundo_nombre, log.Employee.otro_nombre, log.Employee.primer_apellido, log.Employee.segundo_apellido].filter(Boolean).join(' ') : 'Desconocido'}</Td>
                 <Td>{log.type === 'HORA_EXTRA' ? 'Hrs Extras' : 'Bono'}</Td>
                 <Td>
                   {log.type === 'HORA_EXTRA' 
@@ -174,15 +338,24 @@ export default function OperationLogs() {
                 <Td maxW="200px" isTruncated>{log.taskDescription}</Td>
                 <Td>{getStatusBadge(log.status)}</Td>
                 <Td>
-                  <HStack spacing={3}>
-                    {log.status === 'PENDING_MANAGER' && (
+                  <HStack spacing={2}>
+                    <Tooltip label="Ver Detalles" hasArrow>
+                      <IconButton aria-label="Ver Detalles" size={{ base: 'xs', md: 'sm' }} icon={<Eye size={16} />} variant="ghost" colorScheme="teal" onClick={() => { setSelectedLog(log); onDetailsOpen(); }} transition="all 0.3s" />
+                    </Tooltip>
+                    {isManagerOrAdmin && log.status === 'PENDING_MANAGER' && (
                       <>
-                        <IconButton size="sm" icon={<Check size={16} />} colorScheme="blue" variant="solid" borderRadius="full" boxShadow="md" _hover={{ transform: 'scale(1.1)' }} title="Aprobar" onClick={() => handleApprove(log.id)} />
-                        <IconButton size="sm" icon={<X size={16} />} colorScheme="red" variant="solid" borderRadius="full" boxShadow="md" _hover={{ transform: 'scale(1.1)' }} title="Rechazar" onClick={() => handleReject(log.id)} />
+                        <Tooltip label="Aprobar" hasArrow>
+                          <IconButton aria-label="Aprobar" size={{ base: 'xs', md: 'sm' }} icon={<Check size={16} />} variant="ghost" colorScheme="blue" onClick={() => handleApprove(log.id)} transition="all 0.3s" />
+                        </Tooltip>
+                        <Tooltip label="Rechazar" hasArrow>
+                          <IconButton aria-label="Rechazar" size={{ base: 'xs', md: 'sm' }} icon={<X size={16} />} variant="ghost" colorScheme="orange" onClick={() => handleReject(log.id)} transition="all 0.3s" />
+                        </Tooltip>
                       </>
                     )}
                     {log.status !== 'PROCESSED_PAYROLL' && (
-                      <IconButton size="sm" icon={<Trash2 size={16} />} variant="ghost" colorScheme="red" borderRadius="full" _hover={{ bg: 'red.500', color: 'white', transform: 'scale(1.1)' }} title="Eliminar" onClick={() => handleDelete(log.id)} />
+                      <Tooltip label="Eliminar" hasArrow>
+                        <IconButton aria-label="Eliminar" size={{ base: 'xs', md: 'sm' }} icon={<Trash2 size={16} />} variant="ghost" colorScheme="red" onClick={() => handleDelete(log.id)} transition="all 0.3s" />
+                      </Tooltip>
                     )}
                   </HStack>
                 </Td>
@@ -196,25 +369,56 @@ export default function OperationLogs() {
       </Box>
 
       {/* Modal Agregar Registro */}
-      <Modal isOpen={isOpen} onClose={onClose} size="lg">
+      <Modal isOpen={isOpen} onClose={onClose} size="lg" isCentered>
         <ModalOverlay backdropFilter="blur(4px)" />
-        <ModalContent bg="gray.800" color="white">
+        <ModalContent bg={bg} color={textColor}>
           <ModalHeader>Nuevo Registro de Operación</ModalHeader>
           <ModalBody>
             <VStack spacing={4}>
               <FormControl isRequired>
-                <FormLabel fontSize="sm">Empleado</FormLabel>
-                <Select value={formData.employeeId} onChange={(e) => setFormData({...formData, employeeId: e.target.value})}>
-                  <option value="">Seleccione...</option>
-                  {availableEmployees.map(emp => (
-                    <option key={emp.id} value={emp.id}>
-                      {[emp.primer_nombre, emp.segundo_nombre, emp.otro_nombre, emp.primer_apellido, emp.segundo_apellido].filter(Boolean).join(' ')}
-                    </option>
-                  ))}
+                <FormLabel fontSize="sm">Empleados</FormLabel>
+                <HStack mb={2}>
+                  <Select size="sm" value={modalDeptFilter} onChange={(e) => {
+                    setModalDeptFilter(e.target.value);
+                    setFormData({ ...formData, employeeIds: [] });
+                  }}>
+                    <option value="ALL">Todos los departamentos</option>
+                    {departments.map(d => <option key={d.id} value={d.id}>{d.nombre_dimension}</option>)}
+                  </Select>
+                  <Button size="sm" onClick={handleSelectAllEmployees} whiteSpace="nowrap">
+                    {formData.employeeIds.length === filteredModalEmployees.length && filteredModalEmployees.length > 0 ? 'Deseleccionar Todos' : 'Seleccionar Todos'}
+                  </Button>
+                </HStack>
+                <Input 
+                  size="sm" 
+                  placeholder="Buscar empleado por nombre..." 
+                  value={modalSearchQuery} 
+                  onChange={(e) => setModalSearchQuery(e.target.value)}
+                  mb={2}
+                />
+                <Box maxH="150px" overflowY="auto" borderWidth="1px" borderRadius="md" p={2}>
+                  <CheckboxGroup colorScheme="brand" value={formData.employeeIds} onChange={(values) => setFormData({...formData, employeeIds: values})}>
+                    <VStack align="start">
+                      {filteredModalEmployees.map(emp => (
+                        <Checkbox key={emp.id} value={emp.id.toString()}>
+                          {[emp.primer_nombre, emp.segundo_nombre, emp.otro_nombre, emp.primer_apellido, emp.segundo_apellido].filter(Boolean).join(' ')}
+                        </Checkbox>
+                      ))}
+                      {filteredModalEmployees.length === 0 && <Text fontSize="sm" color="gray.500">No hay empleados en este departamento</Text>}
+                    </VStack>
+                  </CheckboxGroup>
+                </Box>
+              </FormControl>
+
+              <FormControl isRequired>
+                <FormLabel fontSize="sm">Empresa a cargar</FormLabel>
+                <Select size="sm" value={formData.companyId} onChange={(e) => setFormData({...formData, companyId: e.target.value})}>
+                  <option value="" disabled>Selecciona una empresa</option>
+                  {companies.map(c => <option key={c.id} value={c.id}>{c.nombre_comercial}</option>)}
                 </Select>
               </FormControl>
-              
-              <HStack w="100%">
+
+              <HStack w="full" spacing={4}>
                 <FormControl isRequired flex={1}>
                   <FormLabel fontSize="sm">Fecha</FormLabel>
                   <Input type="date" value={formData.date} onChange={(e) => setFormData({...formData, date: e.target.value})} />
@@ -266,6 +470,96 @@ export default function OperationLogs() {
           </ModalFooter>
         </ModalContent>
       </Modal>
+
+      {/* Modal Detalles */}
+      <Modal isOpen={isDetailsOpen} onClose={onDetailsClose} size="md" isCentered>
+        <ModalOverlay backdropFilter="blur(4px)" />
+        <ModalContent bg={bg} color={textColor}>
+          <ModalHeader>Detalles de la Solicitud</ModalHeader>
+          <ModalBody>
+            {selectedLog && (
+              <VStack spacing={4} align="stretch">
+                <Box>
+                  <Text fontSize="xs" color={mutedTextColor} textTransform="uppercase" fontWeight="bold">Empleado</Text>
+                  <Text fontSize="md">{selectedLog.Employee ? [selectedLog.Employee.primer_nombre, selectedLog.Employee.segundo_nombre, selectedLog.Employee.otro_nombre, selectedLog.Employee.primer_apellido, selectedLog.Employee.segundo_apellido].filter(Boolean).join(' ') : 'Desconocido'}</Text>
+                </Box>
+                <Grid templateColumns="repeat(2, 1fr)" gap={4}>
+                  <GridItem>
+                    <Text fontSize="xs" color={mutedTextColor} textTransform="uppercase" fontWeight="bold">Fecha</Text>
+                    <Text fontSize="md">{selectedLog.date}</Text>
+                  </GridItem>
+                  <GridItem>
+                    <Text fontSize="xs" color={mutedTextColor} textTransform="uppercase" fontWeight="bold">Tipo</Text>
+                    <Text fontSize="md">{selectedLog.type === 'HORA_EXTRA' ? 'Horas Extras' : 'Bono'}</Text>
+                  </GridItem>
+                </Grid>
+                
+                {selectedLog.type === 'HORA_EXTRA' ? (
+                  <Grid templateColumns="repeat(2, 1fr)" gap={4}>
+                    <GridItem>
+                      <Text fontSize="xs" color={mutedTextColor} textTransform="uppercase" fontWeight="bold">Cantidad de Horas</Text>
+                      <Text fontSize="md">{selectedLog.hoursQty}</Text>
+                    </GridItem>
+                    <GridItem>
+                      <Text fontSize="xs" color={mutedTextColor} textTransform="uppercase" fontWeight="bold">Tipo de Hora</Text>
+                      <Text fontSize="md">{selectedLog.hourType}</Text>
+                    </GridItem>
+                  </Grid>
+                ) : (
+                  <Box>
+                    <Text fontSize="xs" color={mutedTextColor} textTransform="uppercase" fontWeight="bold">Monto del Bono</Text>
+                    <Text fontSize="md">Q{selectedLog.bonusAmount}</Text>
+                  </Box>
+                )}
+
+                <Box>
+                  <Text fontSize="xs" color={mutedTextColor} textTransform="uppercase" fontWeight="bold">Tarea / Descripción</Text>
+                  <Text fontSize="md" p={3} bg={useColorModeValue('gray.50', 'whiteAlpha.100')} borderRadius="md" mt={1}>
+                    {selectedLog.taskDescription}
+                  </Text>
+                </Box>
+
+                <Box pt={2}>
+                  <Text fontSize="xs" color={mutedTextColor} textTransform="uppercase" fontWeight="bold" mb={1}>Estado Actual</Text>
+                  {getStatusBadge(selectedLog.status)}
+                </Box>
+              </VStack>
+            )}
+          </ModalBody>
+          <ModalFooter>
+            <Button colorScheme="brand" onClick={onDetailsClose}>Cerrar</Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* AlertDialog (Confirmaciones) */}
+      <AlertDialog isCentered isOpen={confirmState.isOpen} leastDestructiveRef={cancelRef} onClose={() => setConfirmState({ isOpen: false, action: null, data: null })}>
+        <AlertDialogOverlay backdropFilter="blur(4px)">
+          <AlertDialogContent bg={bg} color={textColor}>
+            <AlertDialogHeader fontSize="lg" fontWeight="bold">
+              Confirmar Acción
+            </AlertDialogHeader>
+            <AlertDialogBody>
+              {confirmState.action === 'SAVE' && '¿Estás seguro de que deseas guardar estos registros?'}
+              {confirmState.action === 'APPROVE' && '¿Deseas aprobar esta solicitud de operación?'}
+              {confirmState.action === 'REJECT' && '¿Estás seguro de que deseas rechazar esta solicitud?'}
+              {confirmState.action === 'BULK_APPROVE' && `¿Deseas aprobar las ${selectedRowIds.length} solicitudes seleccionadas?`}
+              {confirmState.action === 'BULK_REJECT' && `¿Deseas rechazar las ${selectedRowIds.length} solicitudes seleccionadas?`}
+              {confirmState.action === 'DELETE' && '¿Estás seguro de que deseas eliminar este registro permanentemente?'}
+            </AlertDialogBody>
+            <AlertDialogFooter>
+              <Button ref={cancelRef} onClick={() => setConfirmState({ isOpen: false, action: null, data: null })} variant="ghost">Cancelar</Button>
+              <Button 
+                colorScheme={['DELETE', 'REJECT', 'BULK_REJECT'].includes(confirmState.action) ? 'red' : 'blue'} 
+                onClick={executeConfirm} 
+                ml={3}
+              >
+                {confirmState.action === 'SAVE' ? 'Guardar' : confirmState.action === 'DELETE' ? 'Eliminar' : 'Confirmar'}
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialogOverlay>
+      </AlertDialog>
 
     </Box>
   );

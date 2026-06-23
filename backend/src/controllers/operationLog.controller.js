@@ -1,9 +1,12 @@
-const { OperationLog, Employee } = require('../models');
+const { OperationLog, Employee, Company } = require('../models');
 
 const getAll = async (req, res) => {
   try {
     const logs = await OperationLog.findAll({
-      include: [{ model: Employee, attributes: ['id', 'primer_nombre', 'primer_apellido', 'empresa_principal'] }]
+      include: [
+        { model: Employee, attributes: ['id', 'primer_nombre', 'segundo_nombre', 'otro_nombre', 'primer_apellido', 'segundo_apellido', 'empresa_principal'] },
+        { model: Company, as: 'companyData', attributes: ['id', 'nombre_comercial'] }
+      ]
     });
     res.json(logs);
   } catch (err) {
@@ -14,7 +17,13 @@ const getAll = async (req, res) => {
 const create = async (req, res) => {
   try {
     const newLog = await OperationLog.create(req.body);
-    res.status(201).json(newLog);
+    const populatedLog = await OperationLog.findByPk(newLog.id, {
+      include: [
+        { model: Employee, attributes: ['id', 'primer_nombre', 'segundo_nombre', 'otro_nombre', 'primer_apellido', 'segundo_apellido', 'empresa_principal'] },
+        { model: Company, as: 'companyData', attributes: ['id', 'nombre_comercial'] }
+      ]
+    });
+    res.status(201).json(populatedLog);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }

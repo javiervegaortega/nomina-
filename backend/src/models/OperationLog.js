@@ -16,7 +16,8 @@ module.exports = (sequelize) => {
       type: DataTypes.ENUM('PENDING_MANAGER', 'APPROVED_MANAGER', 'REJECTED', 'PROCESSED_PAYROLL'), 
       defaultValue: 'PENDING_MANAGER' 
     },
-    periodAssigned: { type: DataTypes.STRING, allowNull: true } // To mark which payroll processed it
+    periodAssigned: { type: DataTypes.STRING, allowNull: true }, // To mark which payroll processed it
+    companyId: { type: DataTypes.INTEGER, allowNull: true }
   }, {
     tableName: 'operation_logs',
     timestamps: true

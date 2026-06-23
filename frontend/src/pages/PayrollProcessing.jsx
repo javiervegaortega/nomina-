@@ -783,6 +783,8 @@ function ListadoPagosTab({
   const theadBg = useColorModeValue('gray.100', 'gray.900');
   const tdBg = useColorModeValue('white', 'gray.800');
   const hoverBg = useColorModeValue('gray.50', 'whiteAlpha.50');
+  const opLogBg = useColorModeValue('white', 'gray.800');
+  const opLogBorder = useColorModeValue('1px solid var(--chakra-colors-gray-200)', 'none');
 
   // Drawer State
   const { isOpen: isDrawerOpen, onOpen: onDrawerOpen, onClose: onDrawerClose } = useDisclosure();
@@ -1456,7 +1458,7 @@ function ListadoPagosTab({
                     <VStack align="stretch" spacing={3}>
                       {selectedEmp.operationLogs && selectedEmp.operationLogs.length > 0 ? (
                         selectedEmp.operationLogs.map(log => (
-                          <Box key={log.id} p={3} bg="gray.800" borderRadius="md" borderLeft="3px solid" borderLeftColor={log.type === 'BONO' ? 'brand.400' : 'yellow.400'}>
+                          <Box key={log.id} p={3} bg={opLogBg} borderRadius="md" border={opLogBorder} borderLeft="3px solid" borderLeftColor={log.type === 'BONO' ? 'brand.400' : 'yellow.400'}>
                             <HStack justify="space-between" mb={1}>
                               <Badge colorScheme={log.type === 'BONO' ? 'brand' : 'yellow'}>{log.type === 'BONO' ? 'Bono' : 'Hrs Extras'}</Badge>
                               <Text fontSize="xs" color="gray.400">{log.date}</Text>
@@ -1464,7 +1466,7 @@ function ListadoPagosTab({
                             <Text fontSize="sm" fontWeight="bold" mb={1}>
                               {log.type === 'BONO' ? `Monto: Q${log.bonusAmount}` : `${log.hoursQty} hrs (${log.hourType})`}
                             </Text>
-                            <Text fontSize="xs" color="gray.300">{log.taskDescription}</Text>
+                            <Text fontSize="xs" color={useColorModeValue('gray.600', 'gray.300')}>{log.taskDescription}</Text>
                           </Box>
                         ))
                       ) : (

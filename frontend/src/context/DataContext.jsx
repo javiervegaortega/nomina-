@@ -92,7 +92,7 @@ export function DataProvider({ children }) {
         const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
         const fetchOpts = { headers };
 
-        const [compRes, empRes, histRes, deptRes, areaRes, divRes, subdivRes, draftsRes, commRes] = await Promise.all([
+        const [compRes, empRes, histRes, deptRes, areaRes, divRes, subdivRes, draftsRes, commRes, opLogsRes] = await Promise.all([
           fetch('http://localhost:3000/api/companies', fetchOpts),
           fetch('http://localhost:3000/api/employees', fetchOpts),
           fetch('http://localhost:3000/api/payrolls', fetchOpts),
@@ -101,7 +101,8 @@ export function DataProvider({ children }) {
           fetch('http://localhost:3000/api/divisions', fetchOpts),
           fetch('http://localhost:3000/api/subdivisions', fetchOpts),
           fetch('http://localhost:3000/api/payroll-drafts', fetchOpts),
-          fetch('http://localhost:3000/api/commissions', fetchOpts)
+          fetch('http://localhost:3000/api/commissions', fetchOpts),
+          fetch('http://localhost:3000/api/operation-logs', fetchOpts)
         ]);
         
         if (compRes.ok) {
@@ -162,6 +163,11 @@ export function DataProvider({ children }) {
         if (commRes.ok) {
           const apiCommissions = await commRes.json();
           if (Array.isArray(apiCommissions)) setCommissions(apiCommissions);
+        }
+
+        if (opLogsRes.ok) {
+          const apiOperationLogs = await opLogsRes.json();
+          if (Array.isArray(apiOperationLogs)) setOperationLogs(apiOperationLogs);
         }
       } catch (err) {
       } finally {
@@ -482,7 +488,80 @@ export function DataProvider({ children }) {
         body: JSON.stringify({ status, periodAssigned })
       });
       if (res.ok) {
-        setOperationLogs(prev => prev.map(l => l.id === id ? { ...l, status, periodAssigned } : l));
+        setOperationLogs(prev => {
+          const updatedLogs = prev.map(l => l.id === id ? { ...l, status, periodAssigned } : l);
+          
+          if (status === 'APPROVED_MANAGER') {
+            const log = prev.find(l => l.id === id);
+            if (log) {
+              const updatedDraftsToSave = [];
+              setActivePayrolls(currentDrafts => {
+                const nextDrafts = currentDrafts.map(draft => {
+                  const draftMonth = new Date(draft.createdAt).getMonth();
+                  const draftYear = new Date(draft.createdAt).getFullYear();
+                  const logMonth = new Date(log.date).getMonth();
+                  const logYear = new Date(log.date).getFullYear();
+                  
+                  if (draftMonth === logMonth && draftYear === logYear) {
+                    const draftCompanies = draft.companies || [];
+                    const matchesCompany = draftCompanies.length === 0 || !log.companyId || draftCompanies.some(c => {
+                      const strC = String(c);
+                      if (strC === String(log.companyId)) return true;
+                      const compByName = companies.find(comp => comp.nombre_comercial === strC || comp.nit === strC);
+                      return compByName && String(compByName.id) === String(log.companyId);
+                    });
+                    
+                    if (matchesCompany) {
+                      const empIndex = draft.employees.findIndex(e => String(e.id) === String(log.employeeId));
+                      if (empIndex > -1) {
+                        const emp = { ...draft.employees[empIndex] };
+                        const baseSalary = Number(emp.sueldo_ordinario) || 0;
+                        const hourlyRate = baseSalary / 30 / 8;
+                        
+                        let valSimples = 0, valDobles = 0, totalBonos = 0;
+                        if (log.type === 'HORA_EXTRA') {
+                          if (log.hourType === 'SIMPLE') valSimples = Number(log.hoursQty) * hourlyRate * 1.5;
+                          else valDobles = Number(log.hoursQty) * hourlyRate * 2;
+                        } else if (log.type === 'BONO') {
+                          totalBonos = Number(log.bonusAmount);
+                        }
+
+                        emp.extras = { ...emp.extras };
+                        if (valSimples) { emp.extras.simplesQty = (emp.extras.simplesQty || 0) + Number(log.hoursQty); emp.extras.simplesVal = (emp.extras.simplesVal || 0) + valSimples; }
+                        if (valDobles) { emp.extras.doblesQty = (emp.extras.doblesQty || 0) + Number(log.hoursQty); emp.extras.doblesVal = (emp.extras.doblesVal || 0) + valDobles; }
+                        if (totalBonos) { emp.extras.bonos = (emp.extras.bonos || 0) + totalBonos; }
+                        
+                        if (emp.netTotal !== undefined) {
+                           emp.netTotal += valSimples + valDobles + totalBonos;
+                        }
+                        
+                        emp.operationLogs = [...(emp.operationLogs || []), { ...log, status: 'APPROVED_MANAGER' }];
+
+                        const newEmployees = [...draft.employees];
+                        newEmployees[empIndex] = emp;
+                        const newDraft = { ...draft, employees: newEmployees };
+                        updatedDraftsToSave.push(newDraft);
+                        return newDraft;
+                      }
+                    }
+                  }
+                  return draft;
+                });
+                return nextDrafts;
+              });
+
+              // Persist changes to DB
+              updatedDraftsToSave.forEach(draft => {
+                fetch(`http://localhost:3000/api/payroll-drafts/${draft.id}`, {
+                  method: 'PUT',
+                  headers: getAuthHeader(),
+                  body: JSON.stringify(draft)
+                }).catch(() => {});
+              });
+            }
+          }
+          return updatedLogs;
+        });
       }
     } catch (e) {}
   };
@@ -720,7 +799,13 @@ export function DataProvider({ children }) {
         });
 
         // Calculate operation logs (APPROVED_MANAGER)
-        const empOpLogs = operationLogs.filter(l => l.employeeId === e.id && l.status === 'APPROVED_MANAGER');
+        const empOpLogs = operationLogs.filter(l => {
+          if (String(l.employeeId) !== String(e.id) || l.status !== 'APPROVED_MANAGER') return false;
+          if (selectedCompanyIds.length > 0 && l.companyId) {
+            return selectedCompanyIds.some(id => String(id) === String(l.companyId));
+          }
+          return true;
+        });
         empOpLogs.forEach(l => {
           if (l.type === 'HORA_EXTRA') {
             if (l.hourType === 'SIMPLE') qtySimples += Number(l.hoursQty) || 0;
@@ -864,6 +949,8 @@ export function DataProvider({ children }) {
       // Calculate totals for history view
       let grossTotal = 0;
       let dedTotal = 0;
+      const logsToProcess = [];
+
       draft.employees.forEach(e => {
         const baseFactor = (e.days || 30) / 30;
         const sueldoOrd = Number(e.sueldo_ordinario) || 0;
@@ -884,6 +971,10 @@ export function DataProvider({ children }) {
 
         grossTotal += gross;
         dedTotal += ded + anticipo;
+
+        if (e.operationLogs) {
+          e.operationLogs.forEach(log => logsToProcess.push(log.id));
+        }
       });
 
       const historyRecord = {
@@ -911,6 +1002,14 @@ export function DataProvider({ children }) {
         await res.json();
         setPayrollHistory([historyRecord, ...payrollHistory]);
         deleteActivePayroll(id);
+
+        // Mark operation logs as PROCESSED_PAYROLL
+        if (logsToProcess.length > 0) {
+          await Promise.all(logsToProcess.map(logId => 
+            updateOperationLogStatus(logId, 'PROCESSED_PAYROLL')
+          ));
+        }
+
         return { success: true };
       } catch (err) {
         return { success: false, error: err.message };

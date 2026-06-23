@@ -36,6 +36,9 @@ EmployeeIncidence.belongsTo(Employee, { foreignKey: 'employeeId' });
 Employee.hasMany(OperationLog, { foreignKey: 'employeeId', as: 'operationLogs' });
 OperationLog.belongsTo(Employee, { foreignKey: 'employeeId' });
 
+Company.hasMany(OperationLog, { foreignKey: 'companyId' });
+OperationLog.belongsTo(Company, { foreignKey: 'companyId', as: 'companyData' });
+
 PayrollDraft.hasMany(PayrollDraftEmployee, { foreignKey: 'draftId', as: 'draftEmployees', onDelete: 'CASCADE' });
 PayrollDraftEmployee.belongsTo(PayrollDraft, { foreignKey: 'draftId' });
 
