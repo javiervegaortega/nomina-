@@ -8,6 +8,7 @@ import {
   Table, Thead, Tbody, Tr, Th, Td, TableContainer, VStack
 } from '@chakra-ui/react';
 import { DataContext } from '../context/DataContext';
+import { toast } from 'sonner';
 
 function SidebarTab({ active, label, icon: IconComponent, onClick }) {
   const activeBg = useColorModeValue('white', 'rgba(30, 41, 59, 0.8)');
@@ -681,7 +682,7 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
                     ]}
                     initialData={editingRecord?.data}
                     onSave={(data) => {
-                       if(!data.fecha_capacitacion || !data.nombre_curso) { alert('Fecha y Nombre del curso son obligatorios.'); return; }
+                       if(!data.fecha_capacitacion || !data.nombre_curso) { toast.error('Fecha y Nombre del curso son obligatorios.'); return; }
                        handleRecordSave('curso', data);
                     }}
                     onCancel={() => { setShowRecordForm(null); setEditingRecord(null); }}
@@ -755,7 +756,7 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
                     initialData={editingRecord?.data}
                     onSave={(data) => {
                        if(!data.tipo || !data.numero || !data.del || !data.al || !data.ano || !data.mes || !data.dia || !data.hora || !data.minuto || !data.procesar || !data.planilla || !data.estado) {
-                         alert('Todos los campos son obligatorios.'); return;
+                         toast.error('Todos los campos son obligatorios.'); return;
                        }
                        handleRecordSave('evento', data);
                     }}

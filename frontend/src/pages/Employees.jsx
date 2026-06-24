@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import * as XLSX from 'xlsx';
+import { AppContext } from '../App';
 import { DataContext } from '../context/DataContext';
 import usePagination from '../hooks/usePagination';
 import Pagination from '../components/Pagination';
@@ -34,6 +35,7 @@ import {
 } from '@chakra-ui/react';
 
 export default function Employees() {
+  const { confirmAction } = useContext(AppContext);
   const { employees, addEmployee, updateEmployee, deleteEmployee, companies, departments, areas, divisions, subdivisions, isLoading } = useContext(DataContext);
   
   const INITIAL_FORM = useMemo(() => ({
@@ -177,10 +179,10 @@ export default function Employees() {
   };
 
   const handleDelete = useCallback((id) => {
-    if (window.confirm("¿Está seguro de eliminar este empleado completamente de la base de datos? (Para historial, use 'Dar de Baja')")) {
+    confirmAction("¿Está seguro de eliminar este empleado completamente de la base de datos? (Para historial, use 'Dar de Baja')", () => {
       deleteEmployee(id);
-    }
-  }, [deleteEmployee]);
+    });
+  }, [deleteEmployee, confirmAction]);
 
   const handleOffboard = () => {
     updateEmployee(offboardState.empId, { 
@@ -1347,7 +1349,7 @@ export default function Employees() {
             <Button variant="ghost" mr={3} onClick={() => setAbandonoState({ ...abandonoState, show: false })}>
               Cerrar
             </Button>
-            <Button colorScheme="green" onClick={handlePrintAbandono}>
+            <Button colorScheme="red" onClick={handlePrintAbandono}>
               Exportar a PDF
             </Button>
           </ModalFooter>
@@ -1393,7 +1395,7 @@ export default function Employees() {
             <Button variant="ghost" mr={3} onClick={() => setAperturaState({ ...aperturaState, show: false })}>
               Cerrar
             </Button>
-            <Button colorScheme="green" onClick={handlePrintApertura}>
+            <Button colorScheme="red" onClick={handlePrintApertura}>
               Exportar a PDF
             </Button>
           </ModalFooter>
@@ -1478,7 +1480,7 @@ export default function Employees() {
             <Button variant="ghost" mr={3} onClick={() => setConstanciaState({ ...constanciaState, show: false })}>
               Cerrar
             </Button>
-            <Button colorScheme="green" onClick={handlePrintConstancia}>
+            <Button colorScheme="red" onClick={handlePrintConstancia}>
               Exportar a PDF
             </Button>
           </ModalFooter>
@@ -1524,7 +1526,7 @@ export default function Employees() {
             <Button variant="ghost" mr={3} onClick={() => setCancelacionState({ ...cancelacionState, show: false })}>
               Cerrar
             </Button>
-            <Button colorScheme="green" onClick={handlePrintCancelacion}>
+            <Button colorScheme="red" onClick={handlePrintCancelacion}>
               Exportar a PDF
             </Button>
           </ModalFooter>
@@ -1546,7 +1548,7 @@ export default function Employees() {
             <Button variant="ghost" mr={3} onClick={() => setDisciplinariaState({ ...disciplinariaState, show: false })}>
               Cerrar
             </Button>
-            <Button colorScheme="green" onClick={handlePrintDisciplinaria}>
+            <Button colorScheme="red" onClick={handlePrintDisciplinaria}>
               Exportar a PDF
             </Button>
           </ModalFooter>

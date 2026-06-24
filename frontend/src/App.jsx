@@ -18,10 +18,8 @@ import Areas from './pages/Areas';
 import Divisions from './pages/Divisions';
 import Subdivisions from './pages/Subdivisions';
 import Companies from './pages/Companies';
-import Bonuses from './pages/Bonuses';
 import PayrollHistory from './pages/PayrollHistory';
 import Settings from './pages/Settings';
-import Commissions from './pages/Commissions';
 import OperationLogs from './pages/OperationLogs';
 import Login from './pages/auth/Login';
 
@@ -117,8 +115,6 @@ function AppContent() {
                   <Route path="/divisions" element={<Divisions />} />
                   <Route path="/subdivisions" element={<Subdivisions />} />
                   <Route path="/companies" element={<Companies />} />
-                  <Route path="/bonuses" element={<Bonuses />} />
-                  <Route path="/commissions" element={<Commissions />} />
                   <Route path="/operations" element={<OperationLogs />} />
                   <Route path="/settings" element={<Settings />} />
                 </Route>

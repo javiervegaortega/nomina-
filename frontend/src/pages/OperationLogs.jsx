@@ -5,7 +5,7 @@ import {
   ModalContent, ModalHeader, ModalBody, ModalFooter, FormControl, FormLabel,
   VStack, Text, Checkbox, CheckboxGroup, useColorModeValue, Tooltip, Divider, Grid, GridItem,
   AlertDialog, AlertDialogBody, AlertDialogFooter, AlertDialogHeader, AlertDialogContent, AlertDialogOverlay,
-  Tabs, TabList, Tab, TabPanels, TabPanel
+  Tabs, TabList, Tab, TabPanels, TabPanel, Skeleton, Flex
 } from '@chakra-ui/react';
 import { Plus, Check, X, Trash2, Eye } from 'lucide-react';
 import { toast } from 'sonner';
@@ -13,7 +13,7 @@ import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
 
 export default function OperationLogs() {
-  const { employees, departments, companies, operationLogs, addOperationLog, updateOperationLogStatus, deleteOperationLog } = useContext(DataContext);
+  const { employees, departments, companies, operationLogs, addOperationLog, updateOperationLogStatus, deleteOperationLog, isLoading } = useContext(DataContext);
   const { user } = useContext(AuthContext);
   const [filterMonth, setFilterMonth] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
   const [filterType, setFilterType] = useState('ALL');
@@ -34,6 +34,7 @@ export default function OperationLogs() {
   const mutedTextColor = useColorModeValue('gray.600', 'gray.400');
   const theadBg = useColorModeValue('gray.50', 'gray.900');
   const theadTextColor = useColorModeValue('gray.600', 'gray.400');
+  const detailBg = useColorModeValue('gray.50', 'whiteAlpha.100');
 
   const availableEmployees = useMemo(() => {
     let filtered = employees;
@@ -219,6 +220,46 @@ export default function OperationLogs() {
       setSelectedRowIds(prev => [...prev, id]);
     }
   };
+
+  if (isLoading) {
+    return (
+      <Box p={6}>
+        <Flex justify="space-between" align="center" mb={6}>
+          <Skeleton h="28px" w="250px" borderRadius="md" />
+          <Skeleton h="40px" w="140px" borderRadius="lg" />
+        </Flex>
+        <Skeleton h="32px" w="300px" mb={4} borderRadius="md" />
+        <Skeleton h="64px" w="100%" mb={4} borderRadius="xl" />
+        <Box border="1px solid" borderColor={detailBg} borderRadius="xl" overflow="hidden">
+          <Table variant="simple">
+            <Thead>
+              <Tr>
+                <Th><Skeleton h="14px" w="60px" /></Th>
+                <Th><Skeleton h="14px" w="150px" /></Th>
+                <Th><Skeleton h="14px" w="100px" /></Th>
+                <Th><Skeleton h="14px" w="80px" /></Th>
+                <Th><Skeleton h="14px" w="100px" /></Th>
+              </Tr>
+            </Thead>
+            <Tbody>
+              {[1,2,3,4,5].map(i => (
+                <Tr key={i}>
+                  <Td><Skeleton h="14px" w="60px" /></Td>
+                  <Td>
+                    <Skeleton h="16px" w="180px" mb={2} />
+                    <Skeleton h="12px" w="120px" />
+                  </Td>
+                  <Td><Skeleton h="24px" w="80px" borderRadius="full" /></Td>
+                  <Td><Skeleton h="14px" w="80px" /></Td>
+                  <Td><Skeleton h="32px" w="80px" borderRadius="md" /></Td>
+                </Tr>
+              ))}
+            </Tbody>
+          </Table>
+        </Box>
+      </Box>
+    );
+  }
 
   return (
     <Box p={6}>
@@ -514,7 +555,7 @@ export default function OperationLogs() {
 
                 <Box>
                   <Text fontSize="xs" color={mutedTextColor} textTransform="uppercase" fontWeight="bold">Tarea / Descripción</Text>
-                  <Text fontSize="md" p={3} bg={useColorModeValue('gray.50', 'whiteAlpha.100')} borderRadius="md" mt={1}>
+                  <Text fontSize="md" p={3} bg={detailBg} borderRadius="md" mt={1}>
                     {selectedLog.taskDescription}
                   </Text>
                 </Box>

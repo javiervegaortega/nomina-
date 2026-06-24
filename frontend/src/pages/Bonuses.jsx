@@ -14,6 +14,7 @@ import {
 } from '@chakra-ui/react';
 
 export default function Bonuses() {
+  const { confirmAction } = useContext(AppContext);
   const { bonuses, addBonus, updateBonus, deleteBonus, employees, isLoading } = useContext(DataContext);
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -149,9 +150,16 @@ export default function Bonuses() {
                   </div>
                   <div style={{ display: 'flex', gap: '0.25rem' }}>
                     <button className="btn-icon" onClick={() => openEdit(b)} title="Editar Configuración"><Edit2 size={16} /></button>
-                    <button className="btn-icon text-danger" onClick={() => {
-                      if (window.confirm(`¿Seguro que desea eliminar el bono ${b.name}?`)) deleteBonus(b.id);
-                    }} title="Eliminar"><Trash2 size={16} /></button>
+                    <button 
+                      className="btn btn-ghost" 
+                      style={{ color: 'var(--danger)' }} 
+                      onClick={() => {
+                        confirmAction(`¿Seguro que desea eliminar el bono ${b.name}?`, () => {
+                          deleteBonus(b.id);
+                        });
+                      }}
+                      title="Eliminar"
+                    ><Trash2 size={16} /></button>
                   </div>
                 </div>
 

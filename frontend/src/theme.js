@@ -64,14 +64,36 @@ const theme = extendTheme({
       },
       variants: {
         solid: (props) => ({
-          bg: props.colorScheme === 'brand' ? 'linear-gradient(135deg, #0284c7, #0ea5e9)' : undefined,
-          bgGradient: props.colorScheme === 'brand' ? 'linear(to-r, brand.600, brand.500)' : undefined,
-          color: 'white',
-          _hover: {
-            boxShadow: 'lg',
-          },
-          _active: {
-          },
+          ...(props.colorScheme === 'brand' && {
+            bgGradient: 'linear(to-r, brand.600, brand.400)',
+            color: 'white',
+            _hover: { bgGradient: 'linear(to-r, brand.700, brand.500)', boxShadow: 'lg' },
+            _active: { bgGradient: 'linear(to-r, brand.800, brand.600)' },
+          }),
+          ...(props.colorScheme === 'green' && {
+            bg: 'green.500',
+            color: 'white',
+            _hover: { bg: 'green.600', boxShadow: 'lg' },
+            _active: { bg: 'green.700' },
+          }),
+          ...(props.colorScheme === 'red' && {
+            bg: '#dc2626',
+            color: 'white',
+            _hover: { bg: '#b91c1c', boxShadow: 'lg' },
+            _active: { bg: '#991b1b' },
+          }),
+          ...(props.colorScheme === 'blue' && {
+            bg: '#2563eb',
+            color: 'white',
+            _hover: { bg: '#1d4ed8', boxShadow: 'lg' },
+            _active: { bg: '#1e40af' },
+          }),
+          ...(props.colorScheme === 'purple' && {
+            bg: '#7c3aed',
+            color: 'white',
+            _hover: { bg: '#6d28d9', boxShadow: 'lg' },
+            _active: { bg: '#5b21b6' },
+          }),
         }),
         glass: (props) => ({
           bg: props.colorMode === 'dark' ? 'whiteAlpha.100' : 'blackAlpha.50',

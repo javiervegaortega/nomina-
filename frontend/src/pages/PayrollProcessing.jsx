@@ -2,12 +2,14 @@ import React, { useState, useMemo, useContext } from 'react';
 import {
   Save, Download, FileText, Check, X, Edit3,
   ChevronRight, ChevronDown, ChevronUp, AlertCircle, DollarSign, Clock,
-  Calculator, Building2, Plus, ArrowLeft, Trash2, Calendar, Search, LayoutGrid, List, User, Edit2
+  Calculator, Building2, Plus, ArrowLeft, Trash2, Calendar, Search, LayoutGrid, List, User, Edit2, Eye
 } from 'lucide-react';
 import { AppContext } from '../App';
 import { DataContext } from '../context/DataContext';
 import { CUOTA_PATRONAL_RATE, CUOTA_LABORAL_RATE, formatQ } from '../data/mockData';
 import EmployeeIncidences from '../components/EmployeeIncidences';
+import EmployeeDeductions from '../components/EmployeeDeductions';
+import EmployeeSummaryModal from '../components/EmployeeSummaryModal';
 import {
   Box, Flex, Text, Heading, Button, SimpleGrid, Avatar, IconButton,
   Modal, ModalOverlay, ModalContent, ModalHeader, ModalBody, ModalFooter, ModalCloseButton,
@@ -17,7 +19,7 @@ import {
   Badge, Divider, useColorModeValue, Center, Tag, HStack, VStack, Checkbox, ButtonGroup, Card, CardHeader, CardBody, CardFooter, Stat, StatLabel, StatNumber, StatGroup, Skeleton, SkeletonText,
   AlertDialog, AlertDialogOverlay, AlertDialogContent, AlertDialogHeader, AlertDialogBody, AlertDialogFooter, useDisclosure,
   Drawer, DrawerBody, DrawerFooter, DrawerHeader, DrawerOverlay, DrawerContent, DrawerCloseButton, TabPanels, TabPanel, InputRightAddon,
-  Menu, MenuButton, MenuList, MenuItemOption, MenuOptionGroup
+  Menu, MenuButton, MenuList, MenuItemOption, MenuOptionGroup, Tooltip
 } from '@chakra-ui/react';
 
 const TABS = [
@@ -345,8 +347,7 @@ function PayrollEditor({ draftId, onBack }) {
     departments,
     divisions,
     subdivisions,
-    addIncidence,
-    deleteIncidence
+    companies
   } = useContext(DataContext);
   
   const { confirmAction, showToast } = useContext(AppContext);
@@ -356,6 +357,7 @@ function PayrollEditor({ draftId, onBack }) {
 
   const [tabIndex, setTabIndex] = useState(0);
   const [editingCell, setEditingCell] = useState(null); // { id, field, type }
+  const [summaryEmp, setSummaryEmp] = useState(null);
   
   const { isOpen: isAlertOpen, onOpen: onAlertOpen, onClose: onAlertClose } = useDisclosure();
   const cancelRef = React.useRef();
@@ -414,22 +416,15 @@ function PayrollEditor({ draftId, onBack }) {
     updateActivePayroll(draftId, newData);
   };
 
-  const handleSaveIncidence = async (empId, newIncidence, dQ) => {
-    // 1. Call API to save incidence globally
-    const { success, incidence: dbIncidence } = await addIncidence(empId, newIncidence);
-    if (!success) {
-      showToast('Error al guardar incidencia', 'error');
-      return;
-    }
-
-    // 2. Update local payroll draft data
+  const handleSaveIncidence = (empId, newIncidence, dQ) => {
+    // Save directly to the local payroll draft since there's no global incidence API
     const newData = data.map(emp => {
       if (emp.id === empId) {
         const currentDays = emp.days || 30;
         const updated = {
           ...emp,
           days: Math.max(0, currentDays - dQ),
-          incidences: [...(emp.incidences || []), dbIncidence]
+          incidences: [...(emp.incidences || []), newIncidence]
         };
         // Recalculate igss based on new days
         const baseFactor = updated.days / 30;
@@ -437,7 +432,6 @@ function PayrollEditor({ draftId, onBack }) {
         const baseSalary = sueldoOrd * baseFactor;
         updated.deductions = { ...updated.deductions, igss: Number((baseSalary * 0.0483).toFixed(2)) || 0 };
         
-        if (selectedEmp && selectedEmp.id === empId) setSelectedEmp(updated);
         return updated;
       }
       return emp;
@@ -446,15 +440,7 @@ function PayrollEditor({ draftId, onBack }) {
     showToast('Incidencia guardada', 'success');
   };
 
-  const handleDeleteIncidence = async (empId, incId, daysToRestore) => {
-    // 1. Call API to delete incidence globally
-    const { success } = await deleteIncidence(empId, incId);
-    if (!success) {
-      showToast('Error al eliminar incidencia', 'error');
-      return;
-    }
-
-    // 2. Update local payroll draft data
+  const handleDeleteIncidence = (empId, incId, daysToRestore) => {
     const newData = data.map(emp => {
       if (emp.id === empId) {
         const filtered = (emp.incidences || []).filter(i => i.id !== incId);
@@ -469,13 +455,53 @@ function PayrollEditor({ draftId, onBack }) {
         const baseSalary = sueldoOrd * baseFactor;
         updated.deductions = { ...updated.deductions, igss: Number((baseSalary * 0.0483).toFixed(2)) || 0 };
 
-        if (selectedEmp && selectedEmp.id === empId) setSelectedEmp(updated);
         return updated;
       }
       return emp;
     });
     updateActivePayroll(draftId, newData);
     showToast('Incidencia eliminada', 'info');
+  };
+
+  const handleSaveDeduction = (empId, newDeduction) => {
+    const newData = data.map(emp => {
+      if (emp.id === empId) {
+        const currentDeductionTotal = Number(emp.deductions?.[newDeduction.type]) || 0;
+        const updated = {
+          ...emp,
+          deductions: {
+            ...emp.deductions,
+            [newDeduction.type]: currentDeductionTotal + newDeduction.quotaAmount
+          },
+          deductionsHistory: [...(emp.deductionsHistory || []), newDeduction]
+        };
+        return updated;
+      }
+      return emp;
+    });
+    updateActivePayroll(draftId, newData);
+    showToast('Descuento guardado', 'success');
+  };
+
+  const handleDeleteDeduction = (empId, dedId, dedType, quotaAmount) => {
+    const newData = data.map(emp => {
+      if (emp.id === empId) {
+        const filtered = (emp.deductionsHistory || []).filter(d => d.id !== dedId);
+        const currentDeductionTotal = Number(emp.deductions?.[dedType]) || 0;
+        const updated = {
+          ...emp,
+          deductions: {
+            ...emp.deductions,
+            [dedType]: Math.max(0, currentDeductionTotal - quotaAmount)
+          },
+          deductionsHistory: filtered
+        };
+        return updated;
+      }
+      return emp;
+    });
+    updateActivePayroll(draftId, newData);
+    showToast('Descuento eliminado', 'info');
   };
 
   const confirmClose = async () => {
@@ -640,9 +666,19 @@ function PayrollEditor({ draftId, onBack }) {
             handleClose={confirmClose}
             handleSaveIncidence={handleSaveIncidence}
             handleDeleteIncidence={handleDeleteIncidence}
+            handleSaveDeduction={handleSaveDeduction}
+            handleDeleteDeduction={handleDeleteDeduction}
+            handleOpenSummary={setSummaryEmp}
           />
         )}
         {tab === 'distribution' && <DistributionTab data={data} />}
+        
+        <EmployeeSummaryModal
+          isOpen={!!summaryEmp}
+          onClose={() => setSummaryEmp(null)}
+          employee={summaryEmp}
+          companies={companies}
+        />
       </Box>
 
       <AlertDialog
@@ -775,7 +811,8 @@ function ListadoPagosTab({
   filterSubdiv, setFilterSubdiv,
   filterStatus, setFilterStatus,
   searchQuery, setSearchQuery,
-  handleClose, handleSaveIncidence, handleDeleteIncidence
+  handleClose, handleSaveIncidence, handleDeleteIncidence,
+  handleSaveDeduction, handleDeleteDeduction, handleOpenSummary
 }) {
   const { companies } = useContext(DataContext);
   const [viewMode, setViewMode] = useState('summary');
@@ -785,6 +822,8 @@ function ListadoPagosTab({
   const hoverBg = useColorModeValue('gray.50', 'whiteAlpha.50');
   const opLogBg = useColorModeValue('white', 'gray.800');
   const opLogBorder = useColorModeValue('1px solid var(--chakra-colors-gray-200)', 'none');
+  const ajusteBonosBg = useColorModeValue('blue.50', 'blue.900');
+  const taskDescColor = useColorModeValue('gray.600', 'gray.300');
 
   // Drawer State
   const { isOpen: isDrawerOpen, onOpen: onDrawerOpen, onClose: onDrawerClose } = useDisclosure();
@@ -1028,6 +1067,7 @@ function ListadoPagosTab({
                         <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">2da Quincena</Th>
                       </>
                     )}
+                    <Th w="80px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Acciones</Th>
                   </Tr>
                 </Thead>
                 <Tbody>
@@ -1132,6 +1172,30 @@ function ListadoPagosTab({
                             <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="green.500">{formatQ(q2)}</Td>
                           </>
                         )}
+                        <Td textAlign="center">
+                          <HStack justify="center" spacing={2}>
+                            <Tooltip label="Editar Egresos" placement="top" hasArrow>
+                              <IconButton 
+                                size="xs" 
+                                colorScheme="brand" 
+                                variant="ghost" 
+                                icon={<Edit2 size={14} />} 
+                                onClick={() => handleOpenDrawer(e)}
+                                aria-label="Editar"
+                              />
+                            </Tooltip>
+                            <Tooltip label="Resumen de Pagos" placement="top" hasArrow>
+                              <IconButton 
+                                size="xs" 
+                                colorScheme="blue" 
+                                variant="ghost" 
+                                icon={<Eye size={14} />} 
+                                onClick={() => handleOpenSummary(e)}
+                                aria-label="Ver Resumen"
+                              />
+                            </Tooltip>
+                          </HStack>
+                        </Td>
                       </Tr>
                     );
                   })}
@@ -1182,6 +1246,7 @@ function ListadoPagosTab({
                         <Th fontFamily="mono" fontSize="xs">{formatQ(columnTotals.totQuincena2)}</Th>
                       </>
                     )}
+                    <Th></Th>
                   </Tr>
                 </Thead>
               </Table>
@@ -1264,9 +1329,28 @@ function ListadoPagosTab({
                           </>
                         )}
                         <Td textAlign="center">
-                          <Button size="xs" colorScheme="brand" variant="solid" onClick={() => handleOpenDrawer(e)}>
-                            Editar Extras/Egresos
-                          </Button>
+                          <HStack justify="center" spacing={2}>
+                            <Tooltip label="Editar Egresos" placement="top" hasArrow>
+                              <IconButton 
+                                size="xs" 
+                                colorScheme="brand" 
+                                variant="ghost" 
+                                icon={<Edit2 size={14} />} 
+                                onClick={() => handleOpenDrawer(e)}
+                                aria-label="Editar"
+                              />
+                            </Tooltip>
+                            <Tooltip label="Resumen de Pagos" placement="top" hasArrow>
+                              <IconButton 
+                                size="xs" 
+                                colorScheme="blue" 
+                                variant="ghost" 
+                                icon={<Eye size={14} />} 
+                                onClick={() => handleOpenSummary(e)}
+                                aria-label="Ver Resumen"
+                              />
+                            </Tooltip>
+                          </HStack>
                         </Td>
                       </Tr>
                     );
@@ -1324,124 +1408,21 @@ function ListadoPagosTab({
             {selectedEmp && (
               <Tabs isFitted colorScheme="brand" size="sm">
                 <TabList bg={theadBg} position="sticky" top={0} zIndex={5}>
-                  <Tab fontWeight="semibold">Ingresos Extras</Tab>
                   <Tab fontWeight="semibold">Deducciones</Tab>
                   <Tab fontWeight="semibold">Incidencias</Tab>
                   <Tab fontWeight="semibold" color="brand.500">Detalle Operativo</Tab>
                 </TabList>
 
                 <TabPanels>
-                  {/* Tab 1: Extras */}
-                  <TabPanel p={4}>
-                    <VStack spacing={4} align="stretch">
-                      <FormControl>
-                        <FormLabel fontSize="xs" color="gray.500" mb={1}>Bonos Extras (Q)</FormLabel>
-                        <Input size="sm" type="number" borderRadius="md" value={selectedEmp.extras?.bonos || ''} 
-                          onChange={(e) => {
-                            onChange(selectedEmp.id, 'bonos', e.target.value, 'extras');
-                            setSelectedEmp(prev => ({...prev, extras: {...prev.extras, bonos: e.target.value}}));
-                          }} 
-                        />
-                      </FormControl>
-                      
-                      <Flex gap={2}>
-                        <FormControl>
-                          <FormLabel fontSize="xs" color="gray.500" mb={1}>Cant. Hrs Simples</FormLabel>
-                          <Input size="sm" type="number" borderRadius="md" value={selectedEmp.extras?.simplesQty || ''} 
-                            onChange={(e) => {
-                              onChange(selectedEmp.id, 'simplesQty', e.target.value, 'extras');
-                              setSelectedEmp(prev => ({...prev, extras: {...prev.extras, simplesQty: e.target.value}}));
-                            }} 
-                          />
-                        </FormControl>
-                        <FormControl>
-                          <FormLabel fontSize="xs" color="gray.500" mb={1}>Valor Hrs Simples (Q)</FormLabel>
-                          <Input size="sm" type="number" borderRadius="md" value={selectedEmp.extras?.simplesVal || ''} 
-                            onChange={(e) => {
-                              onChange(selectedEmp.id, 'simplesVal', e.target.value, 'extras');
-                              setSelectedEmp(prev => ({...prev, extras: {...prev.extras, simplesVal: e.target.value}}));
-                            }} 
-                          />
-                        </FormControl>
-                      </Flex>
 
-                      <Flex gap={2}>
-                        <FormControl>
-                          <FormLabel fontSize="xs" color="gray.500" mb={1}>Cant. Hrs Dobles</FormLabel>
-                          <Input size="sm" type="number" borderRadius="md" value={selectedEmp.extras?.doblesQty || ''} 
-                            onChange={(e) => {
-                              onChange(selectedEmp.id, 'doblesQty', e.target.value, 'extras');
-                              setSelectedEmp(prev => ({...prev, extras: {...prev.extras, doblesQty: e.target.value}}));
-                            }} 
-                          />
-                        </FormControl>
-                        <FormControl>
-                          <FormLabel fontSize="xs" color="gray.500" mb={1}>Valor Hrs Dobles (Q)</FormLabel>
-                          <Input size="sm" type="number" borderRadius="md" value={selectedEmp.extras?.doblesVal || ''} 
-                            onChange={(e) => {
-                              onChange(selectedEmp.id, 'doblesVal', e.target.value, 'extras');
-                              setSelectedEmp(prev => ({...prev, extras: {...prev.extras, doblesVal: e.target.value}}));
-                            }} 
-                          />
-                        </FormControl>
-                      </Flex>
-
-                      <FormControl>
-                        <FormLabel fontSize="xs" color="gray.500" mb={1}>Otros Ingresos (Q)</FormLabel>
-                        <Input size="sm" type="number" borderRadius="md" value={selectedEmp.extras?.otrosIngresos || ''} 
-                          onChange={(e) => {
-                            onChange(selectedEmp.id, 'otrosIngresos', e.target.value, 'extras');
-                            setSelectedEmp(prev => ({...prev, extras: {...prev.extras, otrosIngresos: e.target.value}}));
-                          }} 
-                        />
-                      </FormControl>
-                    </VStack>
-                  </TabPanel>
 
                   {/* Tab 2: Deductions */}
                   <TabPanel p={4}>
-                    <SimpleGrid columns={2} spacing={4}>
-                      {[
-                        { label: 'IGSS', key: 'igss' },
-                        { label: 'ISR', key: 'isr' },
-                        { label: 'Cafetería', key: 'cafe' },
-                        { label: 'Celular', key: 'cell' },
-                        { label: 'Uniforme', key: 'uniform' },
-                        { label: 'Calzado', key: 'shoes' },
-                        { label: 'Equipo', key: 'equipo' },
-                        { label: 'Producto', key: 'product' },
-                        { label: 'Bancos', key: 'bancos' },
-                        { label: 'Otros', key: 'otros' },
-                        { label: 'Judiciales', key: 'judiciales' },
-                        { label: 'Seguro', key: 'seguro' },
-                        { label: 'Parqueo', key: 'parqueo' },
-                        { label: 'Bol. Ornato', key: 'boleto_de_ornato' },
-                        { label: 'Otros Egresos', key: 'otros_egresos' },
-                      ].map((d) => (
-                        <FormControl key={d.key}>
-                          <FormLabel fontSize="xs" color="gray.500" mb={1}>{d.label}</FormLabel>
-                          <InputGroup size="sm">
-                            <InputLeftElement pointerEvents="none" color="gray.400" fontSize="xs">Q</InputLeftElement>
-                            <Input 
-                              type="number" 
-                              borderRadius="md" 
-                              value={selectedEmp.deductions?.[d.key] || ''} 
-                              onChange={(e) => {
-                                onChange(selectedEmp.id, d.key, e.target.value, 'deductions');
-                                setSelectedEmp(prev => ({
-                                  ...prev,
-                                  deductions: {
-                                    ...prev.deductions,
-                                    [d.key]: e.target.value
-                                  }
-                                }));
-                              }}
-                              _focus={{ borderColor: 'red.400', boxShadow: '0 0 0 1px var(--chakra-colors-red-400)' }}
-                            />
-                          </InputGroup>
-                        </FormControl>
-                      ))}
-                    </SimpleGrid>
+                    <EmployeeDeductions
+                      employee={selectedEmp}
+                      onSave={handleSaveDeduction}
+                      onDelete={handleDeleteDeduction}
+                    />
                   </TabPanel>
 
                   {/* Tab 3: Incidences */}
@@ -1455,7 +1436,24 @@ function ListadoPagosTab({
 
                   {/* Tab 4: Operativo */}
                   <TabPanel p={4}>
-                    <VStack align="stretch" spacing={3}>
+                    <VStack align="stretch" spacing={4}>
+                      <Box bg={ajusteBonosBg} p={4} borderRadius="md" border="1px solid" borderColor="blue.200">
+                        <FormControl>
+                          <FormLabel fontSize="sm" fontWeight="bold" color="blue.600" mb={1}>Ajuste Manual de Bonos (Q)</FormLabel>
+                          <Text fontSize="xs" color="gray.500" mb={2}>Si necesitas sobrescribir el total de bonos aprobados, modifícalo aquí.</Text>
+                          <Input size="sm" type="number" bg="white" _dark={{ bg: 'gray.800' }} borderRadius="md" value={selectedEmp.extras?.bonos ?? ''} 
+                            onChange={(e) => {
+                              onChange(selectedEmp.id, 'bonos', e.target.value, 'extras');
+                              setSelectedEmp(prev => ({...prev, extras: {...prev.extras, bonos: e.target.value}}));
+                            }} 
+                            placeholder="0.00"
+                          />
+                        </FormControl>
+                      </Box>
+                      
+                      <Divider />
+
+                      <Text fontWeight="bold" fontSize="sm" color="gray.600">Historial de Reportes Operativos</Text>
                       {selectedEmp.operationLogs && selectedEmp.operationLogs.length > 0 ? (
                         selectedEmp.operationLogs.map(log => (
                           <Box key={log.id} p={3} bg={opLogBg} borderRadius="md" border={opLogBorder} borderLeft="3px solid" borderLeftColor={log.type === 'BONO' ? 'brand.400' : 'yellow.400'}>
@@ -1466,7 +1464,7 @@ function ListadoPagosTab({
                             <Text fontSize="sm" fontWeight="bold" mb={1}>
                               {log.type === 'BONO' ? `Monto: Q${log.bonusAmount}` : `${log.hoursQty} hrs (${log.hourType})`}
                             </Text>
-                            <Text fontSize="xs" color={useColorModeValue('gray.600', 'gray.300')}>{log.taskDescription}</Text>
+                            <Text fontSize="xs" color={taskDescColor}>{log.taskDescription}</Text>
                           </Box>
                         ))
                       ) : (

@@ -8,6 +8,8 @@ import { formatQ, CUOTA_LABORAL_RATE, CUOTA_PATRONAL_RATE } from '../data/mockDa
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import * as XLSX from 'xlsx';
+import ReportPreviewModal from '../components/ReportPreviewModal';
+import EmployeeSummaryModal from '../components/EmployeeSummaryModal';
 
 export const getEmployeeFullName = (e) => {
   if (!e) return '';
@@ -400,6 +402,14 @@ function PayrollHistoryDetail({ group, onBack }) {
   const [filterStatus, setFilterStatus] = useState('Activo');
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState('detailed');
+  const [previewReportType, setPreviewReportType] = useState(null);
+  const [isPreviewModalOpen, setIsPreviewModalOpen] = useState(false);
+  const [selectedSummaryEmp, setSelectedSummaryEmp] = useState(null);
+
+  const handleOpenPreview = (type) => {
+    setPreviewReportType(type);
+    setIsPreviewModalOpen(true);
+  };
 
   // Combine and calculate
   const { data, totals } = useMemo(() => {
@@ -1109,7 +1119,7 @@ function PayrollHistoryDetail({ group, onBack }) {
         </Flex>
         <Flex gap={2} wrap="wrap">
           <Menu>
-            <MenuButton as={Button} colorScheme="brand" leftIcon={<Download size={16} />} rightIcon={<ChevronDown size={16} />} size={{ base: 'sm', md: 'md' }}>
+            <MenuButton as={Button} colorScheme="green" leftIcon={<Download size={16} />} rightIcon={<ChevronDown size={16} />} size={{ base: 'sm', md: 'md' }}>
               <Text display={{ base: 'none', sm: 'inline' }}>Exportar Excel</Text>
               <Text display={{ base: 'inline', sm: 'none' }}>Excel</Text>
             </MenuButton>
@@ -1124,7 +1134,23 @@ function PayrollHistoryDetail({ group, onBack }) {
               <MenuItem onClick={exportPlantillaIndustrial} color="blue.600" fontWeight="bold">Plantilla Banco Industrial</MenuItem>
             </MenuList>
           </Menu>
-          <Button colorScheme="blue" leftIcon={<FileText size={16} />} onClick={() => window.print()} size={{ base: 'sm', md: 'md' }}>
+          <Menu>
+            <MenuButton as={Button} colorScheme="red" leftIcon={<FileText size={16} />} rightIcon={<ChevronDown size={16} />} size={{ base: 'sm', md: 'md' }}>
+              <Text display={{ base: 'none', sm: 'inline' }}>Reportería PDF</Text>
+              <Text display={{ base: 'inline', sm: 'none' }}>PDF</Text>
+            </MenuButton>
+            <MenuList zIndex={50} shadow="lg">
+              <MenuItem onClick={() => handleOpenPreview('verificador')} fontWeight="bold">Verificador de Pago</MenuItem>
+              <MenuItem onClick={() => handleOpenPreview('cheques')}>Solicitud de Cheques</MenuItem>
+              <MenuItem onClick={() => handleOpenPreview('nomina')}>Nómina General</MenuItem>
+              <MenuItem onClick={() => handleOpenPreview('igss')}>Recibo e IGSS</MenuItem>
+              <MenuItem onClick={() => handleOpenPreview('libro')} color="purple.500" fontWeight="bold">Libro de Salarios</MenuItem>
+              <Divider my={1} />
+              <MenuItem onClick={() => handleOpenPreview('promerica')} color="green.600" fontWeight="bold">Plantilla Banco Promerica</MenuItem>
+              <MenuItem onClick={() => handleOpenPreview('industrial')} color="blue.600" fontWeight="bold">Plantilla Banco Industrial</MenuItem>
+            </MenuList>
+          </Menu>
+          <Button colorScheme="purple" leftIcon={<FileText size={16} />} onClick={() => window.print()} size={{ base: 'sm', md: 'md' }}>
             Imprimir Boletas (PDF)
           </Button>
         </Flex>
@@ -1220,7 +1246,7 @@ function PayrollHistoryDetail({ group, onBack }) {
               color={viewMode === 'summary' ? 'white' : 'inherit'}
               _hover={{ bg: viewMode === 'summary' ? 'brand.600' : hoverBg }}
             >
-              Resumen
+              Vista Resumen
             </Button>
             <Button 
               isActive={viewMode === 'detailed'} 
@@ -1229,7 +1255,7 @@ function PayrollHistoryDetail({ group, onBack }) {
               color={viewMode === 'detailed' ? 'white' : 'inherit'}
               _hover={{ bg: viewMode === 'detailed' ? 'brand.600' : hoverBg }}
             >
-              Detallada
+              Vista Detallada
             </Button>
           </ButtonGroup>
         </HStack>
@@ -1276,57 +1302,57 @@ function PayrollHistoryDetail({ group, onBack }) {
         <Table variant="simple" size="sm" layout="fixed" style={{ borderCollapse: 'separate', borderSpacing: 0, width: 'max-content' }}>
           <Thead position="sticky" top={0} zIndex={15}>
             <Tr bg={theadBg}>
-              <Th w="60px" position="sticky" left={0} zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">No.</Th>
-              <Th w="200px" position="sticky" left="60px" zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Nombre Empleado</Th>
-              <Th w="120px" position="sticky" left="260px" zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Empresa</Th>
-              <Th w="120px" position="sticky" left="380px" zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor} borderBottom="2px solid" borderBottomColor="brand.500" boxShadow="4px 0 8px -4px rgba(0,0,0,0.15)" fontSize="10px">Puesto</Th>
+              <Th minW="60px" w="60px" position="sticky" left={0} zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">No.</Th>
+              <Th minW="200px" w="200px" position="sticky" left="60px" zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Nombre Empleado</Th>
+              <Th minW="120px" w="120px" position="sticky" left="260px" zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Empresa</Th>
+              <Th minW="120px" w="120px" position="sticky" left="380px" zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor} borderBottom="2px solid" borderBottomColor="brand.500" boxShadow="4px 0 8px -4px rgba(0,0,0,0.15)" fontSize="10px">Puesto</Th>
               
-              <Th w="75px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Días Lab.</Th>
-              <Th w="120px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">S. Ordinario</Th>
+              <Th minW="75px" w="75px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Días Lab.</Th>
+              <Th minW="120px" w="120px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">S. Ordinario</Th>
               {viewMode === 'detailed' && (
                 <>
-                  <Th w="120px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Bon. Incentivo</Th>
-                  <Th w="140px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Bono Dec. 37-2001</Th>
-                  <Th w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Bonos</Th>
-                  <Th w="120px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="brand.500">T. Devengado</Th>
-                  <Th w="80px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Hrs Simples</Th>
-                  <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Val Hrs Simp</Th>
-                  <Th w="80px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Hrs Dobles</Th>
-                  <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Val Hrs Dobl</Th>
-                  <Th w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Otros Ingr.</Th>
+                  <Th minW="120px" w="120px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Bon. Incentivo</Th>
+                  <Th minW="140px" w="140px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Bono Dec. 37-2001</Th>
+                  <Th minW="100px" w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Bonos</Th>
+                  <Th minW="120px" w="120px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="brand.500">T. Devengado</Th>
+                  <Th minW="80px" w="80px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Hrs Simples</Th>
+                  <Th minW="110px" w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Val Hrs Simp</Th>
+                  <Th minW="80px" w="80px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Hrs Dobles</Th>
+                  <Th minW="110px" w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Val Hrs Dobl</Th>
+                  <Th minW="100px" w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Otros Ingr.</Th>
                 </>
               )}
-              <Th w="130px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="gold.500">Salario Total</Th>
+              <Th minW="130px" w="130px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="gold.500">Salario Total</Th>
               
               {viewMode === 'detailed' && (
                 <>
-                  <Th w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">IGSS</Th>
-                  <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">ISR</Th>
-                  <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Cafetería</Th>
-                  <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Celular</Th>
-                  <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Uniforme</Th>
-                  <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Calzado</Th>
-                  <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Equipo</Th>
-                  <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Producto</Th>
-                  <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Bancos</Th>
-                  <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Otros</Th>
-                  <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Judiciales</Th>
-                  <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Seguro</Th>
-                  <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Parqueo</Th>
-                  <Th w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Bol. Ornato</Th>
-                  <Th w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Otros Egr.</Th>
+                  <Th minW="100px" w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">IGSS</Th>
+                  <Th minW="95px" w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">ISR</Th>
+                  <Th minW="95px" w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Cafetería</Th>
+                  <Th minW="95px" w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Celular</Th>
+                  <Th minW="95px" w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Uniforme</Th>
+                  <Th minW="95px" w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Calzado</Th>
+                  <Th minW="95px" w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Equipo</Th>
+                  <Th minW="95px" w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Producto</Th>
+                  <Th minW="95px" w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Bancos</Th>
+                  <Th minW="95px" w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Otros</Th>
+                  <Th minW="95px" w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Judiciales</Th>
+                  <Th minW="95px" w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Seguro</Th>
+                  <Th minW="95px" w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Parqueo</Th>
+                  <Th minW="100px" w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Bol. Ornato</Th>
+                  <Th minW="100px" w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Otros Egr.</Th>
                 </>
               )}
-              <Th w="130px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.500">Total Egresos</Th>
+              <Th minW="130px" w="130px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.500">Total Egresos</Th>
               
-              <Th w="120px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="brand.500">Liquido a Recibir</Th>
+              <Th minW="120px" w="120px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="brand.500">Liquido a Recibir</Th>
               {group.periodType === '2da' && (
                 <>
-                  <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">1ra Quincena</Th>
-                  <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">2da Quincena</Th>
+                  <Th minW="110px" w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">1ra Quincena</Th>
+                  <Th minW="110px" w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">2da Quincena</Th>
                 </>
               )}
-              <Th w="80px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" textAlign="center">Boleta</Th>
+              <Th minW="80px" w="80px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" textAlign="center">Acciones</Th>
             </Tr>
           </Thead>
           <Tbody>
@@ -1400,14 +1426,26 @@ function PayrollHistoryDetail({ group, onBack }) {
                   )}
                   
                   <Td textAlign="center">
-                    <IconButton 
-                      aria-label="Ver Boleta" 
-                      icon={<FileText size={16} />} 
-                      size="xs" 
-                      colorScheme="brand" 
-                      variant="ghost" 
-                      onClick={() => setSelectedVoucherEmp(e)} 
-                    />
+                    <HStack spacing={1} justify="center">
+                      <IconButton 
+                        aria-label="Ver Resumen" 
+                        icon={<Eye size={15} />} 
+                        size="xs" 
+                        colorScheme="gray" 
+                        variant="ghost"
+                        title="Ver detalle de pago"
+                        onClick={() => setSelectedSummaryEmp(e)} 
+                      />
+                      <IconButton 
+                        aria-label="Ver Boleta" 
+                        icon={<FileText size={15} />} 
+                        size="xs" 
+                        colorScheme="brand" 
+                        variant="ghost"
+                        title="Ver boleta de pago"
+                        onClick={() => setSelectedVoucherEmp(e)} 
+                      />
+                    </HStack>
                   </Td>
                 </Tr>
               );
@@ -1423,33 +1461,41 @@ function PayrollHistoryDetail({ group, onBack }) {
               
               <Th>{groupData.data.length} Empleados</Th>
               <Th fontFamily="mono" fontSize="xs">{formatQ(groupTotals.totSalarioOrd)}</Th>
-              <Th fontFamily="mono" fontSize="xs">{formatQ(groupTotals.totBonInc)}</Th>
-              <Th fontFamily="mono" fontSize="xs">{formatQ(groupTotals.totBonDec)}</Th>
-              <Th fontFamily="mono" fontSize="xs">{formatQ(groupTotals.totBonos)}</Th>
-              <Th fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500">{formatQ(groupTotals.totDevengado)}</Th>
-              
-              <Th>{groupTotals.totHorasSimples}</Th>
-              <Th fontFamily="mono" fontSize="xs">{formatQ(groupTotals.totValSimple)}</Th>
-              <Th>{groupTotals.totHorasDobles}</Th>
-              <Th fontFamily="mono" fontSize="xs">{formatQ(groupTotals.totValDouble)}</Th>
-              <Th fontFamily="mono" fontSize="xs">{formatQ(groupTotals.totOtrosIngresos)}</Th>
+              {viewMode === 'detailed' && (
+                <>
+                  <Th fontFamily="mono" fontSize="xs">{formatQ(groupTotals.totBonInc)}</Th>
+                  <Th fontFamily="mono" fontSize="xs">{formatQ(groupTotals.totBonDec)}</Th>
+                  <Th fontFamily="mono" fontSize="xs">{formatQ(groupTotals.totBonos)}</Th>
+                  <Th fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500">{formatQ(groupTotals.totDevengado)}</Th>
+                  
+                  <Th>{groupTotals.totHorasSimples}</Th>
+                  <Th fontFamily="mono" fontSize="xs">{formatQ(groupTotals.totValSimple)}</Th>
+                  <Th>{groupTotals.totHorasDobles}</Th>
+                  <Th fontFamily="mono" fontSize="xs">{formatQ(groupTotals.totValDouble)}</Th>
+                  <Th fontFamily="mono" fontSize="xs">{formatQ(groupTotals.totOtrosIngresos)}</Th>
+                </>
+              )}
               <Th fontFamily="mono" fontSize="xs" fontWeight="bold" color="gold.500">{formatQ(groupTotals.totSalarioTotal)}</Th>
               
-              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totIgss)}</Th>
-              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totIsr)}</Th>
-              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totCafe)}</Th>
-              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totCell)}</Th>
-              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totUniform)}</Th>
-              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totShoes)}</Th>
-              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totEquipo)}</Th>
-              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totProduct)}</Th>
-              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totBancos)}</Th>
-              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totOtros)}</Th>
-              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totJudiciales)}</Th>
-              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totSeguro)}</Th>
-              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totParqueo)}</Th>
-              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totBoleta)}</Th>
-              <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totOtrosEgresos)}</Th>
+              {viewMode === 'detailed' && (
+                <>
+                  <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totIgss)}</Th>
+                  <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totIsr)}</Th>
+                  <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totCafe)}</Th>
+                  <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totCell)}</Th>
+                  <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totUniform)}</Th>
+                  <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totShoes)}</Th>
+                  <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totEquipo)}</Th>
+                  <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totProduct)}</Th>
+                  <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totBancos)}</Th>
+                  <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totOtros)}</Th>
+                  <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totJudiciales)}</Th>
+                  <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totSeguro)}</Th>
+                  <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totParqueo)}</Th>
+                  <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totBoleta)}</Th>
+                  <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totOtrosEgresos)}</Th>
+                </>
+              )}
               <Th fontFamily="mono" fontSize="xs" fontWeight="bold" color="red.500">{formatQ(groupTotals.totTotalEgresos)}</Th>
               
               <Th fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500">{formatQ(groupTotals.totLiquido)}</Th>
@@ -1541,6 +1587,21 @@ function PayrollHistoryDetail({ group, onBack }) {
         })()}
       </Box>
 
+      <ReportPreviewModal 
+        isOpen={isPreviewModalOpen}
+        onClose={() => setIsPreviewModalOpen(false)}
+        reportType={previewReportType}
+        group={group}
+        data={data}
+        companies={companies}
+      />
+      <EmployeeSummaryModal
+        isOpen={!!selectedSummaryEmp}
+        onClose={() => setSelectedSummaryEmp(null)}
+        employee={selectedSummaryEmp}
+        companies={companies}
+        periodType={group?.periodType}
+      />
     </Box>
   );
 }

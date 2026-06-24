@@ -1,9 +1,11 @@
-import React, { createContext, useState, useEffect } from 'react';
+import React, { createContext, useState, useEffect, useRef } from 'react';
 
 export const DataContext = createContext();
 
 export function DataProvider({ children }) {
   // --- STATE ---
+  const saveTimeouts = useRef({});
+
   const [companies, setCompanies] = useState(() => {
     const saved = localStorage.getItem('nomina-companies');
     return saved ? JSON.parse(saved) : [];
@@ -894,22 +896,32 @@ export function DataProvider({ children }) {
   };
 
   const updateActivePayroll = async (id, newEmployeesData) => {
+    // 1. Update React state immediately for instant UI response
     const updatedDrafts = activePayrolls.map(p => p.id === id ? { ...p, employees: newEmployeesData } : p);
     setActivePayrolls(updatedDrafts);
 
     const draft = updatedDrafts.find(p => p.id === id);
     if (draft) {
-      try {
-        const res = await fetch(`http://localhost:3000/api/payroll-drafts/${id}`, {
-          method: 'PUT',
-          headers: getAuthHeader(),
-          body: JSON.stringify(draft)
-        });
-        if (!res.ok) {
-          await res.json().catch(() => null);
-        }
-      } catch(e) {
+      // 2. Clear existing timeout for this draft
+      if (saveTimeouts.current[id]) {
+        clearTimeout(saveTimeouts.current[id]);
       }
+      
+      // 3. Set a new timeout to persist to the database after 1.5 seconds of inactivity
+      saveTimeouts.current[id] = setTimeout(async () => {
+        try {
+          const res = await fetch(`http://localhost:3000/api/payroll-drafts/${id}`, {
+            method: 'PUT',
+            headers: getAuthHeader(),
+            body: JSON.stringify(draft)
+          });
+          if (!res.ok) {
+            await res.json().catch(() => null);
+          }
+        } catch(e) {
+          console.error("Error saving draft in background:", e);
+        }
+      }, 1500);
     }
   };
 
