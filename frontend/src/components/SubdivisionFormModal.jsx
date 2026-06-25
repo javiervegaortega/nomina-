@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useContext } from 'react';
+import { AuthContext } from '../context/AuthContext';
 import {
   Modal,
   ModalOverlay,
@@ -19,6 +20,8 @@ const INITIAL_FORM = {
 };
 
 export default function SubdivisionFormModal({ isOpen, onClose, onSave, initialData }) {
+  const { user } = useContext(AuthContext);
+  const isReadOnly = user?.role === 'AUDITOR';
   const [formData, setFormData] = useState(INITIAL_FORM);
 
   // Exact matching colors from screenshot
@@ -134,9 +137,11 @@ export default function SubdivisionFormModal({ isOpen, onClose, onSave, initialD
                 <Button variant="ghost" onClick={onClose} color={subtextColor} _hover={{ bg: useColorModeValue('gray.100', 'whiteAlpha.100') }}>
                   Cancelar
                 </Button>
-                <Button colorScheme="blue" type="submit" px={8}>
-                  Guardar
-                </Button>
+                {!isReadOnly && (
+                  <Button colorScheme="blue" type="submit" px={8}>
+                    Guardar
+                  </Button>
+                )}
               </Flex>
             </Box>
           </ModalBody>

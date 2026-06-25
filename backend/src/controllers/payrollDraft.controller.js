@@ -21,6 +21,7 @@ const getAll = async (req, res) => {
         title: draftObj.title,
         companies: draftObj.companies,
         periodType: draftObj.periodType,
+        notes: draftObj.notes,
         employees: employeesArr,
         createdAt: draftObj.createdAt
       };
@@ -35,7 +36,7 @@ const getAll = async (req, res) => {
 const create = async (req, res) => {
   const t = await sequelize.transaction();
   try {
-    const { id, title, companies, employees, createdAt, periodType } = req.body;
+    const { id, title, companies, employees, createdAt, periodType, notes } = req.body;
     
     // Create main draft record
     const newDraft = await PayrollDraft.create({
@@ -43,6 +44,7 @@ const create = async (req, res) => {
       title,
       companies,
       periodType,
+      notes,
       employeesCount: employees ? employees.length : 0,
       createdAt
     }, { transaction: t });
@@ -76,7 +78,7 @@ const update = async (req, res) => {
       return res.status(404).json({ error: 'Borrador no encontrado' });
     }
 
-    const { title, companies, employees, createdAt, periodType } = req.body;
+    const { title, companies, employees, createdAt, periodType, notes } = req.body;
     console.log("UPDATE DRAFT ID:", draftId, "PAYLOAD PERIOD:", periodType);
     
     // Update main record
@@ -84,6 +86,7 @@ const update = async (req, res) => {
       title,
       companies,
       periodType,
+      notes,
       createdAt,
       employeesCount: employees ? employees.length : 0
     }, { transaction: t });

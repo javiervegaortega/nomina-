@@ -1,6 +1,7 @@
 import React, { useState, useContext, useMemo } from 'react';
 import { DataContext } from '../context/DataContext';
 import { AppContext } from '../App';
+import { AuthContext } from '../context/AuthContext';
 import usePagination from '../hooks/usePagination';
 import Pagination from '../components/Pagination';
 import { Plus, Trash2, Eye, Search, Coffee, User, Clock } from 'lucide-react';
@@ -47,6 +48,8 @@ import {
 export default function Commissions() {
   const { employees, companies, commissions, addCommission, deleteCommission, isLoading } = useContext(DataContext);
   const { confirmAction } = useContext(AppContext);
+  const { user } = useContext(AuthContext);
+  const isReadOnly = user?.role === 'AUDITOR';
   const { isOpen, onOpen, onClose } = useDisclosure();
   const toast = useToast();
 
@@ -240,17 +243,19 @@ export default function Commissions() {
             </Badge>
           </Flex>
         </Box>
-        <Button
-          colorScheme="brand"
-          leftIcon={<Plus size={18} />}
-          onClick={openAdd}
-          size={{ base: 'sm', md: 'md' }}
-          borderRadius="lg"
-          transition="all 0.3s"
-          _hover={{ boxShadow: 'lg' }}
-        >
-          Nueva Solicitud
-        </Button>
+        {!isReadOnly && (
+          <Button
+            colorScheme="brand"
+            leftIcon={<Plus size={18} />}
+            onClick={openAdd}
+            size={{ base: 'sm', md: 'md' }}
+            borderRadius="lg"
+            transition="all 0.3s"
+            _hover={{ boxShadow: 'lg' }}
+          >
+            Nueva Solicitud
+          </Button>
+        )}
       </Flex>
 
       {/* Table Container */}
@@ -332,23 +337,25 @@ export default function Commissions() {
                   </Td>
                   <Td textAlign="right">
                     <Flex justify="flex-end" gap={1}>
-                      <Tooltip label="Eliminar" hasArrow>
-                        <IconButton
-                          aria-label="Eliminar solicitud"
-                          icon={<Trash2 size={16} />}
-                          size="sm"
-                          variant="ghost"
-                          color={deleteIconColor}
-                          borderRadius="lg"
-                          transition="all 0.3s"
-                          _hover={{ bg: deleteHoverBg }}
-                          onClick={() => {
-                            confirmAction(`¿Seguro que desea eliminar esta solicitud?`, () => {
-                              deleteCommission(c.id);
-                            });
-                          }}
-                        />
-                      </Tooltip>
+                      {!isReadOnly && (
+                        <Tooltip label="Eliminar" hasArrow>
+                          <IconButton
+                            aria-label="Eliminar solicitud"
+                            icon={<Trash2 size={16} />}
+                            size="sm"
+                            variant="ghost"
+                            color={deleteIconColor}
+                            borderRadius="lg"
+                            transition="all 0.3s"
+                            _hover={{ bg: deleteHoverBg }}
+                            onClick={() => {
+                              confirmAction(`¿Seguro que desea eliminar esta solicitud?`, () => {
+                                deleteCommission(c.id);
+                              });
+                            }}
+                          />
+                        </Tooltip>
+                      )}
                     </Flex>
                   </Td>
                 </Tr>

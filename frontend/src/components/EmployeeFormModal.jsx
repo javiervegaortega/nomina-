@@ -8,6 +8,7 @@ import {
   Table, Thead, Tbody, Tr, Th, Td, TableContainer, VStack
 } from '@chakra-ui/react';
 import { DataContext } from '../context/DataContext';
+import { AuthContext } from '../context/AuthContext';
 import { toast } from 'sonner';
 
 function SidebarTab({ active, label, icon: IconComponent, onClick }) {
@@ -115,7 +116,7 @@ const SelectField = ({ label, val, onChange, options, required }) => {
 };
 
 // ============ RECORD TABLE COMPONENT ============
-function RecordTable({ records, columns, onDelete, onEdit, emptyText = 'Sin registros' }) {
+function RecordTable({ records, columns, onDelete, onEdit, emptyText = 'Sin registros', isReadOnly }) {
   const borderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
   const hoverBg = useColorModeValue('gray.50', 'whiteAlpha.50');
   
@@ -143,10 +144,12 @@ function RecordTable({ records, columns, onDelete, onEdit, emptyText = 'Sin regi
                 <Td key={j} fontSize="xs">{col.render ? col.render(r.data) : (r.data?.[col.key] || '-')}</Td>
               ))}
               <Td>
-                <HStack spacing={1}>
-                  {onEdit && <IconButton icon={<Edit3 size={14} />} size="xs" variant="ghost" onClick={() => onEdit(r)} aria-label="Edit" />}
-                  {onDelete && <IconButton icon={<Trash2 size={14} />} size="xs" variant="ghost" colorScheme="red" onClick={() => onDelete(r.id)} aria-label="Delete" />}
-                </HStack>
+                {!isReadOnly && (
+                  <HStack spacing={1}>
+                    {onEdit && <IconButton icon={<Edit3 size={14} />} size="xs" variant="ghost" onClick={() => onEdit(r)} aria-label="Edit" />}
+                    {onDelete && <IconButton icon={<Trash2 size={14} />} size="xs" variant="ghost" colorScheme="red" onClick={() => onDelete(r.id)} aria-label="Delete" />}
+                  </HStack>
+                )}
               </Td>
             </Tr>
           ))}
@@ -181,7 +184,7 @@ function InlineRecordForm({ fields, onSave, onCancel, initialData }) {
         ))}
       </SimpleGrid>
       <HStack spacing={2}>
-        <Button size="xs" colorScheme="brand" leftIcon={<Check size={12} />} onClick={() => onSave(formData)}>Guardar</Button>
+        {!isReadOnly && <Button size="xs" colorScheme="brand" leftIcon={<Check size={12} />} onClick={() => onSave(formData)}>Guardar</Button>}
         <Button size="xs" variant="ghost" onClick={onCancel}>Cancelar</Button>
       </HStack>
     </Box>
@@ -191,6 +194,8 @@ function InlineRecordForm({ fields, onSave, onCancel, initialData }) {
 
 export default function EmployeeFormModal({ mode, initialData, onClose, onSave, employees = [], companies, departments, areas, divisions, subdivisions }) {
   const { addEmployeeRecord, updateEmployeeRecord, deleteEmployeeRecord } = useContext(DataContext);
+  const { user } = useContext(AuthContext);
+  const isReadOnly = user?.role === 'AUDITOR';
   const [tab, setTab] = useState('personal');
   const [form, setForm] = useState(() => {
     const data = initialData ? { ...initialData } : {};
@@ -632,7 +637,7 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
 
                 <Flex justify="space-between" align="center" mb={3}>
                   <Text fontSize="sm" color="gray.500">{getRecords('estudio').length} estudio(s)</Text>
-                  <Button size="xs" colorScheme="brand" leftIcon={<Plus size={12} />} onClick={() => { setShowRecordForm('estudio'); setEditingRecord(null); }}>Agregar Estudio</Button>
+                  {!isReadOnly && <Button size="xs" colorScheme="brand" leftIcon={<Plus size={12} />} onClick={() => { setShowRecordForm('estudio'); setEditingRecord(null); }}>Agregar Estudio</Button>}
                 </Flex>
                 {showRecordForm === 'estudio' && (
                   <InlineRecordForm
@@ -651,7 +656,7 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
                     onCancel={() => { setShowRecordForm(null); setEditingRecord(null); }}
                   />
                 )}
-                <RecordTable
+                <RecordTable isReadOnly={isReadOnly}
                   records={getRecords('estudio')}
                   columns={[
                     { key: 'div_universidad', label: 'Div / Universidad' },
@@ -666,7 +671,7 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
                 <SectionTitle title="Cursos" />
                 <Flex justify="space-between" align="center" mb={3}>
                   <Text fontSize="sm" color="gray.500">{getRecords('curso').length} curso(s)</Text>
-                  <Button size="xs" colorScheme="brand" leftIcon={<Plus size={12} />} onClick={() => { setShowRecordForm('curso'); setEditingRecord(null); }}>Agregar Curso</Button>
+                  {!isReadOnly && <Button size="xs" colorScheme="brand" leftIcon={<Plus size={12} />} onClick={() => { setShowRecordForm('curso'); setEditingRecord(null); }}>Agregar Curso</Button>}
                 </Flex>
                 {showRecordForm === 'curso' && (
                   <InlineRecordForm
@@ -688,7 +693,7 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
                     onCancel={() => { setShowRecordForm(null); setEditingRecord(null); }}
                   />
                 )}
-                <RecordTable
+                <RecordTable isReadOnly={isReadOnly}
                   records={getRecords('curso')}
                   columns={[
                     { key: 'fecha_capacitacion', label: 'Fecha' },
@@ -703,7 +708,7 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
                 <SectionTitle title="Puestos (Historial interno)" />
                 <Flex justify="space-between" align="center" mb={3}>
                   <Text fontSize="sm" color="gray.500">{getRecords('puesto').length} puesto(s)</Text>
-                  <Button size="xs" colorScheme="brand" leftIcon={<Plus size={12} />} onClick={() => { setShowRecordForm('puesto'); setEditingRecord(null); }}>Agregar Puesto</Button>
+                  {!isReadOnly && <Button size="xs" colorScheme="brand" leftIcon={<Plus size={12} />} onClick={() => { setShowRecordForm('puesto'); setEditingRecord(null); }}>Agregar Puesto</Button>}
                 </Flex>
                 {showRecordForm === 'puesto' && (
                   <InlineRecordForm
@@ -720,7 +725,7 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
                     onCancel={() => { setShowRecordForm(null); setEditingRecord(null); }}
                   />
                 )}
-                <RecordTable
+                <RecordTable isReadOnly={isReadOnly}
                   records={getRecords('puesto')}
                   columns={[
                     { key: 'fecha', label: 'Fecha' },
@@ -735,7 +740,7 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
                 <SectionTitle title="Eventos" />
                 <Flex justify="space-between" align="center" mb={3}>
                   <Text fontSize="sm" color="gray.500">{getRecords('evento').length} evento(s)</Text>
-                  <Button size="xs" colorScheme="brand" leftIcon={<Plus size={12} />} onClick={() => { setShowRecordForm('evento'); setEditingRecord(null); }}>Agregar Evento</Button>
+                  {!isReadOnly && <Button size="xs" colorScheme="brand" leftIcon={<Plus size={12} />} onClick={() => { setShowRecordForm('evento'); setEditingRecord(null); }}>Agregar Evento</Button>}
                 </Flex>
                 {showRecordForm === 'evento' && (
                   <InlineRecordForm
@@ -763,7 +768,7 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
                     onCancel={() => { setShowRecordForm(null); setEditingRecord(null); }}
                   />
                 )}
-                <RecordTable
+                <RecordTable isReadOnly={isReadOnly}
                   records={getRecords('evento')}
                   columns={[
                     { key: 'tipo', label: 'Tipo' },
@@ -782,15 +787,17 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
           {/* FOOTER */}
           <Flex p={4} borderTop="1px solid" borderColor={borderColor} bg={footerBg} justify="flex-end" align="center" gap={3}>
             <Button variant="ghost" onClick={onClose} color={subtitleColor} _hover={{ bg: 'whiteAlpha.100' }}>Cancelar</Button>
-            <Button 
-              colorScheme="blue" 
-              onClick={handleSave} 
-              leftIcon={<Check size={18} />} 
-              px={6}
-              isDisabled={distTotal !== 100 || !!duplicateDpi || !!duplicateIgss}
-            >
-              Guardar Cambios
-            </Button>
+            {!isReadOnly && (
+              <Button 
+                colorScheme="blue" 
+                onClick={handleSave} 
+                leftIcon={<Check size={18} />} 
+                px={6}
+                isDisabled={distTotal !== 100 || !!duplicateDpi || !!duplicateIgss}
+              >
+                Guardar Cambios
+              </Button>
+            )}
           </Flex>
         </Flex>
       </ModalContent>

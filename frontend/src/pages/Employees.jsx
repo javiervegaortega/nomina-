@@ -9,6 +9,7 @@ import html2canvas from 'html2canvas';
 import * as XLSX from 'xlsx';
 import { AppContext } from '../App';
 import { DataContext } from '../context/DataContext';
+import { AuthContext } from '../context/AuthContext';
 import usePagination from '../hooks/usePagination';
 import Pagination from '../components/Pagination';
 import ImportData from '../components/ImportData';
@@ -37,6 +38,8 @@ import {
 export default function Employees() {
   const { confirmAction } = useContext(AppContext);
   const { employees, addEmployee, updateEmployee, deleteEmployee, companies, departments, areas, divisions, subdivisions, isLoading } = useContext(DataContext);
+  const { user } = useContext(AuthContext);
+  const isReadOnly = user?.role === 'AUDITOR';
   
   const INITIAL_FORM = useMemo(() => ({
     estado: 'Activo',
@@ -884,16 +887,18 @@ export default function Employees() {
           >
             Cumpleañeros
           </Button>
-          <Button
-            colorScheme="brand"
-            leftIcon={<UserPlus size={16} />}
-            onClick={openAdd}
-            borderRadius="lg"
-            transition="all 0.3s"
-            _hover={{ shadow: 'lg' }}
-          >
-            Nuevo Empleado
-          </Button>
+          {!isReadOnly && (
+            <Button
+              colorScheme="brand"
+              leftIcon={<UserPlus size={16} />}
+              onClick={openAdd}
+              borderRadius="lg"
+              transition="all 0.3s"
+              _hover={{ shadow: 'lg' }}
+            >
+              Nuevo Empleado
+            </Button>
+          )}
         </HStack>
       </Flex>
 
@@ -1068,6 +1073,7 @@ export default function Employees() {
                     setDisciplinariaState={setDisciplinariaState}
                     handleGenerateFiniquito={handleGenerateFiniquito}
                     handleDelete={handleDelete}
+                    isReadOnly={isReadOnly}
                   />
                 ))
               )}
@@ -1642,7 +1648,8 @@ const EmployeeRow = React.memo(({
   setCancelacionState,
   setDisciplinariaState,
   handleGenerateFiniquito,
-  handleDelete
+  handleDelete,
+  isReadOnly
 }) => {
   const fullName = getFullName(emp);
   const companyName = companies.find(c => c.id === emp.empresa_principal)?.nombre_comercial || 'SIN ASIGNAR';
@@ -1768,18 +1775,20 @@ const EmployeeRow = React.memo(({
               transition="all 0.3s"
             />
           </Tooltip>
-          <Tooltip label="Editar" hasArrow>
-            <IconButton
-              aria-label="Editar"
-              icon={<Edit2 size={16} />}
-              size={{ base: 'xs', md: 'sm' }}
-              variant="ghost"
-              colorScheme="accent"
-              onClick={() => openEdit(emp)}
-              transition="all 0.3s"
-            />
-          </Tooltip>
-          {emp.estado === 'Activo' && (
+          {!isReadOnly && (
+            <Tooltip label="Editar" hasArrow>
+              <IconButton
+                aria-label="Editar"
+                icon={<Edit2 size={16} />}
+                size={{ base: 'xs', md: 'sm' }}
+                variant="ghost"
+                colorScheme="accent"
+                onClick={() => openEdit(emp)}
+                transition="all 0.3s"
+              />
+            </Tooltip>
+          )}
+          {!isReadOnly && emp.estado === 'Activo' && (
             <>
               <Menu>
                 <Tooltip label="Generar Documentos" hasArrow>
@@ -1851,17 +1860,19 @@ const EmployeeRow = React.memo(({
               />
             </Tooltip>
           )}
-          <Tooltip label="Eliminar (Permanente)" hasArrow>
-            <IconButton
-              aria-label="Eliminar"
-              icon={<Trash2 size={16} />}
-              size={{ base: 'xs', md: 'sm' }}
-              variant="ghost"
-              colorScheme="red"
-              onClick={() => handleDelete(emp.id)}
-              transition="all 0.3s"
-            />
-          </Tooltip>
+          {!isReadOnly && (
+            <Tooltip label="Eliminar (Permanente)" hasArrow>
+              <IconButton
+                aria-label="Eliminar"
+                icon={<Trash2 size={16} />}
+                size={{ base: 'xs', md: 'sm' }}
+                variant="ghost"
+                colorScheme="red"
+                onClick={() => handleDelete(emp.id)}
+                transition="all 0.3s"
+              />
+            </Tooltip>
+          )}
         </HStack>
       </Td>
     </Tr>

@@ -3,6 +3,7 @@ import { DataContext } from '../context/DataContext';
 import { AppContext } from '../App';
 import usePagination from '../hooks/usePagination';
 import Pagination from '../components/Pagination';
+import { AuthContext } from '../context/AuthContext';
 import { History, Calendar, Trash2, Eye, Download, FileText, CheckCircle2, ArrowLeft, Building2, X, Search, ChevronDown } from 'lucide-react';
 import { formatQ, CUOTA_LABORAL_RATE, CUOTA_PATRONAL_RATE } from '../data/mockData';
 import jsPDF from 'jspdf';
@@ -41,6 +42,8 @@ import {
 export default function PayrollHistory() {
   const { payrollHistory, deletePayroll, bonuses, companies, isLoading } = useContext(DataContext);
   const { confirmAction, showToast } = useContext(AppContext);
+  const { user } = useContext(AuthContext);
+  const isReadOnly = user?.role === 'AUDITOR';
   const [selectedGroup, setSelectedGroup] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -261,7 +264,7 @@ export default function PayrollHistory() {
                   </Box>
                   <HStack spacing={1}>
                     <IconButton aria-label="Ver Detalle" icon={<Eye size={18} />} onClick={() => setSelectedGroup(group)} variant="ghost" />
-                    <IconButton aria-label="Eliminar Registro" icon={<Trash2 size={18} />} colorScheme="red" variant="ghost" onClick={() => handleDeleteGroup(group.title, group.records)} />
+                    {!isReadOnly && <IconButton aria-label="Eliminar Registro" icon={<Trash2 size={18} />} colorScheme="red" variant="ghost" onClick={() => handleDeleteGroup(group.title, group.records)} />}
                   </HStack>
                 </Flex>
 
@@ -472,6 +475,16 @@ function PayrollHistoryDetail({ group, onBack }) {
         if (!fullName.includes(term) && !job.includes(term)) return false;
       }
       return true;
+    }).sort((a, b) => {
+      const areaA = areas?.find(area => String(area.id) === String(a.areaId))?.nombre || '';
+      const areaB = areas?.find(area => String(area.id) === String(b.areaId))?.nombre || '';
+      
+      const compArea = areaA.localeCompare(areaB);
+      if (compArea !== 0) return compArea;
+
+      const nameA = getEmployeeFullName(a).toLowerCase();
+      const nameB = getEmployeeFullName(b).toLowerCase();
+      return nameA.localeCompare(nameB);
     });
 
     // Recalculate totals for filtered emps
@@ -483,7 +496,7 @@ function PayrollHistoryDetail({ group, onBack }) {
     });
     
     return { data: filteredEmps, totals: { grossTotal: fGrossTotal, dedTotal: fDedTotal, patronalTotal: fPatronalTotal, netTotal: fGrossTotal - fDedTotal } };
-  }, [group, filterStatus, filterDept, filterArea, filterDiv, filterSubdiv, searchQuery]);
+  }, [group, filterStatus, filterDept, filterArea, filterDiv, filterSubdiv, searchQuery, areas]);
 
   const groupedData = useMemo(() => {
     if (filterDept.length === 0 && filterArea.length === 0 && filterDiv.length === 0 && filterSubdiv.length === 0) {
@@ -1115,6 +1128,12 @@ function PayrollHistoryDetail({ group, onBack }) {
             <Text fontSize="sm" color="gray.500">
               {data.length} empleados procesados en este periodo
             </Text>
+            {group.notes && (
+              <Box mt={2} p={3} bg={useColorModeValue('brand.50', 'brand.900')} borderRadius="md" borderLeft="4px solid" borderColor="brand.500">
+                <Text fontSize="xs" fontWeight="bold" color="brand.600" textTransform="uppercase" mb={1}>Notas / Observaciones</Text>
+                <Text fontSize="sm" color={useColorModeValue('gray.700', 'gray.300')} whiteSpace="pre-wrap">{group.notes}</Text>
+              </Box>
+            )}
           </Box>
         </Flex>
         <Flex gap={2} wrap="wrap">

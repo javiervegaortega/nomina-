@@ -55,11 +55,26 @@ function ProtectedRoute() {
   return <Outlet />;
 }
 
+// Role Protected Route Wrapper
+function RoleProtectedRoute({ allowedRoles }) {
+  const { user, loading } = useContext(AuthContext);
+  if (loading) return <Flex h="100vh" align="center" justify="center">Cargando...</Flex>;
+  if (!user) return <Navigate to="/login" replace />;
+  
+  if (!allowedRoles.includes(user.role)) {
+    return <Navigate to="/dashboard" replace />;
+  }
+  
+  return <Outlet />;
+}
+
 // Layout without Sidebar for auth pages
 function AuthLayout() {
   const { user, loading } = useContext(AuthContext);
   if (loading) return null;
-  if (user) return <Navigate to="/dashboard" replace />;
+  if (user) {
+    return <Navigate to="/dashboard" replace />;
+  }
   return (
     <Flex className="app-layout" justify="center" align="center">
       <Outlet />
@@ -98,7 +113,6 @@ function AppContent() {
               {/* Auth Routes */}
               <Route element={<AuthLayout />}>
                 <Route path="/login" element={<Login />} />
-
                 <Route path="/forgot-password" element={<ForgotPassword />} />
               </Route>
 
@@ -106,17 +120,33 @@ function AppContent() {
               <Route element={<ProtectedRoute />}>
                 <Route element={<MainLayout />}>
                   <Route path="/" element={<Navigate to="/dashboard" replace />} />
-                  <Route path="/dashboard" element={<Dashboard />} />
-                  <Route path="/employees" element={<Employees />} />
-                  <Route path="/payroll" element={<PayrollProcessing />} />
-                  <Route path="/history" element={<PayrollHistory />} />
-                  <Route path="/departments" element={<Departments />} />
-                  <Route path="/areas" element={<Areas />} />
-                  <Route path="/divisions" element={<Divisions />} />
-                  <Route path="/subdivisions" element={<Subdivisions />} />
-                  <Route path="/companies" element={<Companies />} />
-                  <Route path="/operations" element={<OperationLogs />} />
-                  <Route path="/settings" element={<Settings />} />
+                  
+                  {/* ALL ROLES */}
+                  <Route element={<RoleProtectedRoute allowedRoles={['ADMIN', 'NOMINA', 'AUDITOR', 'GERENTE', 'SOLICITANTE', 'DIGITADOR']} />}>
+                    <Route path="/dashboard" element={<Dashboard />} />
+                  </Route>
+
+                  {/* ADMIN, NOMINA, AUDITOR */}
+                  <Route element={<RoleProtectedRoute allowedRoles={['ADMIN', 'NOMINA', 'AUDITOR']} />}>
+                    <Route path="/payroll" element={<PayrollProcessing />} />
+                    <Route path="/history" element={<PayrollHistory />} />
+                    <Route path="/departments" element={<Departments />} />
+                    <Route path="/areas" element={<Areas />} />
+                    <Route path="/divisions" element={<Divisions />} />
+                    <Route path="/subdivisions" element={<Subdivisions />} />
+                    <Route path="/companies" element={<Companies />} />
+                    <Route path="/settings" element={<Settings />} />
+                  </Route>
+
+                  {/* ADMIN, NOMINA, AUDITOR, DIGITADOR */}
+                  <Route element={<RoleProtectedRoute allowedRoles={['ADMIN', 'NOMINA', 'AUDITOR', 'DIGITADOR']} />}>
+                    <Route path="/employees" element={<Employees />} />
+                  </Route>
+
+                  {/* ADMIN, GERENTE, SOLICITANTE */}
+                  <Route element={<RoleProtectedRoute allowedRoles={['ADMIN', 'GERENTE', 'SOLICITANTE']} />}>
+                    <Route path="/operations" element={<OperationLogs />} />
+                  </Route>
                 </Route>
               </Route>
             </Routes>

@@ -482,16 +482,16 @@ export function DataProvider({ children }) {
     } catch (e) {}
   };
 
-  const updateOperationLogStatus = async (id, status, periodAssigned = null) => {
+  const updateOperationLogStatus = async (id, status, periodAssigned = null, justification = null) => {
     try {
       const res = await fetch(`http://localhost:3000/api/operation-logs/${id}/status`, {
         method: 'PUT',
         headers: getAuthHeader(),
-        body: JSON.stringify({ status, periodAssigned })
+        body: JSON.stringify({ status, periodAssigned, justification })
       });
       if (res.ok) {
         setOperationLogs(prev => {
-          const updatedLogs = prev.map(l => l.id === id ? { ...l, status, periodAssigned } : l);
+          const updatedLogs = prev.map(l => l.id === id ? { ...l, status, periodAssigned, justification } : l);
           
           if (status === 'APPROVED_MANAGER') {
             const log = prev.find(l => l.id === id);
@@ -576,6 +576,20 @@ export function DataProvider({ children }) {
       });
       if (res.ok) {
         setOperationLogs(prev => prev.filter(l => l.id !== id));
+      }
+    } catch (e) {}
+  };
+
+  const updateOperationLog = async (id, data) => {
+    try {
+      const res = await fetch(`http://localhost:3000/api/operation-logs/${id}`, {
+        method: 'PUT',
+        headers: getAuthHeader(),
+        body: JSON.stringify(data)
+      });
+      if (res.ok) {
+        const updatedLog = await res.json();
+        setOperationLogs(prev => prev.map(l => l.id === id ? updatedLog : l));
       }
     } catch (e) {}
   };
@@ -1061,7 +1075,7 @@ export function DataProvider({ children }) {
       addEmployeeRecord, updateEmployeeRecord, deleteEmployeeRecord,
       addBonus, updateBonus, deleteBonus,
       addCommission, updateCommission, deleteCommission,
-      operationLogs, addOperationLog, updateOperationLogStatus, deleteOperationLog,
+      operationLogs, addOperationLog, updateOperationLogStatus, deleteOperationLog, updateOperationLog,
       activePayrolls, createActivePayroll, updateActivePayroll, updateDraftMetadata, deleteActivePayroll, closePayroll,
       savePayroll, deletePayroll
     }}>

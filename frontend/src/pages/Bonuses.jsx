@@ -1,6 +1,7 @@
 import React, { useState, useContext } from 'react';
 import { DataContext } from '../context/DataContext';
 import { AppContext } from '../App';
+import { AuthContext } from '../context/AuthContext';
 import usePagination from '../hooks/usePagination';
 import Pagination from '../components/Pagination';
 import { Plus, Edit2, Trash2, X, Check, Gift, Users } from 'lucide-react';
@@ -15,6 +16,8 @@ import {
 
 export default function Bonuses() {
   const { confirmAction } = useContext(AppContext);
+  const { user } = useContext(AuthContext);
+  const isReadOnly = user?.role === 'AUDITOR';
   const { bonuses, addBonus, updateBonus, deleteBonus, employees, isLoading } = useContext(DataContext);
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -119,9 +122,11 @@ export default function Bonuses() {
           </div>
         </div>
         <div>
-          <button className="btn btn-primary" onClick={openAdd}>
-            <Plus size={16} /> Crear Bono
-          </button>
+          {!isReadOnly && (
+            <button className="btn btn-primary" onClick={openAdd}>
+              <Plus size={16} /> Crear Bono
+            </button>
+          )}
         </div>
       </div>
 
@@ -149,17 +154,21 @@ export default function Bonuses() {
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: '0.25rem' }}>
-                    <button className="btn-icon" onClick={() => openEdit(b)} title="Editar Configuración"><Edit2 size={16} /></button>
-                    <button 
-                      className="btn btn-ghost" 
-                      style={{ color: 'var(--danger)' }} 
-                      onClick={() => {
-                        confirmAction(`¿Seguro que desea eliminar el bono ${b.name}?`, () => {
-                          deleteBonus(b.id);
-                        });
-                      }}
-                      title="Eliminar"
-                    ><Trash2 size={16} /></button>
+                    {!isReadOnly && (
+                      <>
+                        <button className="btn-icon" onClick={() => openEdit(b)} title="Editar Configuración"><Edit2 size={16} /></button>
+                        <button 
+                          className="btn btn-ghost" 
+                          style={{ color: 'var(--danger)' }} 
+                          onClick={() => {
+                            confirmAction(`¿Seguro que desea eliminar el bono ${b.name}?`, () => {
+                              deleteBonus(b.id);
+                            });
+                          }}
+                          title="Eliminar"
+                        ><Trash2 size={16} /></button>
+                      </>
+                    )}
                   </div>
                 </div>
 

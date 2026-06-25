@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { DataContext } from '../context/DataContext';
+import { AuthContext } from '../context/AuthContext';
 import { formatQ } from '../data/mockData';
 import {
   PERIOD_MODES,
@@ -28,6 +29,7 @@ const DEFAULT_PERIOD = { mode: PERIOD_MODES.LATEST, month: '', payrollId: '' };
 
 export default function Dashboard() {
   const { employees, companies, payrollHistory, departments, activePayrolls, isLoading } = useContext(DataContext);
+  const { user } = useContext(AuthContext);
 
   const [period, setPeriod] = useState(DEFAULT_PERIOD);
   const [draftPeriod, setDraftPeriod] = useState(DEFAULT_PERIOD);
@@ -37,6 +39,8 @@ export default function Dashboard() {
 
   const EMPLOYEES = employees || [];
   const COMPANIES = companies || [];
+  
+  const hasFinancialAccess = ['ADMIN', 'NOMINA', 'AUDITOR'].includes(user?.role);
 
   const metrics = useMemo(() => buildDashboardMetrics({
     period,
@@ -297,6 +301,11 @@ export default function Dashboard() {
             <Badge colorScheme="brand" variant="subtle" fontSize="xs" px={2} py={1} borderRadius="md">
               {metrics.periodLabel}
             </Badge>
+            {activePayrolls && activePayrolls.length > 0 && (
+              <Badge colorScheme="orange" variant="subtle" fontSize="xs" px={2} py={1} borderRadius="md">
+                NÓMINA ACTIVA: {[...activePayrolls].sort((a,b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())[0].title || 'Nómina en proceso'}
+              </Badge>
+            )}
           </HStack>
           <Text color={subtitleColor} mt={1}>
             {metrics.hasPayrollData
@@ -315,74 +324,76 @@ export default function Dashboard() {
       </Flex>
 
       <SimpleGrid columns={{ base: 1, sm: 2, lg: 4 }} spacing={5} mb={8}>
-        <KpiCard icon={<DollarSign size={24} />} iconBg="rgba(255, 184, 0, 0.15)" iconColor="#FFB800" glowColor="rgba(255, 184, 0, 0.3)" label="Costo Bruto Nómina" value={formatQ(metrics.totalGrossPayroll)} trend={grossTrend.text} trendDir={grossTrend.dir} />
-        <KpiCard icon={<TrendingUp size={24} />} iconBg="rgba(16, 185, 129, 0.15)" iconColor="#10B981" glowColor="rgba(16, 185, 129, 0.3)" label="Neto a Pagar" value={formatQ(metrics.totalNetPay)} trend={netTrend.text} trendDir={netTrend.dir} />
+        {hasFinancialAccess && <KpiCard icon={<DollarSign size={24} />} iconBg="rgba(255, 184, 0, 0.15)" iconColor="#FFB800" glowColor="rgba(255, 184, 0, 0.3)" label="Costo Bruto Nómina" value={formatQ(metrics.totalGrossPayroll)} trend={grossTrend.text} trendDir={grossTrend.dir} />}
+        {hasFinancialAccess && <KpiCard icon={<TrendingUp size={24} />} iconBg="rgba(16, 185, 129, 0.15)" iconColor="#10B981" glowColor="rgba(16, 185, 129, 0.3)" label="Neto a Pagar" value={formatQ(metrics.totalNetPay)} trend={netTrend.text} trendDir={netTrend.dir} />}
         <KpiCard icon={<Users size={24} />} iconBg="rgba(59, 130, 246, 0.15)" iconColor="#3B82F6" glowColor="rgba(59, 130, 246, 0.3)" label="Total Empleados" value={metrics.totalEmployees} trend={employeesTrend.text} trendDir={employeesTrend.dir} />
-        <KpiCard icon={<AlertTriangle size={24} />} iconBg="rgba(239, 68, 68, 0.15)" iconColor="#EF4444" glowColor="rgba(239, 68, 68, 0.3)" label="Total Deducciones" value={formatQ(metrics.totalDeductions)} trend={dedTrend.text} trendDir={dedTrend.dir} />
+        {hasFinancialAccess && <KpiCard icon={<AlertTriangle size={24} />} iconBg="rgba(239, 68, 68, 0.15)" iconColor="#EF4444" glowColor="rgba(239, 68, 68, 0.3)" label="Total Deducciones" value={formatQ(metrics.totalDeductions)} trend={dedTrend.text} trendDir={dedTrend.dir} />}
       </SimpleGrid>
 
-      <SimpleGrid columns={{ base: 1, md: 2 }} spacing={5} mb={8}>
-        <Card bg={cardBg} borderColor={borderColor} borderRadius="xl">
-          <CardBody p={{ base: 4, md: 6 }}>
-            <Flex align="center" justify="space-between" mb={5}>
-              <HStack spacing={2}>
-                <Box color="brand.400"><Building2 size={18} /></Box>
-                <Heading size="sm" fontWeight={700}>Distribución por Empresa</Heading>
-              </HStack>
-              <Text fontSize="xs" color={subtitleColor}>{COMPANIES.length} empresas</Text>
-            </Flex>
-            <VStack spacing={4} align="stretch">
-              {metrics.companyDistribution.length ? metrics.companyDistribution.map((c) => (
-                <Box key={c.id}>
-                  <Flex justify="space-between" align="center" mb={1}>
-                    <HStack spacing={2}>
-                      <Box w="10px" h="10px" borderRadius="full" bg={c.color || 'brand.500'} boxShadow={`0 0 8px ${c.color || '#3B82F6'}60`} />
-                      <Text fontSize="sm" fontWeight={600}>{c.nombre_comercial || c.nit}</Text>
-                    </HStack>
-                    <Text fontSize="sm" fontFamily="mono" fontWeight={700} color={accentTextColor}>{formatQ(c.total)}</Text>
-                  </Flex>
-                  <Box h="6px" borderRadius="full" bg={barTrackBg} overflow="hidden">
-                    <Box h="100%" bg={c.color || 'brand.500'} w={`${maxCompanyTotal > 0 ? (c.total / maxCompanyTotal) * 100 : 0}%`} transition="width 1s ease-out" borderRadius="full" />
-                  </Box>
-                </Box>
-              )) : (
-                <Text fontSize="sm" color={subtitleColor} textAlign="center" py={4}>Sin datos para el período</Text>
-              )}
-            </VStack>
-          </CardBody>
-        </Card>
-
-        <Card bg={cardBg} borderColor={borderColor} borderRadius="xl">
-          <CardBody p={{ base: 4, md: 6 }}>
-            <Flex align="center" justify="space-between" mb={5}>
-              <HStack spacing={2}>
-                <Box color="brand.400"><Briefcase size={18} /></Box>
-                <Heading size="sm" fontWeight={700}>Costo por Departamento</Heading>
-              </HStack>
-            </Flex>
-            <VStack spacing={3} align="stretch">
-              {metrics.deptList.length ? metrics.deptList.map(([dept, data]) => (
-                <Flex key={dept} align="center" gap={3}>
-                  <Center w="32px" h="32px" borderRadius="lg" bg={deptCountBg} color={deptCountColor} border="1px solid" borderColor={borderColor} fontSize="0.8rem" fontWeight={700} flexShrink={0}>
-                    {data.count}
-                  </Center>
-                  <Box flex={1} minW={0}>
-                    <Flex justify="space-between" mb={1}>
-                      <Text fontSize="sm" fontWeight={600} isTruncated>{dept}</Text>
-                      <Text fontSize="xs" fontFamily="mono" fontWeight={700} color={accentTextColor} flexShrink={0} ml={2}>{formatQ(data.cost)}</Text>
+      {hasFinancialAccess && (
+        <SimpleGrid columns={{ base: 1, md: 2 }} spacing={5} mb={8}>
+          <Card bg={cardBg} borderColor={borderColor} borderRadius="xl">
+            <CardBody p={{ base: 4, md: 6 }}>
+              <Flex align="center" justify="space-between" mb={5}>
+                <HStack spacing={2}>
+                  <Box color="brand.400"><Building2 size={18} /></Box>
+                  <Heading size="sm" fontWeight={700}>Distribución por Empresa</Heading>
+                </HStack>
+                <Text fontSize="xs" color={subtitleColor}>{COMPANIES.length} empresas</Text>
+              </Flex>
+              <VStack spacing={4} align="stretch">
+                {metrics.companyDistribution.length ? metrics.companyDistribution.map((c) => (
+                  <Box key={c.id}>
+                    <Flex justify="space-between" align="center" mb={1}>
+                      <HStack spacing={2}>
+                        <Box w="10px" h="10px" borderRadius="full" bg={c.color || 'brand.500'} boxShadow={`0 0 8px ${c.color || '#3B82F6'}60`} />
+                        <Text fontSize="sm" fontWeight={600}>{c.nombre_comercial || c.nit}</Text>
+                      </HStack>
+                      <Text fontSize="sm" fontFamily="mono" fontWeight={700} color={accentTextColor}>{formatQ(c.total)}</Text>
                     </Flex>
-                    <Box h="4px" borderRadius="full" bg={barTrackBg} overflow="hidden">
-                      <Box h="100%" bg={barLightBg} w={`${maxDeptCost > 0 ? (data.cost / maxDeptCost) * 100 : 0}%`} transition="width 1s ease-out" borderRadius="full" />
+                    <Box h="6px" borderRadius="full" bg={barTrackBg} overflow="hidden">
+                      <Box h="100%" bg={c.color || 'brand.500'} w={`${maxCompanyTotal > 0 ? (c.total / maxCompanyTotal) * 100 : 0}%`} transition="width 1s ease-out" borderRadius="full" />
                     </Box>
                   </Box>
-                </Flex>
-              )) : (
-                <Text fontSize="sm" color={subtitleColor} textAlign="center" py={4}>Sin datos para el período</Text>
-              )}
-            </VStack>
-          </CardBody>
-        </Card>
-      </SimpleGrid>
+                )) : (
+                  <Text fontSize="sm" color={subtitleColor} textAlign="center" py={4}>Sin datos para el período</Text>
+                )}
+              </VStack>
+            </CardBody>
+          </Card>
+
+          <Card bg={cardBg} borderColor={borderColor} borderRadius="xl">
+            <CardBody p={{ base: 4, md: 6 }}>
+              <Flex align="center" justify="space-between" mb={5}>
+                <HStack spacing={2}>
+                  <Box color="brand.400"><Briefcase size={18} /></Box>
+                  <Heading size="sm" fontWeight={700}>Costo por Departamento</Heading>
+                </HStack>
+              </Flex>
+              <VStack spacing={3} align="stretch">
+                {metrics.deptList.length ? metrics.deptList.map(([dept, data]) => (
+                  <Flex key={dept} align="center" gap={3}>
+                    <Center w="32px" h="32px" borderRadius="lg" bg={deptCountBg} color={deptCountColor} border="1px solid" borderColor={borderColor} fontSize="0.8rem" fontWeight={700} flexShrink={0}>
+                      {data.count}
+                    </Center>
+                    <Box flex={1} minW={0}>
+                      <Flex justify="space-between" mb={1}>
+                        <Text fontSize="sm" fontWeight={600} isTruncated>{dept}</Text>
+                        <Text fontSize="xs" fontFamily="mono" fontWeight={700} color={accentTextColor} flexShrink={0} ml={2}>{formatQ(data.cost)}</Text>
+                      </Flex>
+                      <Box h="4px" borderRadius="full" bg={barTrackBg} overflow="hidden">
+                        <Box h="100%" bg={barLightBg} w={`${maxDeptCost > 0 ? (data.cost / maxDeptCost) * 100 : 0}%`} transition="width 1s ease-out" borderRadius="full" />
+                      </Box>
+                    </Box>
+                  </Flex>
+                )) : (
+                  <Text fontSize="sm" color={subtitleColor} textAlign="center" py={4}>Sin datos para el período</Text>
+                )}
+              </VStack>
+            </CardBody>
+          </Card>
+        </SimpleGrid>
+      )}
 
       <SimpleGrid columns={{ base: 1, md: 2 }} spacing={5}>
         <Card bg={cardBg} borderColor={borderColor} borderRadius="xl">
@@ -410,12 +421,12 @@ export default function Dashboard() {
             </HStack>
             <VStack spacing={3} align="stretch">
               {[
-                { label: 'Salario promedio', value: formatQ(metrics.avgSalary) },
-                { label: 'Costo patronal estimado', value: formatQ(metrics.patronalCost) },
+                hasFinancialAccess ? { label: 'Salario promedio', value: formatQ(metrics.avgSalary) } : null,
+                hasFinancialAccess ? { label: 'Costo patronal estimado', value: formatQ(metrics.patronalCost) } : null,
                 { label: 'Nóminas en período', value: metrics.payrollCount || (metrics.hasPayrollData ? metrics.filteredRecords?.length : 0) },
                 { label: 'Empleados inactivos', value: metrics.inactiveCount },
                 { label: 'Empresas registradas', value: COMPANIES.length },
-              ].map((item, i) => (
+              ].filter(Boolean).map((item, i) => (
                 <Flex key={i} justify="space-between" align="center" p={3} bg={summaryItemBg} borderRadius="lg" border="1px solid" borderColor={borderColor} transition="all 0.2s" _hover={{ borderColor: 'brand.500', boxShadow: 'sm' }}>
                   <Text fontSize="sm" color={subtitleColor}>{item.label}</Text>
                   <Text fontSize="sm" fontFamily="mono" fontWeight={700} color={typeof item.value === 'string' && item.value.includes('Q') ? accentTextColor : undefined}>{item.value}</Text>

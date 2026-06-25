@@ -45,7 +45,7 @@ export default function Sidebar() {
     });
   };
 
-  const NAV_ITEMS = [
+  const ALL_NAV_ITEMS = [
     { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { to: '/employees', label: 'Empleados', icon: Users },
     { to: '/payroll', label: 'Nómina', icon: Calculator },
@@ -57,6 +57,16 @@ export default function Sidebar() {
     { to: '/companies', label: 'Empresas', icon: Building2 },
     { to: '/operations', label: 'Reporte Operativo', icon: Gift },
   ];
+
+  const NAV_ITEMS = ALL_NAV_ITEMS.filter(item => {
+    if (!user) return false;
+    const role = user.role;
+    if (role === 'ADMIN') return true;
+    if (role === 'NOMINA' || role === 'AUDITOR') return item.to !== '/operations';
+    if (role === 'DIGITADOR') return item.to === '/employees';
+    if (role === 'GERENTE' || role === 'SOLICITANTE') return item.to === '/operations';
+    return false;
+  });
 
   // Shared nav content renderer (used by both mobile drawer and desktop sidebar)
   const renderNavContent = (mobile = false) => (

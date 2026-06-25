@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useContext } from 'react';
+import { AuthContext } from '../context/AuthContext';
 import {
   Modal, ModalOverlay, ModalContent, ModalHeader, ModalBody, ModalFooter, ModalCloseButton,
   Tabs, TabList, Tab, TabPanels, TabPanel,
@@ -32,6 +33,8 @@ const INITIAL_FORM = {
 };
 
 export default function CompanyFormModal({ isOpen, onClose, onSave, initialData }) {
+  const { user } = useContext(AuthContext);
+  const isReadOnly = user?.role === 'AUDITOR';
   const [form, setForm] = useState(INITIAL_FORM);
   const [tabIndex, setTabIndex] = useState(0);
 
@@ -393,20 +396,22 @@ export default function CompanyFormModal({ isOpen, onClose, onSave, initialData 
           >
             Cancelar
           </Button>
-          <Button
-            type="submit"
-            form="companyForm"
-            colorScheme="brand"
-            fontWeight={600}
-            px={6}
-            borderRadius="lg"
-            boxShadow="sm"
-            transition="all 0.3s"
-            _hover={{ boxShadow: 'md' }}
-            _active={{ }}
-          >
-            Guardar Empresa
-          </Button>
+          {!isReadOnly && (
+            <Button
+              type="submit"
+              form="companyForm"
+              colorScheme="brand"
+              fontWeight={600}
+              px={6}
+              borderRadius="lg"
+              boxShadow="sm"
+              transition="all 0.3s"
+              _hover={{ boxShadow: 'md' }}
+              _active={{ }}
+            >
+              Guardar Empresa
+            </Button>
+          )}
         </ModalFooter>
       </ModalContent>
     </Modal>

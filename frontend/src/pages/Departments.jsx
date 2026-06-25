@@ -1,6 +1,7 @@
 import React, { useState, useContext } from 'react';
 import { DataContext } from '../context/DataContext';
 import { AppContext } from '../App';
+import { AuthContext } from '../context/AuthContext';
 import { Plus, Edit2, Trash2, Eye } from 'lucide-react';
 import DepartmentFormModal from '../components/DepartmentFormModal';
 import usePagination from '../hooks/usePagination';
@@ -28,6 +29,8 @@ import {
 export default function Departments() {
   const { departments, addDepartment, updateDepartment, deleteDepartment, isLoading } = useContext(DataContext);
   const { confirmAction } = useContext(AppContext);
+  const { user } = useContext(AuthContext);
+  const isReadOnly = user?.role === 'AUDITOR';
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [editingData, setEditingData] = useState(null);
@@ -147,19 +150,21 @@ export default function Departments() {
             </Badge>
           </Flex>
         </Box>
-        <Button
-          colorScheme="brand"
-          leftIcon={<Plus size={18} />}
-          onClick={openAdd}
-          size={{ base: 'sm', md: 'md' }}
-          borderRadius="lg"
-          transition="all 0.3s"
-          _hover={{
-            boxShadow: 'lg',
-          }}
-        >
-          Nuevo Departamento
-        </Button>
+        {!isReadOnly && (
+          <Button
+            colorScheme="brand"
+            leftIcon={<Plus size={18} />}
+            onClick={openAdd}
+            size={{ base: 'sm', md: 'md' }}
+            borderRadius="lg"
+            transition="all 0.3s"
+            _hover={{
+              boxShadow: 'lg',
+            }}
+          >
+            Nuevo Departamento
+          </Button>
+        )}
       </Flex>
 
       {/* Table Container */}
@@ -240,40 +245,44 @@ export default function Departments() {
                           onClick={() => openEdit(d)}
                         />
                       </Tooltip>
-                      <Tooltip label="Editar" hasArrow>
-                        <IconButton
-                          aria-label="Editar departamento"
-                          icon={<Edit2 size={16} />}
-                          size="sm"
-                          variant="ghost"
-                          color={editIconColor}
-                          borderRadius="lg"
-                          transition="all 0.3s"
-                          _hover={{
-                            bg: editHoverBg,
-                          }}
-                          onClick={() => openEdit(d)}
-                        />
-                      </Tooltip>
-                      <Tooltip label="Eliminar" hasArrow>
-                        <IconButton
-                          aria-label="Eliminar departamento"
-                          icon={<Trash2 size={16} />}
-                          size="sm"
-                          variant="ghost"
-                          color={deleteIconColor}
-                          borderRadius="lg"
-                          transition="all 0.3s"
-                          _hover={{
-                            bg: deleteHoverBg,
-                          }}
-                          onClick={() => {
-                            confirmAction(`¿Seguro que desea eliminar el departamento ${d.nombre_dimension}?`, () => {
-                              deleteDepartment(d.id);
-                            });
-                          }}
-                        />
-                      </Tooltip>
+                      {!isReadOnly && (
+                        <>
+                          <Tooltip label="Editar" hasArrow>
+                            <IconButton
+                              aria-label="Editar departamento"
+                              icon={<Edit2 size={16} />}
+                              size="sm"
+                              variant="ghost"
+                              color={editIconColor}
+                              borderRadius="lg"
+                              transition="all 0.3s"
+                              _hover={{
+                                bg: editHoverBg,
+                              }}
+                              onClick={() => openEdit(d)}
+                            />
+                          </Tooltip>
+                          <Tooltip label="Eliminar" hasArrow>
+                            <IconButton
+                              aria-label="Eliminar departamento"
+                              icon={<Trash2 size={16} />}
+                              size="sm"
+                              variant="ghost"
+                              color={deleteIconColor}
+                              borderRadius="lg"
+                              transition="all 0.3s"
+                              _hover={{
+                                bg: deleteHoverBg,
+                              }}
+                              onClick={() => {
+                                confirmAction(`¿Seguro que desea eliminar el departamento ${d.nombre_dimension}?`, () => {
+                                  deleteDepartment(d.id);
+                                });
+                              }}
+                            />
+                          </Tooltip>
+                        </>
+                      )}
                     </Flex>
                   </Td>
                 </Tr>

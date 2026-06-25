@@ -7,6 +7,7 @@ module.exports = (sequelize) => {
     periodType: { type: DataTypes.STRING, defaultValue: '1ra' },
     companies: { type: DataTypes.JSON, allowNull: true },
     employeesCount: { type: DataTypes.INTEGER, defaultValue: 0 },
+    notes: { type: DataTypes.TEXT, allowNull: true },
     createdAt: { type: DataTypes.DATE, defaultValue: DataTypes.NOW }
   }, {
     tableName: 'payroll_drafts',

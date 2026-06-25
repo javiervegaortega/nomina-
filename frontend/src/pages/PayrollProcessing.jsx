@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useContext } from 'react';
+import React, { useState, useMemo, useContext, useEffect } from 'react';
 import {
   Save, Download, FileText, Check, X, Edit3,
   ChevronRight, ChevronDown, ChevronUp, AlertCircle, DollarSign, Clock,
@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { AppContext } from '../App';
 import { DataContext } from '../context/DataContext';
+import { AuthContext } from '../context/AuthContext';
 import { CUOTA_PATRONAL_RATE, CUOTA_LABORAL_RATE, formatQ } from '../data/mockData';
 import EmployeeIncidences from '../components/EmployeeIncidences';
 import EmployeeDeductions from '../components/EmployeeDeductions';
@@ -13,7 +14,7 @@ import EmployeeSummaryModal from '../components/EmployeeSummaryModal';
 import {
   Box, Flex, Text, Heading, Button, SimpleGrid, Avatar, IconButton,
   Modal, ModalOverlay, ModalContent, ModalHeader, ModalBody, ModalFooter, ModalCloseButton,
-  FormControl, FormLabel, Input, Select, InputGroup, InputLeftElement,
+  FormControl, FormLabel, Input, Select, InputGroup, InputLeftElement, Textarea,
   Tabs, TabList, Tab,
   Table, Thead, Tbody, Tr, Th, Td, TableContainer,
   Badge, Divider, useColorModeValue, Center, Tag, HStack, VStack, Checkbox, ButtonGroup, Card, CardHeader, CardBody, CardFooter, Stat, StatLabel, StatNumber, StatGroup, Skeleton, SkeletonText,
@@ -40,12 +41,15 @@ export default function PayrollProcessing() {
 function PayrollHub({ onSelectDraft }) {
   const { activePayrolls, deleteActivePayroll, createActivePayroll, updateDraftMetadata, companies, isLoading } = useContext(DataContext);
   const { confirmAction, showToast } = useContext(AppContext);
+  const { user } = useContext(AuthContext);
+  const isReadOnly = user?.role === 'AUDITOR';
   const [showModal, setShowModal] = useState(false);
   const [editingDraftId, setEditingDraftId] = useState(null);
   const [title, setTitle] = useState('');
   const [draftDate, setDraftDate] = useState('');
   const [selectedCompany, setSelectedCompany] = useState('');
   const [periodType, setPeriodType] = useState('1ra');
+  const [notes, setNotes] = useState('');
 
   const handleCreateOrUpdate = async () => {
     if (!title || !selectedCompany) return;
@@ -53,7 +57,7 @@ function PayrollHub({ onSelectDraft }) {
     const companiesPayload = selectedCompany === 'ALL' ? [] : [selectedCompany];
 
     if (editingDraftId) {
-      await updateDraftMetadata(editingDraftId, title, companiesPayload, draftDate ? new Date(draftDate).toISOString() : new Date().toISOString(), periodType);
+      await updateDraftMetadata(editingDraftId, title, companiesPayload, draftDate ? new Date(draftDate).toISOString() : new Date().toISOString(), periodType, notes);
       setShowModal(false);
       showToast('Borrador actualizado', 'success');
     } else {
@@ -71,7 +75,7 @@ function PayrollHub({ onSelectDraft }) {
 
       const createAction = async () => {
         try {
-          const newId = await createActivePayroll(title, companiesPayload, periodType);
+          const newId = await createActivePayroll(title, companiesPayload, periodType, draftDate ? new Date(draftDate).toISOString() : new Date().toISOString(), notes);
           setShowModal(false);
           onSelectDraft(newId);
         } catch (err) {
@@ -93,6 +97,7 @@ function PayrollHub({ onSelectDraft }) {
     setPeriodType(draft.periodType || '1ra');
     const dateStr = draft.createdAt ? new Date(draft.createdAt).toISOString().split('T')[0] : '';
     setDraftDate(dateStr);
+    setNotes(draft.notes || '');
     
     let comp = 'ALL';
     if (Array.isArray(draft.companies) && draft.companies.length > 0) comp = draft.companies[0];
@@ -149,21 +154,24 @@ function PayrollHub({ onSelectDraft }) {
             Borradores activos que aún no han sido procesados definitivamente.
           </Text>
         </Box>
-        <Button 
-          colorScheme="brand" 
-          leftIcon={<Plus size={16} />} 
-          borderRadius="lg" 
-          onClick={() => {
-            setEditingDraftId(null);
-            setTitle('');
-            setDraftDate(new Date().toISOString().split('T')[0]);
-            setSelectedCompany('');
-            setPeriodType('1ra');
-            setShowModal(true);
-          }}
-        >
-          Nueva Nómina
-        </Button>
+        {!isReadOnly && (
+          <Button 
+            colorScheme="brand" 
+            leftIcon={<Plus size={16} />} 
+            borderRadius="lg" 
+            onClick={() => {
+              setEditingDraftId(null);
+              setTitle('');
+              setNotes('');
+              setDraftDate(new Date().toISOString().split('T')[0]);
+              setSelectedCompany('');
+              setPeriodType('1ra');
+              setShowModal(true);
+            }}
+          >
+            Nueva Nómina
+          </Button>
+        )}
       </Flex>
 
       <SimpleGrid columns={{ base: 1, sm: 2, md: 3 }} spacing={6}>
@@ -179,43 +187,48 @@ function PayrollHub({ onSelectDraft }) {
             transition="all 0.3s"
             _hover={{ boxShadow: 'lg' }}
           >
-            <Flex position="absolute" top={3} right={3} gap={1}>
-              <IconButton 
-                aria-label="Edit draft"
-                icon={<Edit2 size={16} />}
-                colorScheme="blue"
-                variant="ghost"
-                size="sm"
-                onClick={() => openEditModal(draft)}
-              />
-              <IconButton 
-                aria-label="Delete draft"
-                icon={<Trash2 size={16} />}
-                colorScheme="red"
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  confirmAction('¿Eliminar este borrador? Se perderán todos los avances.', () => {
-                    deleteActivePayroll(draft.id);
-                    showToast('Borrador eliminado', 'info');
-                  });
-                }}
-              />
-            </Flex>
-            
-            <Flex align="center" gap={4} mb={5}>
-              <Center w="44px" h="44px" borderRadius="full" bg="brand.50" color="brand.500">
-                <Calendar size={20} />
-              </Center>
-              <Box>
-                <Heading size="sm" fontWeight={700} maxW="200px" isTruncated>{draft.title}</Heading>
-                <Badge colorScheme={draft.periodType === '2da' ? 'purple' : 'teal'} mt={1} mb={1}>
-                  {draft.periodType === '2da' ? '2da Quincena' : '1ra Quincena'}
-                </Badge>
-                <Text fontSize="xs" color="gray.500">
-                  Creada: {new Date(draft.createdAt).toLocaleDateString()}
-                </Text>
-              </Box>
+            <Flex justify="space-between" align="flex-start" mb={5}>
+              <Flex align="center" gap={4} overflow="hidden">
+                <Center w="44px" h="44px" borderRadius="full" bg="brand.50" color="brand.500" flexShrink={0}>
+                  <Calendar size={20} />
+                </Center>
+                <Box minW="0">
+                  <Heading size="sm" fontWeight={700} isTruncated title={draft.title}>{draft.title}</Heading>
+                  <Badge colorScheme={draft.periodType === '2da' ? 'purple' : 'teal'} mt={1} mb={1}>
+                    {draft.periodType === '2da' ? '2da Quincena' : '1ra Quincena'}
+                  </Badge>
+                  <Text fontSize="xs" color="gray.500">
+                    Creada: {new Date(draft.createdAt).toLocaleDateString()}
+                  </Text>
+                </Box>
+              </Flex>
+              <Flex gap={1} flexShrink={0} ml={2} mt={-1} mr={-1}>
+                {!isReadOnly && (
+                  <>
+                    <IconButton 
+                      aria-label="Edit draft"
+                      icon={<Edit2 size={16} />}
+                      colorScheme="blue"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => openEditModal(draft)}
+                    />
+                    <IconButton 
+                      aria-label="Delete draft"
+                      icon={<Trash2 size={16} />}
+                      colorScheme="red"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        confirmAction('¿Eliminar este borrador? Se perderán todos los avances.', () => {
+                          deleteActivePayroll(draft.id);
+                          showToast('Borrador eliminado', 'info');
+                        });
+                      }}
+                    />
+                  </>
+                )}
+              </Flex>
             </Flex>
 
             <Box mb={6}>
@@ -337,10 +350,40 @@ function PayrollHub({ onSelectDraft }) {
   );
 }
 
+const DraftNotesEditor = ({ draft, updateDraftMetadata }) => {
+  const [localNotes, setLocalNotes] = useState(draft?.notes || '');
+  const bg = useColorModeValue('white', 'gray.800');
+  
+  useEffect(() => {
+    setLocalNotes(draft?.notes || '');
+  }, [draft?.notes]);
+
+  return (
+    <Box mt={3} w={{ base: "100%", md: "400px", lg: "500px" }}>
+      <Text fontSize="xs" fontWeight="bold" color="brand.600" textTransform="uppercase" mb={1}>Notas / Observaciones</Text>
+      <Textarea 
+        placeholder="Ingrese notas sobre el borrador de nómina..." 
+        value={localNotes}
+        onChange={(e) => setLocalNotes(e.target.value)}
+        onBlur={() => {
+          if (localNotes !== (draft?.notes || '')) {
+            updateDraftMetadata(draft.id, draft.title, draft.companies, draft.createdAt, draft.periodType, localNotes);
+          }
+        }}
+        size="sm"
+        bg={bg}
+        rows={2}
+        resize="vertical"
+      />
+    </Box>
+  );
+};
+
 function PayrollEditor({ draftId, onBack }) {
   const { 
     activePayrolls, 
     updateActivePayroll, 
+    updateDraftMetadata,
     closePayroll,
     bonuses,
     areas,
@@ -351,6 +394,8 @@ function PayrollEditor({ draftId, onBack }) {
   } = useContext(DataContext);
   
   const { confirmAction, showToast } = useContext(AppContext);
+  const { user } = useContext(AuthContext);
+  const isReadOnly = user?.role === 'AUDITOR';
   
   const draft = activePayrolls.find(p => p.id === draftId);
   const data = draft?.employees || [];
@@ -519,7 +564,7 @@ function PayrollEditor({ draftId, onBack }) {
   // Filter employees
   const filteredEmployees = useMemo(() => {
     const normalize = (str) => str ? str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase() : '';
-    return data.filter(e => {
+    const filtered = data.filter(e => {
       const fullName = [e.primer_nombre, e.segundo_nombre, e.otro_nombre, e.primer_apellido, e.segundo_apellido, e.apellido_casada].filter(Boolean).join(' ');
       const matchSearch = normalize(fullName).includes(normalize(searchQuery)) || normalize(e.puesto).includes(normalize(searchQuery));
       
@@ -537,7 +582,19 @@ function PayrollEditor({ draftId, onBack }) {
 
       return matchSearch && matchArea && matchDept && matchDiv && matchSubdiv && matchStatus;
     });
-  }, [data, searchQuery, filterArea, filterDept, filterDiv, filterSubdiv, filterStatus]);
+
+    return filtered.sort((a, b) => {
+      const areaA = areas?.find(area => String(area.id) === String(a.areaId))?.nombre || '';
+      const areaB = areas?.find(area => String(area.id) === String(b.areaId))?.nombre || '';
+      
+      const compArea = areaA.localeCompare(areaB);
+      if (compArea !== 0) return compArea;
+
+      const nameA = [a.primer_nombre, a.segundo_nombre, a.otro_nombre, a.primer_apellido, a.segundo_apellido].filter(Boolean).join(' ').trim();
+      const nameB = [b.primer_nombre, b.segundo_nombre, b.otro_nombre, b.primer_apellido, b.segundo_apellido].filter(Boolean).join(' ').trim();
+      return nameA.localeCompare(nameB);
+    });
+  }, [data, searchQuery, filterArea, filterDept, filterDiv, filterSubdiv, filterStatus, areas]);
 
   // General totals calculation
   const totals = useMemo(() => {
@@ -584,19 +641,21 @@ function PayrollEditor({ draftId, onBack }) {
             <Text fontSize="sm" color="gray.500">
               {data.length} empleados en esta nómina
             </Text>
+            <DraftNotesEditor draft={draft} updateDraftMetadata={updateDraftMetadata} />
           </Box>
         </Flex>
         <Flex gap={2}>
-
-          <Button 
-            bg="red.500"
-            color="white"
-            leftIcon={<Check size={16} />} 
-            onClick={onAlertOpen}
-            _hover={{ bg: 'red.600', animation: 'none', transform: 'none' }}
-          >
-            Cerrar Nómina
-          </Button>
+          {!isReadOnly && (
+            <Button 
+              bg="red.500"
+              color="white"
+              leftIcon={<Check size={16} />} 
+              onClick={onAlertOpen}
+              _hover={{ bg: 'red.600', animation: 'none', transform: 'none' }}
+            >
+              Cerrar Nómina
+            </Button>
+          )}
         </Flex>
       </Flex>
 
@@ -669,6 +728,7 @@ function PayrollEditor({ draftId, onBack }) {
             handleSaveDeduction={handleSaveDeduction}
             handleDeleteDeduction={handleDeleteDeduction}
             handleOpenSummary={setSummaryEmp}
+            isReadOnly={isReadOnly}
           />
         )}
         {tab === 'distribution' && <DistributionTab data={data} />}
@@ -812,7 +872,8 @@ function ListadoPagosTab({
   filterStatus, setFilterStatus,
   searchQuery, setSearchQuery,
   handleClose, handleSaveIncidence, handleDeleteIncidence,
-  handleSaveDeduction, handleDeleteDeduction, handleOpenSummary
+  handleSaveDeduction, handleDeleteDeduction, handleOpenSummary,
+  isReadOnly
 }) {
   const { companies } = useContext(DataContext);
   const [viewMode, setViewMode] = useState('summary');
@@ -1174,16 +1235,18 @@ function ListadoPagosTab({
                         )}
                         <Td textAlign="center">
                           <HStack justify="center" spacing={2}>
-                            <Tooltip label="Editar Egresos" placement="top" hasArrow>
-                              <IconButton 
-                                size="xs" 
-                                colorScheme="brand" 
-                                variant="ghost" 
-                                icon={<Edit2 size={14} />} 
-                                onClick={() => handleOpenDrawer(e)}
-                                aria-label="Editar"
-                              />
-                            </Tooltip>
+                            {!isReadOnly && (
+                              <Tooltip label="Editar Egresos" placement="top" hasArrow>
+                                <IconButton 
+                                  size="xs" 
+                                  colorScheme="brand" 
+                                  variant="ghost" 
+                                  icon={<Edit2 size={14} />} 
+                                  onClick={() => handleOpenDrawer(e)}
+                                  aria-label="Editar"
+                                />
+                              </Tooltip>
+                            )}
                             <Tooltip label="Resumen de Pagos" placement="top" hasArrow>
                               <IconButton 
                                 size="xs" 
@@ -1655,8 +1718,8 @@ function DistributionTab({ data }) {
   );
 }
 
-function EditableCell({ id, field, section, value, onChange, editing, setEditing, width, isMoney, isDanger, onNavigate }) {
-  const isEditing = editing?.id === id && editing?.field === field;
+function EditableCell({ id, field, section, value, onChange, editing, setEditing, width, isMoney, isDanger, onNavigate, isReadOnly }) {
+  const isEditing = !isReadOnly && editing?.id === id && editing?.field === field;
   const hoverBg = useColorModeValue('gray.50', 'whiteAlpha.50');
 
   if (isEditing) {
@@ -1701,11 +1764,13 @@ function EditableCell({ id, field, section, value, onChange, editing, setEditing
 
   return (
     <Td
-      onClick={() => setEditing({ id, field })}
-      cursor="pointer"
+      onClick={() => {
+        if (!isReadOnly) setEditing({ id, field });
+      }}
+      cursor={isReadOnly ? 'default' : 'pointer'}
       transition="background-color 0.2s"
-      _hover={{ bg: hoverBg }}
-      title="Haz clic para editar"
+      _hover={!isReadOnly ? { bg: hoverBg } : {}}
+      title={isReadOnly ? '' : 'Haz clic para editar'}
     >
       <Text 
         fontSize="xs" 

@@ -1,6 +1,7 @@
 import React, { useState, useContext } from 'react';
 import { DataContext } from '../context/DataContext';
 import { AppContext } from '../App';
+import { AuthContext } from '../context/AuthContext';
 import { Plus, Edit2, Trash2, Eye } from 'lucide-react';
 import SubdivisionFormModal from '../components/SubdivisionFormModal';
 import usePagination from '../hooks/usePagination';
@@ -28,6 +29,8 @@ import {
 export default function Subdivisions() {
   const { subdivisions, addSubdivision, updateSubdivision, deleteSubdivision, isLoading } = useContext(DataContext);
   const { confirmAction } = useContext(AppContext);
+  const { user } = useContext(AuthContext);
+  const isReadOnly = user?.role === 'AUDITOR';
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [editingData, setEditingData] = useState(null);
@@ -145,19 +148,21 @@ export default function Subdivisions() {
             </Badge>
           </Flex>
         </Box>
-        <Button
-          colorScheme="brand"
-          leftIcon={<Plus size={18} />}
-          onClick={openAdd}
-          size={{ base: 'sm', md: 'md' }}
-          borderRadius="lg"
-          transition="all 0.3s"
-          _hover={{
-            boxShadow: 'lg',
-          }}
-        >
-          Nueva Subdivisión
-        </Button>
+        {!isReadOnly && (
+          <Button
+            colorScheme="brand"
+            leftIcon={<Plus size={18} />}
+            onClick={openAdd}
+            size={{ base: 'sm', md: 'md' }}
+            borderRadius="lg"
+            transition="all 0.3s"
+            _hover={{
+              boxShadow: 'lg',
+            }}
+          >
+            Nueva Subdivisión
+          </Button>
+        )}
       </Flex>
 
       {/* Table Container */}
@@ -229,40 +234,44 @@ export default function Subdivisions() {
                           onClick={() => openEdit(sd)}
                         />
                       </Tooltip>
-                      <Tooltip label="Editar" hasArrow>
-                        <IconButton
-                          aria-label="Editar subdivisión"
-                          icon={<Edit2 size={16} />}
-                          size="sm"
-                          variant="ghost"
-                          color={editIconColor}
-                          borderRadius="lg"
-                          transition="all 0.3s"
-                          _hover={{
-                            bg: editHoverBg,
-                          }}
-                          onClick={() => openEdit(sd)}
-                        />
-                      </Tooltip>
-                      <Tooltip label="Eliminar" hasArrow>
-                        <IconButton
-                          aria-label="Eliminar subdivisión"
-                          icon={<Trash2 size={16} />}
-                          size="sm"
-                          variant="ghost"
-                          color={deleteIconColor}
-                          borderRadius="lg"
-                          transition="all 0.3s"
-                          _hover={{
-                            bg: deleteHoverBg,
-                          }}
-                          onClick={() => {
-                            confirmAction(`¿Seguro que desea eliminar la subdivisión ${sd.nombre}?`, () => {
-                              deleteSubdivision(sd.id);
-                            });
-                          }}
-                        />
-                      </Tooltip>
+                      {!isReadOnly && (
+                        <>
+                          <Tooltip label="Editar" hasArrow>
+                            <IconButton
+                              aria-label="Editar subdivisión"
+                              icon={<Edit2 size={16} />}
+                              size="sm"
+                              variant="ghost"
+                              color={editIconColor}
+                              borderRadius="lg"
+                              transition="all 0.3s"
+                              _hover={{
+                                bg: editHoverBg,
+                              }}
+                              onClick={() => openEdit(sd)}
+                            />
+                          </Tooltip>
+                          <Tooltip label="Eliminar" hasArrow>
+                            <IconButton
+                              aria-label="Eliminar subdivisión"
+                              icon={<Trash2 size={16} />}
+                              size="sm"
+                              variant="ghost"
+                              color={deleteIconColor}
+                              borderRadius="lg"
+                              transition="all 0.3s"
+                              _hover={{
+                                bg: deleteHoverBg,
+                              }}
+                              onClick={() => {
+                                confirmAction(`¿Seguro que desea eliminar la subdivisión ${sd.nombre}?`, () => {
+                                  deleteSubdivision(sd.id);
+                                });
+                              }}
+                            />
+                          </Tooltip>
+                        </>
+                      )}
                     </Flex>
                   </Td>
                 </Tr>

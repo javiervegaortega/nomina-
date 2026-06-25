@@ -11,9 +11,10 @@ module.exports = (sequelize) => {
     bonusQty: { type: DataTypes.INTEGER, defaultValue: 0 },
     bonusAmount: { type: DataTypes.DECIMAL(10, 2), defaultValue: 0 },
     taskDescription: { type: DataTypes.TEXT, allowNull: false },
-    // Workflow: PENDING_MANAGER (by Solicitante) -> APPROVED_MANAGER (by Gerente) -> PROCESSED_PAYROLL (by Nomina)
+    justification: { type: DataTypes.TEXT, allowNull: true },
+    // Workflow: PENDING_MANAGER (by Solicitante) -> APPROVED_MANAGER (by Gerente) -> PROCESSED_PAYROLL (by Nomina) -> RETURNED (by Gerente to Solicitante)
     status: { 
-      type: DataTypes.ENUM('PENDING_MANAGER', 'APPROVED_MANAGER', 'REJECTED', 'PROCESSED_PAYROLL'), 
+      type: DataTypes.ENUM('PENDING_MANAGER', 'APPROVED_MANAGER', 'REJECTED', 'PROCESSED_PAYROLL', 'RETURNED'), 
       defaultValue: 'PENDING_MANAGER' 
     },
     periodAssigned: { type: DataTypes.STRING, allowNull: true }, // To mark which payroll processed it

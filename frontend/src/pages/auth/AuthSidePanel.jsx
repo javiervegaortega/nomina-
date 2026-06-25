@@ -44,14 +44,14 @@ export default function AuthSidePanel() {
       />
 
       <Box position="relative" zIndex={1} maxW="md">
-        <Flex align="center" gap={4} mb={10}>
-          <Image src="/favicon.png" boxSize="96px" objectFit="contain" borderRadius="2xl" shadow="lg" />
-          <Text fontSize="3xl" fontWeight={800} letterSpacing="-0.03em" color="white">
+        <Flex align="center" gap={5} mb={10}>
+          <Image src="/favicon.png" boxSize="128px" objectFit="contain" borderRadius="2xl" shadow="lg" />
+          <Text fontSize="4xl" fontWeight={800} letterSpacing="-0.03em" color="white">
             Nómina
           </Text>
         </Flex>
         
-        <Heading as="h1" fontSize={{ base: '3xl', xl: '4xl' }} fontWeight={800} lineHeight={1.1} mb={6} letterSpacing="-0.02em">
+        <Heading as="h1" fontSize={{ base: '3xl', xl: '4xl' }} fontWeight={800} lineHeight={1.1} mb={6} letterSpacing="-0.02em" color="white">
           Gestión de nómina <br />
           <Text as="span" color="brand.200">sin complicaciones.</Text>
         </Heading>

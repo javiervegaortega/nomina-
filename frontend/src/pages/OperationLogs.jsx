@@ -3,17 +3,17 @@ import {
   Box, Heading, Table, Thead, Tbody, Tr, Th, Td, IconButton, Button,
   HStack, Select, Input, Badge, useDisclosure, Modal, ModalOverlay,
   ModalContent, ModalHeader, ModalBody, ModalFooter, FormControl, FormLabel,
-  VStack, Text, Checkbox, CheckboxGroup, useColorModeValue, Tooltip, Divider, Grid, GridItem,
+  VStack, Text, Checkbox, CheckboxGroup, Radio, RadioGroup, useColorModeValue, Tooltip, Divider, Grid, GridItem,
   AlertDialog, AlertDialogBody, AlertDialogFooter, AlertDialogHeader, AlertDialogContent, AlertDialogOverlay,
   Tabs, TabList, Tab, TabPanels, TabPanel, Skeleton, Flex
 } from '@chakra-ui/react';
-import { Plus, Check, X, Trash2, Eye } from 'lucide-react';
+import { Plus, Check, X, Trash2, Eye, Edit2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
 
 export default function OperationLogs() {
-  const { employees, departments, companies, operationLogs, addOperationLog, updateOperationLogStatus, deleteOperationLog, isLoading } = useContext(DataContext);
+  const { employees, departments, companies, operationLogs, addOperationLog, updateOperationLogStatus, deleteOperationLog, updateOperationLog, isLoading } = useContext(DataContext);
   const { user } = useContext(AuthContext);
   const [filterMonth, setFilterMonth] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
   const [filterType, setFilterType] = useState('ALL');
@@ -24,10 +24,51 @@ export default function OperationLogs() {
   const [selectedLog, setSelectedLog] = useState(null);
   const [selectedRowIds, setSelectedRowIds] = useState([]);
 
-  const [confirmState, setConfirmState] = useState({ isOpen: false, action: null, data: null });
+  const { isOpen: isEditOpen, onOpen: onEditOpen, onClose: onEditClose } = useDisclosure();
+  const [editFormData, setEditFormData] = useState(null);
+  const [editModalDeptFilter, setEditModalDeptFilter] = useState('ALL');
+  const [editModalSearchQuery, setEditModalSearchQuery] = useState('');
+
+  const openEdit = (log) => {
+    setEditModalDeptFilter('ALL');
+    setEditModalSearchQuery('');
+    setEditFormData({
+      id: log.id,
+      employeeId: log.employeeId || log.Employee?.id || '',
+      type: log.type,
+      hoursQty: log.hoursQty,
+      hourType: log.hourType || 'SIMPLE',
+      bonusAmount: log.bonusAmount,
+      taskDescription: log.taskDescription
+    });
+    onEditOpen();
+  };
+
+  const handleEditSave = async () => {
+    if (!editFormData.taskDescription || !editFormData.employeeId) {
+      toast.warning('Completa la descripción y el empleado');
+      return;
+    }
+    try {
+      await updateOperationLog(editFormData.id, {
+        employeeId: Number(editFormData.employeeId),
+        hoursQty: editFormData.type === 'HORA_EXTRA' ? Number(editFormData.hoursQty) : 0,
+        hourType: editFormData.hourType,
+        bonusAmount: editFormData.type === 'BONO' ? Number(editFormData.bonusAmount) : 0,
+        taskDescription: editFormData.taskDescription
+      });
+      toast.success('Registro corregido y enviado al gerente');
+      onEditClose();
+    } catch(e) {
+      toast.error('Error al guardar');
+    }
+  };
+
+  const [confirmState, setConfirmState] = useState({ isOpen: false, action: null, data: null, justification: '' });
   const cancelRef = React.useRef();
 
   const isManagerOrAdmin = ['gerente', 'nomina', 'admin'].includes(user?.role?.toLowerCase());
+  const isReadOnly = user?.role === 'AUDITOR';
 
   const bg = useColorModeValue('white', 'gray.800');
   const textColor = useColorModeValue('gray.800', 'white');
@@ -104,6 +145,33 @@ export default function OperationLogs() {
     return result;
   }, [availableEmployees, modalDeptFilter, departments, modalSearchQuery]);
 
+  const filteredEditModalEmployees = useMemo(() => {
+    const normalize = (str) => {
+      if (!str) return '';
+      return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+    };
+
+    let result = availableEmployees;
+
+    if (editModalDeptFilter !== 'ALL') {
+      const selectedDept = departments.find(d => d.id.toString() === editModalDeptFilter.toString());
+      if (selectedDept) {
+        const deptNameNorm = normalize(selectedDept.nombre_dimension);
+        result = result.filter(emp => normalize(emp.departamento_laboral) === deptNameNorm);
+      }
+    }
+
+    if (editModalSearchQuery.trim()) {
+      const query = normalize(editModalSearchQuery);
+      result = result.filter(emp => {
+        const fullName = [emp.primer_nombre, emp.segundo_nombre, emp.otro_nombre, emp.primer_apellido, emp.segundo_apellido].filter(Boolean).join(' ');
+        return normalize(fullName).includes(query);
+      });
+    }
+
+    return result;
+  }, [availableEmployees, editModalDeptFilter, departments, editModalSearchQuery]);
+
   const handleSelectAllEmployees = () => {
     if (formData.employeeIds.length === filteredModalEmployees.length) {
       setFormData({ ...formData, employeeIds: [] });
@@ -119,9 +187,9 @@ export default function OperationLogs() {
       if (filterStatus !== 'ALL' && log.status !== filterStatus) return false;
       
       if (tabIndex === 0) {
-        if (log.status !== 'PENDING_MANAGER') return false;
+        if (log.status !== 'PENDING_MANAGER' && log.status !== 'RETURNED') return false;
       } else {
-        if (log.status === 'PENDING_MANAGER') return false;
+        if (log.status === 'PENDING_MANAGER' || log.status === 'RETURNED') return false;
       }
 
       return true;
@@ -144,8 +212,8 @@ export default function OperationLogs() {
   const handleBulkReject = () => setConfirmState({ isOpen: true, action: 'BULK_REJECT', data: null });
 
   const executeConfirm = async () => {
-    const { action, data } = confirmState;
-    setConfirmState({ isOpen: false, action: null, data: null });
+    const { action, data, justification } = confirmState;
+    setConfirmState({ isOpen: false, action: null, data: null, justification: '' });
 
     try {
       if (action === 'SAVE') {
@@ -171,18 +239,18 @@ export default function OperationLogs() {
         await updateOperationLogStatus(data, 'APPROVED_MANAGER');
         toast.success('Solicitud aprobada');
       } else if (action === 'REJECT') {
-        await updateOperationLogStatus(data, 'REJECTED');
-        toast.error('Solicitud rechazada');
+        await updateOperationLogStatus(data, 'RETURNED', null, justification);
+        toast.success('Solicitud devuelta al solicitante');
       } else if (action === 'BULK_APPROVE') {
         const promises = selectedRowIds.map(id => updateOperationLogStatus(id, 'APPROVED_MANAGER'));
         await Promise.all(promises);
         setSelectedRowIds([]);
         toast.success(`${selectedRowIds.length} solicitudes aprobadas`);
       } else if (action === 'BULK_REJECT') {
-        const promises = selectedRowIds.map(id => updateOperationLogStatus(id, 'REJECTED'));
+        const promises = selectedRowIds.map(id => updateOperationLogStatus(id, 'RETURNED', null, justification));
         await Promise.all(promises);
         setSelectedRowIds([]);
-        toast.error(`${selectedRowIds.length} solicitudes rechazadas`);
+        toast.success(`${selectedRowIds.length} solicitudes devueltas`);
       } else if (action === 'DELETE') {
         await deleteOperationLog(data);
         toast.success('Registro eliminado');
@@ -197,7 +265,7 @@ export default function OperationLogs() {
     switch(status) {
       case 'PENDING_MANAGER': return <Badge colorScheme="yellow" {...badgeProps}>Pdte. Gerente</Badge>;
       case 'APPROVED_MANAGER': return <Badge colorScheme="blue" {...badgeProps}>Aprobado</Badge>;
-      case 'REJECTED': return <Badge colorScheme="red" {...badgeProps}>Rechazado</Badge>;
+      case 'RETURNED': return <Badge colorScheme="orange" {...badgeProps}>Devuelto</Badge>;
       case 'PROCESSED_PAYROLL': return <Badge colorScheme="green" {...badgeProps}>En Nómina</Badge>;
       default: return <Badge {...badgeProps}>{status}</Badge>;
     }
@@ -303,12 +371,12 @@ export default function OperationLogs() {
             {tabIndex === 0 ? (
               <>
                 <option value="PENDING_MANAGER">Pendientes</option>
+                <option value="RETURNED">Devueltos</option>
               </>
             ) : (
               <>
                 <option value="APPROVED_MANAGER">Aprobados</option>
                 <option value="PROCESSED_PAYROLL">Procesados</option>
-                <option value="REJECTED">Rechazados</option>
               </>
             )}
           </Select>
@@ -321,7 +389,7 @@ export default function OperationLogs() {
             {selectedRowIds.length} solicitudes seleccionadas
           </Text>
           <HStack>
-            <Button size="sm" colorScheme="orange" onClick={handleBulkReject}>Rechazar Seleccionados</Button>
+            <Button size="sm" colorScheme="orange" onClick={handleBulkReject}>Devolver Seleccionados</Button>
             <Button size="sm" colorScheme="blue" onClick={handleBulkApprove}>Aprobar Seleccionados</Button>
           </HStack>
         </HStack>
@@ -383,17 +451,22 @@ export default function OperationLogs() {
                     <Tooltip label="Ver Detalles" hasArrow>
                       <IconButton aria-label="Ver Detalles" size={{ base: 'xs', md: 'sm' }} icon={<Eye size={16} />} variant="ghost" colorScheme="teal" onClick={() => { setSelectedLog(log); onDetailsOpen(); }} transition="all 0.3s" />
                     </Tooltip>
+                    {!isManagerOrAdmin && !isReadOnly && log.status === 'RETURNED' && (
+                      <Tooltip label="Editar y Reenviar" hasArrow>
+                        <IconButton aria-label="Editar" size={{ base: 'xs', md: 'sm' }} icon={<Edit2 size={16} />} variant="ghost" colorScheme="blue" onClick={() => openEdit(log)} transition="all 0.3s" />
+                      </Tooltip>
+                    )}
                     {isManagerOrAdmin && log.status === 'PENDING_MANAGER' && (
                       <>
                         <Tooltip label="Aprobar" hasArrow>
                           <IconButton aria-label="Aprobar" size={{ base: 'xs', md: 'sm' }} icon={<Check size={16} />} variant="ghost" colorScheme="blue" onClick={() => handleApprove(log.id)} transition="all 0.3s" />
                         </Tooltip>
-                        <Tooltip label="Rechazar" hasArrow>
-                          <IconButton aria-label="Rechazar" size={{ base: 'xs', md: 'sm' }} icon={<X size={16} />} variant="ghost" colorScheme="orange" onClick={() => handleReject(log.id)} transition="all 0.3s" />
+                        <Tooltip label="Devolver" hasArrow>
+                          <IconButton aria-label="Devolver" size={{ base: 'xs', md: 'sm' }} icon={<X size={16} />} variant="ghost" colorScheme="orange" onClick={() => handleReject(log.id)} transition="all 0.3s" />
                         </Tooltip>
                       </>
                     )}
-                    {log.status !== 'PROCESSED_PAYROLL' && (
+                    {!isReadOnly && log.status !== 'PROCESSED_PAYROLL' && (
                       <Tooltip label="Eliminar" hasArrow>
                         <IconButton aria-label="Eliminar" size={{ base: 'xs', md: 'sm' }} icon={<Trash2 size={16} />} variant="ghost" colorScheme="red" onClick={() => handleDelete(log.id)} transition="all 0.3s" />
                       </Tooltip>
@@ -418,15 +491,15 @@ export default function OperationLogs() {
             <VStack spacing={4}>
               <FormControl isRequired>
                 <FormLabel fontSize="sm">Empleados</FormLabel>
-                <HStack mb={2}>
-                  <Select size="sm" value={modalDeptFilter} onChange={(e) => {
+                <HStack mb={2} spacing={3} width="100%">
+                  <Select size="md" flex={1} value={modalDeptFilter} onChange={(e) => {
                     setModalDeptFilter(e.target.value);
                     setFormData({ ...formData, employeeIds: [] });
                   }}>
                     <option value="ALL">Todos los departamentos</option>
                     {departments.map(d => <option key={d.id} value={d.id}>{d.nombre_dimension}</option>)}
                   </Select>
-                  <Button size="sm" onClick={handleSelectAllEmployees} whiteSpace="nowrap">
+                  <Button size="md" flexShrink={0} variant="outline" colorScheme="brand" borderRadius="lg" onClick={handleSelectAllEmployees}>
                     {formData.employeeIds.length === filteredModalEmployees.length && filteredModalEmployees.length > 0 ? 'Deseleccionar Todos' : 'Seleccionar Todos'}
                   </Button>
                 </HStack>
@@ -560,6 +633,15 @@ export default function OperationLogs() {
                   </Text>
                 </Box>
 
+                {selectedLog.justification && (
+                  <Box>
+                    <Text fontSize="xs" color="orange.500" textTransform="uppercase" fontWeight="bold">Motivo de Devolución</Text>
+                    <Text fontSize="md" p={3} bg="orange.50" color="orange.800" borderRadius="md" mt={1}>
+                      {selectedLog.justification}
+                    </Text>
+                  </Box>
+                )}
+
                 <Box pt={2}>
                   <Text fontSize="xs" color={mutedTextColor} textTransform="uppercase" fontWeight="bold" mb={1}>Estado Actual</Text>
                   {getStatusBadge(selectedLog.status)}
@@ -583,9 +665,33 @@ export default function OperationLogs() {
             <AlertDialogBody>
               {confirmState.action === 'SAVE' && '¿Estás seguro de que deseas guardar estos registros?'}
               {confirmState.action === 'APPROVE' && '¿Deseas aprobar esta solicitud de operación?'}
-              {confirmState.action === 'REJECT' && '¿Estás seguro de que deseas rechazar esta solicitud?'}
+              {confirmState.action === 'REJECT' && (
+                <VStack align="stretch" spacing={3}>
+                  <Text>¿Estás seguro de que deseas devolver esta solicitud al solicitante?</Text>
+                  <FormControl isRequired>
+                    <FormLabel fontSize="sm">Justificación / Motivo</FormLabel>
+                    <Input 
+                      placeholder="Indica qué debe corregir el solicitante..." 
+                      value={confirmState.justification}
+                      onChange={(e) => setConfirmState({...confirmState, justification: e.target.value})}
+                    />
+                  </FormControl>
+                </VStack>
+              )}
               {confirmState.action === 'BULK_APPROVE' && `¿Deseas aprobar las ${selectedRowIds.length} solicitudes seleccionadas?`}
-              {confirmState.action === 'BULK_REJECT' && `¿Deseas rechazar las ${selectedRowIds.length} solicitudes seleccionadas?`}
+              {confirmState.action === 'BULK_REJECT' && (
+                <VStack align="stretch" spacing={3}>
+                  <Text>{`¿Deseas devolver las ${selectedRowIds.length} solicitudes seleccionadas?`}</Text>
+                  <FormControl isRequired>
+                    <FormLabel fontSize="sm">Justificación / Motivo (Aplica a todas)</FormLabel>
+                    <Input 
+                      placeholder="Indica qué deben corregir..." 
+                      value={confirmState.justification}
+                      onChange={(e) => setConfirmState({...confirmState, justification: e.target.value})}
+                    />
+                  </FormControl>
+                </VStack>
+              )}
               {confirmState.action === 'DELETE' && '¿Estás seguro de que deseas eliminar este registro permanentemente?'}
             </AlertDialogBody>
             <AlertDialogFooter>
@@ -601,6 +707,82 @@ export default function OperationLogs() {
           </AlertDialogContent>
         </AlertDialogOverlay>
       </AlertDialog>
+
+      {/* Modal Editar y Reenviar */}
+      <Modal isOpen={isEditOpen} onClose={onEditClose} size="md" isCentered>
+        <ModalOverlay backdropFilter="blur(4px)" />
+        <ModalContent bg={bg} color={textColor}>
+          <ModalHeader>Editar y Reenviar Solicitud</ModalHeader>
+          <ModalBody>
+            {editFormData && (
+              <VStack spacing={4} align="stretch">
+                <Text fontSize="sm" color={mutedTextColor}>
+                  Corrige los datos de la solicitud y vuelve a enviarla para su aprobación.
+                </Text>
+                <FormControl isRequired>
+                  <FormLabel fontSize="sm">Empleado</FormLabel>
+                  <HStack mb={2} spacing={3} width="100%">
+                    <Select size="md" flex={1} value={editModalDeptFilter} onChange={(e) => {
+                      setEditModalDeptFilter(e.target.value);
+                    }}>
+                      <option value="ALL">Todos los departamentos</option>
+                      {departments.map(d => <option key={d.id} value={d.id}>{d.nombre_dimension}</option>)}
+                    </Select>
+                  </HStack>
+                  <Input 
+                    size="sm" 
+                    placeholder="Buscar empleado por nombre..." 
+                    value={editModalSearchQuery} 
+                    onChange={(e) => setEditModalSearchQuery(e.target.value)}
+                    mb={2}
+                  />
+                  <Box maxH="150px" overflowY="auto" borderWidth="1px" borderRadius="md" p={2}>
+                    <RadioGroup colorScheme="brand" value={editFormData.employeeId.toString()} onChange={(val) => setEditFormData({...editFormData, employeeId: val})}>
+                      <VStack align="start">
+                        {filteredEditModalEmployees.map(emp => (
+                          <Radio key={emp.id} value={emp.id.toString()}>
+                            {[emp.primer_nombre, emp.segundo_nombre, emp.otro_nombre, emp.primer_apellido, emp.segundo_apellido].filter(Boolean).join(' ')}
+                          </Radio>
+                        ))}
+                        {filteredEditModalEmployees.length === 0 && <Text fontSize="sm" color="gray.500">No hay empleados en este departamento</Text>}
+                      </VStack>
+                    </RadioGroup>
+                  </Box>
+                </FormControl>
+                {editFormData.type === 'HORA_EXTRA' ? (
+                  <>
+                    <FormControl isRequired>
+                      <FormLabel fontSize="sm">Cantidad de Horas</FormLabel>
+                      <Input type="number" step="0.5" value={editFormData.hoursQty} onChange={(e) => setEditFormData({...editFormData, hoursQty: e.target.value})} />
+                    </FormControl>
+                    <FormControl isRequired>
+                      <FormLabel fontSize="sm">Tipo de Hora Extra</FormLabel>
+                      <Select value={editFormData.hourType} onChange={(e) => setEditFormData({...editFormData, hourType: e.target.value})}>
+                        <option value="SIMPLE">Simple</option>
+                        <option value="DOBLE">Doble</option>
+                        <option value="NOCTURNA">Nocturna</option>
+                      </Select>
+                    </FormControl>
+                  </>
+                ) : (
+                  <FormControl isRequired>
+                    <FormLabel fontSize="sm">Monto del Bono</FormLabel>
+                    <Input type="number" step="0.01" value={editFormData.bonusAmount} onChange={(e) => setEditFormData({...editFormData, bonusAmount: e.target.value})} />
+                  </FormControl>
+                )}
+                <FormControl isRequired>
+                  <FormLabel fontSize="sm">Justificación / Tarea Realizada</FormLabel>
+                  <Input value={editFormData.taskDescription} onChange={(e) => setEditFormData({...editFormData, taskDescription: e.target.value})} />
+                </FormControl>
+              </VStack>
+            )}
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="ghost" mr={3} onClick={onEditClose}>Cancelar</Button>
+            <Button colorScheme="blue" onClick={handleEditSave}>Guardar y Reenviar</Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
 
     </Box>
   );

@@ -19,6 +19,9 @@ module.exports = (sequelize) => {
     },
     data: {
       type: DataTypes.JSON
+    },
+    notes: {
+      type: DataTypes.TEXT
     }
   });
 
