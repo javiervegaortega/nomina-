@@ -5,15 +5,16 @@ import {
   ModalContent, ModalHeader, ModalBody, ModalFooter, FormControl, FormLabel,
   VStack, Text, Checkbox, CheckboxGroup, Radio, RadioGroup, useColorModeValue, Tooltip, Divider, Grid, GridItem,
   AlertDialog, AlertDialogBody, AlertDialogFooter, AlertDialogHeader, AlertDialogContent, AlertDialogOverlay,
-  Tabs, TabList, Tab, TabPanels, TabPanel, Skeleton, Flex
+  Tabs, TabList, Tab, TabPanels, TabPanel, Skeleton, Flex,
+  Menu, MenuButton, MenuList, MenuOptionGroup, MenuItemOption
 } from '@chakra-ui/react';
-import { Plus, Check, X, Trash2, Eye, Edit2 } from 'lucide-react';
+import { Plus, Check, X, Trash2, Eye, Edit2, ChevronDown } from 'lucide-react';
 import { toast } from 'sonner';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
 
 export default function OperationLogs() {
-  const { employees, departments, companies, operationLogs, addOperationLog, updateOperationLogStatus, deleteOperationLog, updateOperationLog, isLoading } = useContext(DataContext);
+  const { employees, departments, areas, companies, operationLogs, addOperationLog, updateOperationLogStatus, deleteOperationLog, updateOperationLog, isLoading } = useContext(DataContext);
   const { user } = useContext(AuthContext);
   const [filterMonth, setFilterMonth] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
   const [filterType, setFilterType] = useState('ALL');
@@ -26,11 +27,11 @@ export default function OperationLogs() {
 
   const { isOpen: isEditOpen, onOpen: onEditOpen, onClose: onEditClose } = useDisclosure();
   const [editFormData, setEditFormData] = useState(null);
-  const [editModalDeptFilter, setEditModalDeptFilter] = useState('ALL');
+  const [editModalAreaFilter, setEditModalAreaFilter] = useState([]);
   const [editModalSearchQuery, setEditModalSearchQuery] = useState('');
 
   const openEdit = (log) => {
-    setEditModalDeptFilter('ALL');
+    setEditModalAreaFilter([]);
     setEditModalSearchQuery('');
     setEditFormData({
       id: log.id,
@@ -80,8 +81,9 @@ export default function OperationLogs() {
   const availableEmployees = useMemo(() => {
     let filtered = employees;
     
-    // Only restrict by the user's own department if they are NOT a manager/admin/nomina
-    if (user && user.idDepartamento && !isManagerOrAdmin) {
+    // Restrict by user's department only if specifically required.
+    // Currently, SOLICITANTE, GERENTE, and ADMIN need access to all departments to create operations.
+    if (user && user.idDepartamento && !isManagerOrAdmin && user.role !== 'SOLICITANTE') {
       const normalize = (str) => (str ? str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase() : "");
       const userDept = normalize(user.idDepartamento);
       
@@ -103,7 +105,7 @@ export default function OperationLogs() {
       });
   }, [employees, user, isManagerOrAdmin]);
 
-  const [modalDeptFilter, setModalDeptFilter] = useState('ALL');
+  const [modalAreaFilter, setModalAreaFilter] = useState([]);
   const [modalSearchQuery, setModalSearchQuery] = useState('');
 
   const [formData, setFormData] = useState({
@@ -126,12 +128,29 @@ export default function OperationLogs() {
 
     let result = availableEmployees;
 
-    if (modalDeptFilter !== 'ALL') {
-      const selectedDept = departments.find(d => d.id.toString() === modalDeptFilter.toString());
-      if (selectedDept) {
-        const deptNameNorm = normalize(selectedDept.nombre_dimension);
-        result = result.filter(emp => normalize(emp.departamento_laboral) === deptNameNorm);
-      }
+
+
+    if (modalAreaFilter.length > 0) {
+      result = result.filter(emp => {
+        const depLab = normalize(emp.departamento_laboral);
+        const depOrig = normalize(emp.departamento_originario);
+        const centro = normalize(emp.centro_de_costo);
+        
+        return modalAreaFilter.some(filterIdStr => {
+          if (String(emp.areaId) === filterIdStr) return true;
+          
+          const selectedArea = areas?.find(a => String(a.id) === filterIdStr);
+          if (selectedArea) {
+            const areaNameNorm = normalize(selectedArea.nombre);
+            if (depLab.includes(areaNameNorm) || areaNameNorm.includes(depLab) ||
+                depOrig.includes(areaNameNorm) || areaNameNorm.includes(depOrig) ||
+                centro.includes(areaNameNorm) || areaNameNorm.includes(centro)) {
+              return true;
+            }
+          }
+          return false;
+        });
+      });
     }
 
     if (modalSearchQuery.trim()) {
@@ -143,7 +162,7 @@ export default function OperationLogs() {
     }
 
     return result;
-  }, [availableEmployees, modalDeptFilter, departments, modalSearchQuery]);
+  }, [availableEmployees, modalAreaFilter, areas, modalSearchQuery]);
 
   const filteredEditModalEmployees = useMemo(() => {
     const normalize = (str) => {
@@ -153,12 +172,29 @@ export default function OperationLogs() {
 
     let result = availableEmployees;
 
-    if (editModalDeptFilter !== 'ALL') {
-      const selectedDept = departments.find(d => d.id.toString() === editModalDeptFilter.toString());
-      if (selectedDept) {
-        const deptNameNorm = normalize(selectedDept.nombre_dimension);
-        result = result.filter(emp => normalize(emp.departamento_laboral) === deptNameNorm);
-      }
+
+
+    if (editModalAreaFilter.length > 0) {
+      result = result.filter(emp => {
+        const depLab = normalize(emp.departamento_laboral);
+        const depOrig = normalize(emp.departamento_originario);
+        const centro = normalize(emp.centro_de_costo);
+        
+        return editModalAreaFilter.some(filterIdStr => {
+          if (String(emp.areaId) === filterIdStr) return true;
+          
+          const selectedArea = areas?.find(a => String(a.id) === filterIdStr);
+          if (selectedArea) {
+            const areaNameNorm = normalize(selectedArea.nombre);
+            if (depLab.includes(areaNameNorm) || areaNameNorm.includes(depLab) ||
+                depOrig.includes(areaNameNorm) || areaNameNorm.includes(depOrig) ||
+                centro.includes(areaNameNorm) || areaNameNorm.includes(centro)) {
+              return true;
+            }
+          }
+          return false;
+        });
+      });
     }
 
     if (editModalSearchQuery.trim()) {
@@ -170,7 +206,7 @@ export default function OperationLogs() {
     }
 
     return result;
-  }, [availableEmployees, editModalDeptFilter, departments, editModalSearchQuery]);
+  }, [availableEmployees, editModalAreaFilter, areas, editModalSearchQuery]);
 
   const handleSelectAllEmployees = () => {
     if (formData.employeeIds.length === filteredModalEmployees.length) {
@@ -492,13 +528,18 @@ export default function OperationLogs() {
               <FormControl isRequired>
                 <FormLabel fontSize="sm">Empleados</FormLabel>
                 <HStack mb={2} spacing={3} width="100%">
-                  <Select size="md" flex={1} value={modalDeptFilter} onChange={(e) => {
-                    setModalDeptFilter(e.target.value);
-                    setFormData({ ...formData, employeeIds: [] });
-                  }}>
-                    <option value="ALL">Todos los departamentos</option>
-                    {departments.map(d => <option key={d.id} value={d.id}>{d.nombre_dimension}</option>)}
-                  </Select>
+                  <Menu closeOnSelect={false}>
+                    <MenuButton as={Button} size="sm" variant="outline" rightIcon={<ChevronDown size={14}/>} flex={1} textAlign="left" fontWeight="normal" bg={useColorModeValue('white', 'gray.800')} borderRadius="md" px={3}>
+                      {modalAreaFilter.length > 0 ? `${modalAreaFilter.length} Áreas...` : 'Área...'}
+                    </MenuButton>
+                    <MenuList maxH="300px" overflowY="auto" zIndex={100} boxShadow="lg">
+                      <MenuOptionGroup type="checkbox" value={modalAreaFilter} onChange={setModalAreaFilter}>
+                        {areas?.map(a => (
+                          <MenuItemOption key={a.id} value={String(a.id)} fontSize="sm">{a.nombre}</MenuItemOption>
+                        ))}
+                      </MenuOptionGroup>
+                    </MenuList>
+                  </Menu>
                   <Button size="md" flexShrink={0} variant="outline" colorScheme="brand" borderRadius="lg" onClick={handleSelectAllEmployees}>
                     {formData.employeeIds.length === filteredModalEmployees.length && filteredModalEmployees.length > 0 ? 'Deseleccionar Todos' : 'Seleccionar Todos'}
                   </Button>
@@ -510,15 +551,30 @@ export default function OperationLogs() {
                   onChange={(e) => setModalSearchQuery(e.target.value)}
                   mb={2}
                 />
-                <Box maxH="150px" overflowY="auto" borderWidth="1px" borderRadius="md" p={2}>
+                <Box maxH="250px" overflowY="auto" borderWidth="1px" borderRadius="md" p={2}>
                   <CheckboxGroup colorScheme="brand" value={formData.employeeIds} onChange={(values) => setFormData({...formData, employeeIds: values})}>
-                    <VStack align="start">
-                      {filteredModalEmployees.map(emp => (
-                        <Checkbox key={emp.id} value={emp.id.toString()}>
-                          {[emp.primer_nombre, emp.segundo_nombre, emp.otro_nombre, emp.primer_apellido, emp.segundo_apellido].filter(Boolean).join(' ')}
-                        </Checkbox>
-                      ))}
-                      {filteredModalEmployees.length === 0 && <Text fontSize="sm" color="gray.500">No hay empleados en este departamento</Text>}
+                    <VStack align="start" spacing={1}>
+                      {(() => {
+                        const groups = {};
+                        filteredModalEmployees.forEach(emp => {
+                          const areaName = areas?.find(a => String(a.id) === String(emp.areaId))?.nombre || 'Sin Área';
+                          if (!groups[areaName]) groups[areaName] = [];
+                          groups[areaName].push(emp);
+                        });
+                        return Object.keys(groups).sort().map(areaName => (
+                          <Box key={areaName} w="100%">
+                            <Text fontSize="xs" fontWeight="bold" color="brand.400" textTransform="uppercase" mt={2} mb={1} borderBottomWidth="1px" borderColor="gray.600" pb={1}>
+                              {areaName}
+                            </Text>
+                            {groups[areaName].map(emp => (
+                              <Checkbox key={emp.id} value={emp.id.toString()} w="100%" py={0.5}>
+                                {[emp.primer_nombre, emp.segundo_nombre, emp.otro_nombre, emp.primer_apellido, emp.segundo_apellido].filter(Boolean).join(' ')}
+                              </Checkbox>
+                            ))}
+                          </Box>
+                        ));
+                      })()}
+                      {filteredModalEmployees.length === 0 && <Text fontSize="sm" color="gray.500">No hay empleados en esta área</Text>}
                     </VStack>
                   </CheckboxGroup>
                 </Box>
@@ -722,12 +778,18 @@ export default function OperationLogs() {
                 <FormControl isRequired>
                   <FormLabel fontSize="sm">Empleado</FormLabel>
                   <HStack mb={2} spacing={3} width="100%">
-                    <Select size="md" flex={1} value={editModalDeptFilter} onChange={(e) => {
-                      setEditModalDeptFilter(e.target.value);
-                    }}>
-                      <option value="ALL">Todos los departamentos</option>
-                      {departments.map(d => <option key={d.id} value={d.id}>{d.nombre_dimension}</option>)}
-                    </Select>
+                    <Menu closeOnSelect={false}>
+                      <MenuButton as={Button} size="sm" variant="outline" rightIcon={<ChevronDown size={14}/>} flex={1} textAlign="left" fontWeight="normal" bg={useColorModeValue('white', 'gray.800')} borderRadius="md" px={3}>
+                        {editModalAreaFilter.length > 0 ? `${editModalAreaFilter.length} Áreas...` : 'Área...'}
+                      </MenuButton>
+                      <MenuList maxH="300px" overflowY="auto" zIndex={100} boxShadow="lg">
+                        <MenuOptionGroup type="checkbox" value={editModalAreaFilter} onChange={setEditModalAreaFilter}>
+                          {areas?.map(a => (
+                            <MenuItemOption key={a.id} value={String(a.id)} fontSize="sm">{a.nombre}</MenuItemOption>
+                          ))}
+                        </MenuOptionGroup>
+                      </MenuList>
+                    </Menu>
                   </HStack>
                   <Input 
                     size="sm" 
@@ -736,15 +798,30 @@ export default function OperationLogs() {
                     onChange={(e) => setEditModalSearchQuery(e.target.value)}
                     mb={2}
                   />
-                  <Box maxH="150px" overflowY="auto" borderWidth="1px" borderRadius="md" p={2}>
+                  <Box maxH="250px" overflowY="auto" borderWidth="1px" borderRadius="md" p={2}>
                     <RadioGroup colorScheme="brand" value={editFormData.employeeId.toString()} onChange={(val) => setEditFormData({...editFormData, employeeId: val})}>
-                      <VStack align="start">
-                        {filteredEditModalEmployees.map(emp => (
-                          <Radio key={emp.id} value={emp.id.toString()}>
-                            {[emp.primer_nombre, emp.segundo_nombre, emp.otro_nombre, emp.primer_apellido, emp.segundo_apellido].filter(Boolean).join(' ')}
-                          </Radio>
-                        ))}
-                        {filteredEditModalEmployees.length === 0 && <Text fontSize="sm" color="gray.500">No hay empleados en este departamento</Text>}
+                      <VStack align="start" spacing={1}>
+                        {(() => {
+                          const groups = {};
+                          filteredEditModalEmployees.forEach(emp => {
+                            const areaName = areas?.find(a => String(a.id) === String(emp.areaId))?.nombre || 'Sin Área';
+                            if (!groups[areaName]) groups[areaName] = [];
+                            groups[areaName].push(emp);
+                          });
+                          return Object.keys(groups).sort().map(areaName => (
+                            <Box key={areaName} w="100%">
+                              <Text fontSize="xs" fontWeight="bold" color="brand.400" textTransform="uppercase" mt={2} mb={1} borderBottomWidth="1px" borderColor="gray.600" pb={1}>
+                                {areaName}
+                              </Text>
+                              {groups[areaName].map(emp => (
+                                <Radio key={emp.id} value={emp.id.toString()} w="100%" py={0.5}>
+                                  {[emp.primer_nombre, emp.segundo_nombre, emp.otro_nombre, emp.primer_apellido, emp.segundo_apellido].filter(Boolean).join(' ')}
+                                </Radio>
+                              ))}
+                            </Box>
+                          ));
+                        })()}
+                        {filteredEditModalEmployees.length === 0 && <Text fontSize="sm" color="gray.500">No hay empleados en esta área</Text>}
                       </VStack>
                     </RadioGroup>
                   </Box>

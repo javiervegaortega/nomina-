@@ -2,7 +2,7 @@ import React, { useState, useContext } from 'react';
 import { DataContext } from '../context/DataContext';
 import { AppContext } from '../App';
 import { AuthContext } from '../context/AuthContext';
-import { Plus, Edit2, Trash2, Eye } from 'lucide-react';
+import { Plus, Edit2, Trash2, Eye, Search } from 'lucide-react';
 import DepartmentFormModal from '../components/DepartmentFormModal';
 import usePagination from '../hooks/usePagination';
 import Pagination from '../components/Pagination';
@@ -24,6 +24,9 @@ import {
   useColorModeValue,
   Skeleton,
   SkeletonText,
+  Input,
+  InputGroup,
+  InputLeftElement,
 } from '@chakra-ui/react';
 
 export default function Departments() {
@@ -34,8 +37,14 @@ export default function Departments() {
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [editingData, setEditingData] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
-  const pagination = usePagination(departments, 10);
+  const filteredDepartments = departments.filter(d => 
+    d.nombre_dimension?.toLowerCase().includes(searchQuery.toLowerCase()) || 
+    String(d.id).includes(searchQuery)
+  );
+
+  const pagination = usePagination(filteredDepartments, 10);
 
   // Color mode values
   const tableBorderColor = useColorModeValue('gray.200', 'whiteAlpha.100');
@@ -150,21 +159,35 @@ export default function Departments() {
             </Badge>
           </Flex>
         </Box>
-        {!isReadOnly && (
-          <Button
-            colorScheme="brand"
-            leftIcon={<Plus size={18} />}
-            onClick={openAdd}
-            size={{ base: 'sm', md: 'md' }}
-            borderRadius="lg"
-            transition="all 0.3s"
-            _hover={{
-              boxShadow: 'lg',
-            }}
-          >
-            Nuevo Departamento
-          </Button>
-        )}
+        <Flex gap={3} align="center" flexWrap="wrap" justify="flex-end">
+          <InputGroup size="sm" w={{ base: '100%', sm: '250px' }}>
+            <InputLeftElement pointerEvents="none">
+              <Search size={14} color="gray.400" />
+            </InputLeftElement>
+            <Input
+              placeholder="Buscar departamento..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              bg={useColorModeValue('white', 'gray.800')}
+              borderRadius="lg"
+            />
+          </InputGroup>
+          {!isReadOnly && (
+            <Button
+              colorScheme="brand"
+              leftIcon={<Plus size={18} />}
+              onClick={openAdd}
+              size={{ base: 'sm', md: 'md' }}
+              borderRadius="lg"
+              transition="all 0.3s"
+              _hover={{
+                boxShadow: 'lg',
+              }}
+            >
+              Nuevo Departamento
+            </Button>
+          )}
+        </Flex>
       </Flex>
 
       {/* Table Container */}

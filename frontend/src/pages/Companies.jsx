@@ -4,7 +4,7 @@ import { AppContext } from '../App';
 import { AuthContext } from '../context/AuthContext';
 import usePagination from '../hooks/usePagination';
 import Pagination from '../components/Pagination';
-import { Plus, Edit2, Trash2, Eye } from 'lucide-react';
+import { Plus, Edit2, Trash2, Eye, Search } from 'lucide-react';
 import CompanyFormModal from '../components/CompanyFormModal';
 import {
   Box,
@@ -24,6 +24,9 @@ import {
   useColorModeValue,
   Skeleton,
   SkeletonText,
+  Input,
+  InputGroup,
+  InputLeftElement,
 } from '@chakra-ui/react';
 
 export default function Companies() {
@@ -34,8 +37,15 @@ export default function Companies() {
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [editingData, setEditingData] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
-  const pagination = usePagination(companies, 10);
+  const filteredCompanies = companies.filter(c => 
+    c.nombre_comercial?.toLowerCase().includes(searchQuery.toLowerCase()) || 
+    c.razon_social?.toLowerCase().includes(searchQuery.toLowerCase()) || 
+    String(c.id).includes(searchQuery)
+  );
+
+  const pagination = usePagination(filteredCompanies, 10);
 
   // Color mode values
   const tableBorderColor = useColorModeValue('gray.200', 'whiteAlpha.100');
@@ -149,21 +159,35 @@ export default function Companies() {
             </Badge>
           </Flex>
         </Box>
-        {!isReadOnly && (
-          <Button
-            colorScheme="brand"
-            leftIcon={<Plus size={18} />}
-            onClick={openAdd}
-            size={{ base: 'sm', md: 'md' }}
-            borderRadius="lg"
-            transition="all 0.3s"
-            _hover={{
-              boxShadow: 'lg',
-            }}
-          >
-            Nueva Empresa
-          </Button>
-        )}
+        <Flex gap={3} align="center" flexWrap="wrap" justify="flex-end">
+          <InputGroup size="sm" w={{ base: '100%', sm: '250px' }}>
+            <InputLeftElement pointerEvents="none">
+              <Search size={14} color="gray.400" />
+            </InputLeftElement>
+            <Input
+              placeholder="Buscar empresa..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              bg={useColorModeValue('white', 'gray.800')}
+              borderRadius="lg"
+            />
+          </InputGroup>
+          {!isReadOnly && (
+            <Button
+              colorScheme="brand"
+              leftIcon={<Plus size={18} />}
+              onClick={openAdd}
+              size={{ base: 'sm', md: 'md' }}
+              borderRadius="lg"
+              transition="all 0.3s"
+              _hover={{
+                boxShadow: 'lg',
+              }}
+            >
+              Nueva Empresa
+            </Button>
+          )}
+        </Flex>
       </Flex>
 
       {/* Table Container */}

@@ -4,7 +4,7 @@ import { AppContext } from '../App';
 import usePagination from '../hooks/usePagination';
 import Pagination from '../components/Pagination';
 import { AuthContext } from '../context/AuthContext';
-import { History, Calendar, Trash2, Eye, Download, FileText, CheckCircle2, ArrowLeft, Building2, X, Search, ChevronDown } from 'lucide-react';
+import { History, Calendar, Trash2, Eye, Download, FileText, CheckCircle2, ArrowLeft, Building2, X, Search, ChevronDown, LayoutGrid } from 'lucide-react';
 import { formatQ, CUOTA_LABORAL_RATE, CUOTA_PATRONAL_RATE } from '../data/mockData';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
@@ -35,7 +35,7 @@ import {
   Modal, ModalOverlay, ModalContent, ModalHeader, ModalBody,
   ModalFooter, ModalCloseButton, Divider, SimpleGrid, Center,
   Menu, MenuButton, MenuList, MenuItem, MenuItemOption, MenuOptionGroup,
-  Skeleton, SkeletonText, ButtonGroup
+  Skeleton, SkeletonText, ButtonGroup, Tooltip
 } from '@chakra-ui/react';
 
 
@@ -1114,8 +1114,8 @@ function PayrollHistoryDetail({ group, onBack }) {
       {/* Screen-only content */}
       <Box sx={{ '@media print': { display: 'none' } }}>
       {/* Header */}
-      <Flex justify="space-between" align={{ base: 'stretch', md: 'center' }} direction={{ base: 'column', md: 'row' }} mb={6} wrap="wrap" gap={4}>
-        <Flex align="center" gap={4}>
+      <Flex justify="space-between" align={{ base: 'stretch', md: 'flex-start' }} direction={{ base: 'column', md: 'row' }} mb={6} wrap="wrap" gap={4}>
+        <Flex align="flex-start" gap={4}>
           <IconButton aria-label="Back" icon={<ArrowLeft size={20} />} onClick={onBack} variant="ghost" />
           <Box>
             <Flex align="center" gap={{ base: 2, md: 3 }} flexWrap="wrap">
@@ -1242,6 +1242,24 @@ function PayrollHistoryDetail({ group, onBack }) {
             <option value="Activo">Activo</option>
             <option value="De Baja">De Baja</option>
           </Select>
+          <Tooltip label={filterArea.length === areas.length ? 'Quitar agrupación por área' : 'Agrupar todos los empleados por su área'} hasArrow>
+            <Button 
+              size="sm" 
+              variant={filterArea.length === areas.length ? 'solid' : 'outline'}
+              colorScheme="brand"
+              borderRadius="md"
+              leftIcon={<LayoutGrid size={14} />}
+              onClick={() => {
+                if (filterArea.length === areas.length) {
+                  setFilterArea([]);
+                } else {
+                  setFilterArea(areas.map(a => String(a.id)));
+                }
+              }}
+            >
+              Por Área
+            </Button>
+          </Tooltip>
         </HStack>
 
         <HStack maxW={{ base: '100%', lg: '600px' }} spacing={{ base: 2, md: 3 }} w={{ base: '100%', md: 'auto' }} flexWrap={{ base: 'wrap', lg: 'nowrap' }}>

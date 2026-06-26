@@ -630,8 +630,8 @@ function PayrollEditor({ draftId, onBack }) {
 
   return (
     <Box p={{ base: 3, md: 6, lg: 8 }}>
-      <Flex justify="space-between" align={{ base: 'stretch', md: 'center' }} direction={{ base: 'column', md: 'row' }} mb={6} wrap="wrap" gap={4}>
-        <Flex align="center" gap={4}>
+      <Flex justify="space-between" align={{ base: 'stretch', md: 'flex-start' }} direction={{ base: 'column', md: 'row' }} mb={6} wrap="wrap" gap={4}>
+        <Flex align="flex-start" gap={4}>
           <IconButton aria-label="Back" icon={<ArrowLeft size={24} />} onClick={onBack} variant="ghost" />
           <Box>
             <Flex align="center" gap={{ base: 2, md: 3 }} flexWrap="wrap">
@@ -1045,6 +1045,24 @@ function ListadoPagosTab({
             <option value="Activo">Activo</option>
             <option value="De Baja">De Baja</option>
           </Select>
+          <Tooltip label={filterArea.length === areas.length ? 'Quitar agrupación por área' : 'Agrupar todos los empleados por su área'} hasArrow>
+            <Button 
+              size="sm" 
+              variant={filterArea.length === areas.length ? 'solid' : 'outline'}
+              colorScheme="brand"
+              borderRadius="md"
+              leftIcon={<LayoutGrid size={14} />}
+              onClick={() => {
+                if (filterArea.length === areas.length) {
+                  setFilterArea([]);
+                } else {
+                  setFilterArea(areas.map(a => String(a.id)));
+                }
+              }}
+            >
+              Por Área
+            </Button>
+          </Tooltip>
         </HStack>
 
         <HStack maxW={{ base: '100%', lg: '600px' }} spacing={{ base: 2, md: 3 }} w={{ base: '100%', md: 'auto' }} flexWrap={{ base: 'wrap', lg: 'nowrap' }}>

@@ -4,6 +4,7 @@ export const COMPANIES = [
   { id: 'unhesaLiq', name: 'UNHESA LIQ.', color: '#3b82f6', gradient: 'linear-gradient(135deg, #3b82f6, #06b6d4)' },
   { id: 'econacional', name: 'ECONACIONAL', color: '#10b981', gradient: 'linear-gradient(135deg, #10b981, #34d399)' },
   { id: 'ecomezclas', name: 'ECOMEZCLAS', color: '#ec4899', gradient: 'linear-gradient(135deg, #ec4899, #f43f5e)' },
+  { id: 'hidroxon', name: 'HIDROXON', color: '#14b8a6', gradient: 'linear-gradient(135deg, #14b8a6, #0f766e)' },
 ];
 
 export const DEPARTMENTS = [

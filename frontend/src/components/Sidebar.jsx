@@ -60,6 +60,7 @@ export default function Sidebar() {
 
   const NAV_ITEMS = ALL_NAV_ITEMS.filter(item => {
     if (!user) return false;
+    if (item.to === '/dashboard') return true;
     const role = user.role;
     if (role === 'ADMIN') return true;
     if (role === 'NOMINA' || role === 'AUDITOR') return item.to !== '/operations';
