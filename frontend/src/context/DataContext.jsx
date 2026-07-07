@@ -1,9 +1,11 @@
-import React, { createContext, useState, useEffect, useRef } from 'react';
+import React, { createContext, useState, useEffect, useRef, useContext } from 'react';
+import { AuthContext } from './AuthContext';
 
 export const DataContext = createContext();
 
 export function DataProvider({ children }) {
   // --- STATE ---
+  const { token } = useContext(AuthContext);
   const saveTimeouts = useRef({});
 
   const [companies, setCompanies] = useState(() => {
@@ -28,6 +30,11 @@ export function DataProvider({ children }) {
 
   const [subdivisions, setSubdivisions] = useState(() => {
     const saved = localStorage.getItem('nomina-subdivisions');
+    return saved ? JSON.parse(saved) : [];
+  });
+
+  const [dimension5s, setDimension5s] = useState(() => {
+    const saved = localStorage.getItem('nomina-dimension5s');
     return saved ? JSON.parse(saved) : [];
   });
 
@@ -75,6 +82,10 @@ export function DataProvider({ children }) {
   }, [subdivisions]);
 
   useEffect(() => {
+    localStorage.setItem('nomina-dimension5s', JSON.stringify(dimension5s));
+  }, [dimension5s]);
+
+  useEffect(() => {
     localStorage.setItem('nomina-bonuses', JSON.stringify(bonuses));
   }, [bonuses]);
 
@@ -94,7 +105,7 @@ export function DataProvider({ children }) {
         const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
         const fetchOpts = { headers };
 
-        const [compRes, empRes, histRes, deptRes, areaRes, divRes, subdivRes, draftsRes, commRes, opLogsRes] = await Promise.all([
+        const [compRes, empRes, histRes, deptRes, areaRes, divRes, subdivRes, dim5Res, draftsRes, commRes, opLogsRes, sapRes] = await Promise.all([
           fetch('http://localhost:3000/api/companies', fetchOpts),
           fetch('http://localhost:3000/api/employees', fetchOpts),
           fetch('http://localhost:3000/api/payrolls', fetchOpts),
@@ -102,9 +113,11 @@ export function DataProvider({ children }) {
           fetch('http://localhost:3000/api/areas', fetchOpts),
           fetch('http://localhost:3000/api/divisions', fetchOpts),
           fetch('http://localhost:3000/api/subdivisions', fetchOpts),
+          fetch('http://localhost:3000/api/dimension5', fetchOpts),
           fetch('http://localhost:3000/api/payroll-drafts', fetchOpts),
           fetch('http://localhost:3000/api/commissions', fetchOpts),
-          fetch('http://localhost:3000/api/operation-logs', fetchOpts)
+          fetch('http://localhost:3000/api/operation-logs', fetchOpts),
+          fetch('http://localhost:3000/api/sap/status', fetchOpts)
         ]);
         
         if (compRes.ok) {
@@ -141,6 +154,12 @@ export function DataProvider({ children }) {
           const apiSubdivs = await subdivRes.json();
           if (Array.isArray(apiSubdivs)) setSubdivisions(apiSubdivs);
         }
+
+        if (dim5Res.ok) {
+          const apiDim5s = await dim5Res.json();
+          if (Array.isArray(apiDim5s)) setDimension5s(apiDim5s);
+        }
+
         if (draftsRes.ok) {
           const apiDrafts = await draftsRes.json();
           if (Array.isArray(apiDrafts)) {
@@ -177,8 +196,12 @@ export function DataProvider({ children }) {
       }
     };
 
-    fetchBackendData();
-  }, []);
+    if (token) {
+      fetchBackendData();
+    } else {
+      setIsLoading(false);
+    }
+  }, [token]);
 
   // --- ACTIONS ---
 
@@ -415,6 +438,52 @@ export function DataProvider({ children }) {
       }
     } catch (err) {
       setSubdivisions(subdivisions.filter(s => s.id !== id));
+    }
+  };
+
+  // Dimension 5
+  const addDimension5 = async (dim5) => {
+    try {
+      const res = await fetch('http://localhost:3000/api/dimension5', {
+        method: 'POST',
+        headers: getAuthHeader(),
+        body: JSON.stringify(dim5)
+      });
+      if (res.ok) {
+        const newD5 = await res.json();
+        setDimension5s([...dimension5s, newD5]);
+      }
+    } catch (err) {
+      setDimension5s([...dimension5s, { ...dim5, id: Date.now() }]);
+    }
+  };
+
+  const updateDimension5 = async (id, data) => {
+    try {
+      const res = await fetch(`http://localhost:3000/api/dimension5/${id}`, {
+        method: 'PUT',
+        headers: getAuthHeader(),
+        body: JSON.stringify(data)
+      });
+      if (res.ok) {
+        setDimension5s(dimension5s.map(d => d.id === id ? { ...d, ...data } : d));
+      }
+    } catch (err) {
+      setDimension5s(dimension5s.map(d => d.id === id ? { ...d, ...data } : d));
+    }
+  };
+
+  const deleteDimension5 = async (id) => {
+    try {
+      const res = await fetch(`http://localhost:3000/api/dimension5/${id}`, {
+        method: 'DELETE',
+        headers: getAuthHeader()
+      });
+      if (res.ok) {
+        setDimension5s(dimension5s.filter(d => d.id !== id));
+      }
+    } catch (err) {
+      setDimension5s(dimension5s.filter(d => d.id !== id));
     }
   };
 
@@ -1065,12 +1134,23 @@ export function DataProvider({ children }) {
 
   return (
     <DataContext.Provider value={{
-      companies, departments, employees, bonuses, commissions, payrollHistory, areas, divisions, subdivisions, isLoading,
+      companies, 
+      departments, 
+      employees, 
+      bonuses, 
+      commissions, 
+      payrollHistory, 
+      areas: areas.filter(a => String(a.id_estado) === '1' || a.id_estado === undefined), 
+      divisions: divisions.filter(d => String(d.id_estado) === '1' || d.id_estado === undefined), 
+      subdivisions: subdivisions.filter(s => String(s.id_estado) === '1' || s.id_estado === undefined), 
+      dimension5s: dimension5s.filter(d => String(d.id_estado) === '1' || d.id_estado === undefined), 
+      isLoading,
       addCompany, updateCompany, deleteCompany,
       addDepartment, updateDepartment, deleteDepartment,
       addArea, updateArea, deleteArea,
       addDivision, updateDivision, deleteDivision,
       addSubdivision, updateSubdivision, deleteSubdivision,
+      addDimension5, updateDimension5, deleteDimension5,
       addEmployee, updateEmployee, deleteEmployee, setAllEmployees,
       addEmployeeRecord, updateEmployeeRecord, deleteEmployeeRecord,
       addBonus, updateBonus, deleteBonus,

@@ -30,7 +30,7 @@ import {
 } from '@chakra-ui/react';
 
 export default function Subdivisions() {
-  const { subdivisions, addSubdivision, updateSubdivision, deleteSubdivision, isLoading } = useContext(DataContext);
+  const { subdivisions, isSapConnected, addSubdivision, updateSubdivision, deleteSubdivision, isLoading } = useContext(DataContext);
   const { confirmAction } = useContext(AppContext);
   const { user } = useContext(AuthContext);
   const isReadOnly = user?.role === 'AUDITOR';
@@ -62,6 +62,7 @@ export default function Subdivisions() {
   const viewIconColor = useColorModeValue('brand.500', 'brand.300');
   const editIconColor = useColorModeValue('accent.600', 'accent.300');
   const deleteIconColor = useColorModeValue('red.500', 'red.300');
+  const inputBgColor = useColorModeValue('white', 'gray.800');
 
   const openAdd = () => {
     setEditingId(null);
@@ -140,6 +141,7 @@ export default function Subdivisions() {
           >
             Directorio de Subdivisiones
           </Heading>
+          
           <Flex align="center" gap={2}>
             <Text fontSize="sm" color={subtitleColor}>
               Gestión de subdivisiones
@@ -166,25 +168,10 @@ export default function Subdivisions() {
               placeholder="Buscar subdivisión..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              bg={useColorModeValue('white', 'gray.800')}
+              bg={inputBgColor}
               borderRadius="lg"
             />
           </InputGroup>
-          {!isReadOnly && (
-            <Button
-              colorScheme="brand"
-              leftIcon={<Plus size={18} />}
-              onClick={openAdd}
-              size={{ base: 'sm', md: 'md' }}
-              borderRadius="lg"
-              transition="all 0.3s"
-              _hover={{
-                boxShadow: 'lg',
-              }}
-            >
-              Nueva Subdivisión
-            </Button>
-          )}
         </Flex>
       </Flex>
 
@@ -224,13 +211,15 @@ export default function Subdivisions() {
                     </Text>
                   </Td>
                   <Td>
-                    <Text
-                      fontSize="sm"
-                      fontWeight={500}
-                      color={nameColor}
-                    >
-                      {sd.nombre || 'Sin Nombre'}
-                    </Text>
+                    <Flex align="center" gap={2}>
+                      <Text
+                        fontSize="sm"
+                        fontWeight={500}
+                        color={nameColor}
+                      >
+                        {sd.nombre || 'Sin Nombre'}
+                      </Text>
+                    </Flex>
                   </Td>
                   <Td>
                     <Text
@@ -257,44 +246,6 @@ export default function Subdivisions() {
                           onClick={() => openEdit(sd)}
                         />
                       </Tooltip>
-                      {!isReadOnly && (
-                        <>
-                          <Tooltip label="Editar" hasArrow>
-                            <IconButton
-                              aria-label="Editar subdivisión"
-                              icon={<Edit2 size={16} />}
-                              size="sm"
-                              variant="ghost"
-                              color={editIconColor}
-                              borderRadius="lg"
-                              transition="all 0.3s"
-                              _hover={{
-                                bg: editHoverBg,
-                              }}
-                              onClick={() => openEdit(sd)}
-                            />
-                          </Tooltip>
-                          <Tooltip label="Eliminar" hasArrow>
-                            <IconButton
-                              aria-label="Eliminar subdivisión"
-                              icon={<Trash2 size={16} />}
-                              size="sm"
-                              variant="ghost"
-                              color={deleteIconColor}
-                              borderRadius="lg"
-                              transition="all 0.3s"
-                              _hover={{
-                                bg: deleteHoverBg,
-                              }}
-                              onClick={() => {
-                                confirmAction(`¿Seguro que desea eliminar la subdivisión ${sd.nombre}?`, () => {
-                                  deleteSubdivision(sd.id);
-                                });
-                              }}
-                            />
-                          </Tooltip>
-                        </>
-                      )}
                     </Flex>
                   </Td>
                 </Tr>

@@ -16,6 +16,7 @@ const PayrollDraftEmployee = require('./PayrollDraftEmployee')(sequelize);
 const Commission = require('./Commission')(sequelize);
 const EmployeeIncidence = require('./EmployeeIncidence')(sequelize);
 const OperationLog = require('./OperationLog')(sequelize);
+const Dimension5 = require('./Dimension5')(sequelize);
 
 // Definir asociaciones
 Company.hasMany(Employee, { foreignKey: 'companyId' });
@@ -23,6 +24,9 @@ Employee.belongsTo(Company, { foreignKey: 'companyId', as: 'companyData' });
 
 Area.hasMany(Department, { foreignKey: 'areaId' });
 Department.belongsTo(Area, { foreignKey: 'areaId', as: 'areaData' });
+
+Department.hasMany(Employee, { foreignKey: 'departmentId' });
+Employee.belongsTo(Department, { foreignKey: 'departmentId', as: 'departmentData' });
 
 Division.hasMany(Area, { foreignKey: 'divisionId' });
 Area.belongsTo(Division, { foreignKey: 'divisionId', as: 'divisionData' });
@@ -59,5 +63,6 @@ module.exports = {
   PayrollDraftEmployee,
   Commission,
   EmployeeIncidence,
-  OperationLog
+  OperationLog,
+  Dimension5
 };

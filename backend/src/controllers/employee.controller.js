@@ -1,9 +1,11 @@
-const { Employee, EmployeeRecord, EmployeeIncidence } = require('../models');
+const { Op } = require('sequelize');
+const { Employee, EmployeeRecord, EmployeeIncidence, Department } = require('../models');
 
 const getEmployees = async (req, res) => {
   try {
     const employees = await Employee.findAll({
       include: [
+        { model: Department, as: 'departmentData' },
         { model: EmployeeRecord, as: 'records' },
         { model: EmployeeIncidence, as: 'incidences' }
       ]

@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import {
-  Box, VStack, HStack, FormControl, FormLabel, Select, Input, Textarea, Button, Table, Thead, Tbody, Tr, Th, Td, IconButton, Text, useToast, Badge, Checkbox
+  Box, VStack, HStack, FormControl, FormLabel, Select, Input, Textarea, Button, Table, Thead, Tbody, Tr, Th, Td, IconButton, Text, Badge, Checkbox
 } from '@chakra-ui/react';
 import { Trash2, Plus } from 'lucide-react';
+import { AppContext } from '../App';
+import { useContext } from 'react';
 
 const INCIDENCE_TYPES = [
   'Falta justificada',
@@ -20,7 +22,7 @@ const getFormLayout = (type) => {
 };
 
 export default function EmployeeIncidences({ employee, onSave, onDelete }) {
-  const toast = useToast();
+  const { showToast } = useContext(AppContext);
   const [type, setType] = useState('');
   const [daysQuincena, setDaysQuincena] = useState('');
   const [daysTotal, setDaysTotal] = useState('');
@@ -31,7 +33,7 @@ export default function EmployeeIncidences({ employee, onSave, onDelete }) {
 
   const handleSave = () => {
     if (!type) {
-      toast({ title: 'Faltan campos', description: 'Debe seleccionar un tipo de incidencia', status: 'warning' });
+      showToast('Debe seleccionar un tipo de incidencia', 'warning');
       return;
     }
 
@@ -41,7 +43,7 @@ export default function EmployeeIncidences({ employee, onSave, onDelete }) {
     // If remove 7th day is checked, maybe they expect the system to deduct an extra day. 
     // We'll trust whatever number they put in "Dias Total", but we save the flag just in case.
     if (isNaN(dQ) || dQ <= 0) {
-      toast({ title: 'Días inválidos', description: 'Los días a descontar deben ser mayores a 0', status: 'warning' });
+      showToast('Los días a descontar deben ser mayores a 0', 'warning');
       return;
     }
 

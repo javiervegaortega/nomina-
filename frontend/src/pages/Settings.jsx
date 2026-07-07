@@ -30,9 +30,6 @@ export default function Settings() {
               <Palette size={18} style={{ marginRight: '0.5rem' }} /> Apariencia
             </button>
             <button className="btn btn-ghost" style={{ justifyContent: 'flex-start' }}>
-              <Shield size={18} style={{ marginRight: '0.5rem' }} /> Seguridad
-            </button>
-            <button className="btn btn-ghost" style={{ justifyContent: 'flex-start' }}>
               <Database size={18} style={{ marginRight: '0.5rem' }} /> Base de Datos
             </button>
           </div>
@@ -81,21 +78,39 @@ export default function Settings() {
             </div>
           </div>
 
-          {/* Tarjeta: Base de Datos */}
+          {/* Tarjeta: Integración SAP */}
           <div style={{ background: 'var(--bg-surface)', padding: '2rem', borderRadius: 'var(--radius-lg)', border: '1px solid var(--border)' }}>
             <h2 style={{ fontSize: '1.25rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <Database size={20} color="var(--accent)" /> Conexión MySQL
+              <Globe size={20} color="var(--accent)" /> Integración ERP (SAP B1)
             </h2>
-            <div style={{ padding: '1rem', background: 'var(--success-bg)', color: 'var(--success)', borderRadius: 'var(--radius-md)', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-              <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: 'currentColor', boxShadow: '0 0 8px currentColor' }}></div>
-              <span style={{ fontWeight: 600 }}>Conectado a nomina_db en localhost (Puerto 3306)</span>
+            <div style={{ padding: '1rem', background: 'var(--bg-base)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
+              <p style={{ margin: '0 0 1rem 0', color: 'var(--text-secondary)' }}>
+                Sincroniza los Centros de Costo desde SAP B1 para actualizar los Departamentos, Áreas, Divisiones y Subdivisiones.
+              </p>
+              <button 
+                className="btn btn-primary" 
+                onClick={async () => {
+                  showToast('Iniciando sincronización con SAP...', 'success');
+                  try {
+                    const token = localStorage.getItem('nomina-token');
+                    const res = await fetch('http://localhost:3000/api/sap/sync-catalogs', {
+                      method: 'POST',
+                      headers: { 'Authorization': `Bearer ${token}` }
+                    });
+                    const data = await res.json();
+                    if(res.ok) {
+                      showToast(data.message || 'Sincronización completada', 'success');
+                    } else {
+                      showToast(data.error || 'Error al sincronizar', 'error');
+                    }
+                  } catch (e) {
+                    showToast('Error de conexión', 'error');
+                  }
+                }}
+              >
+                Sincronizar Catálogos Manual
+              </button>
             </div>
-          </div>
-
-          {/* Botones de Acción */}
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem', marginTop: '1rem' }}>
-            <button className="btn btn-ghost">Restablecer Valores</button>
-            <button className="btn btn-primary" onClick={handleSave}>Guardar Configuraciones</button>
           </div>
 
         </div>

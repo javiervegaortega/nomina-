@@ -40,7 +40,7 @@ export default function Dashboard() {
   const EMPLOYEES = employees || [];
   const COMPANIES = companies || [];
   
-  const hasFinancialAccess = ['ADMIN', 'NOMINA', 'AUDITOR'].includes(user?.role);
+  const hasFinancialAccess = ['ADMIN', 'GERENTE GENERAL', 'NOMINA', 'AUDITOR'].includes(user?.role);
 
   const metrics = useMemo(() => buildDashboardMetrics({
     period,

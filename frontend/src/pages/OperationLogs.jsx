@@ -77,22 +77,22 @@ export default function OperationLogs() {
   const theadBg = useColorModeValue('gray.50', 'gray.900');
   const theadTextColor = useColorModeValue('gray.600', 'gray.400');
   const detailBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+  const bulkBg = useColorModeValue('blue.50', 'rgba(14, 165, 233, 0.15)');
+  const bulkTextColor = useColorModeValue('blue.700', 'blue.200');
 
   const availableEmployees = useMemo(() => {
     let filtered = employees;
     
-    // Restrict by user's department only if specifically required.
-    // Currently, SOLICITANTE, GERENTE, and ADMIN need access to all departments to create operations.
-    if (user && user.idDepartamento && !isManagerOrAdmin && user.role !== 'SOLICITANTE') {
+    // Si el usuario tiene un departamento asignado, solo puede ver empleados de su misma área/departamento.
+    // Esto aplica sin importar el rol (por solicitud explícita del usuario).
+    if (user && user.idDepartamento) {
       const normalize = (str) => (str ? str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase() : "");
       const userDept = normalize(user.idDepartamento);
       
       filtered = employees.filter(emp => {
-        const depLab = normalize(emp.departamento_laboral);
-        const depOrig = normalize(emp.departamento_originario);
-        const centro = normalize(emp.centro_de_costo);
-        
-        return depLab.includes(userDept) || depOrig.includes(userDept) || centro.includes(userDept);
+        const dept = departments?.find(d => String(d.id) === String(emp.departmentId));
+        const deptName = dept?.nombre_dimension || emp.departmentData?.nombre_dimension || '';
+        return normalize(deptName).includes(userDept);
       });
     }
 
@@ -132,24 +132,7 @@ export default function OperationLogs() {
 
     if (modalAreaFilter.length > 0) {
       result = result.filter(emp => {
-        const depLab = normalize(emp.departamento_laboral);
-        const depOrig = normalize(emp.departamento_originario);
-        const centro = normalize(emp.centro_de_costo);
-        
-        return modalAreaFilter.some(filterIdStr => {
-          if (String(emp.areaId) === filterIdStr) return true;
-          
-          const selectedArea = areas?.find(a => String(a.id) === filterIdStr);
-          if (selectedArea) {
-            const areaNameNorm = normalize(selectedArea.nombre);
-            if (depLab.includes(areaNameNorm) || areaNameNorm.includes(depLab) ||
-                depOrig.includes(areaNameNorm) || areaNameNorm.includes(depOrig) ||
-                centro.includes(areaNameNorm) || areaNameNorm.includes(centro)) {
-              return true;
-            }
-          }
-          return false;
-        });
+        return modalAreaFilter.some(filterIdStr => String(emp.departmentId) === filterIdStr);
       });
     }
 
@@ -176,24 +159,7 @@ export default function OperationLogs() {
 
     if (editModalAreaFilter.length > 0) {
       result = result.filter(emp => {
-        const depLab = normalize(emp.departamento_laboral);
-        const depOrig = normalize(emp.departamento_originario);
-        const centro = normalize(emp.centro_de_costo);
-        
-        return editModalAreaFilter.some(filterIdStr => {
-          if (String(emp.areaId) === filterIdStr) return true;
-          
-          const selectedArea = areas?.find(a => String(a.id) === filterIdStr);
-          if (selectedArea) {
-            const areaNameNorm = normalize(selectedArea.nombre);
-            if (depLab.includes(areaNameNorm) || areaNameNorm.includes(depLab) ||
-                depOrig.includes(areaNameNorm) || areaNameNorm.includes(depOrig) ||
-                centro.includes(areaNameNorm) || areaNameNorm.includes(centro)) {
-              return true;
-            }
-          }
-          return false;
-        });
+        return editModalAreaFilter.some(filterIdStr => String(emp.departmentId) === filterIdStr);
       });
     }
 
@@ -327,7 +293,7 @@ export default function OperationLogs() {
 
   if (isLoading) {
     return (
-      <Box p={6}>
+      <Box p={{ base: 3, md: 6, lg: 8 }}>
         <Flex justify="space-between" align="center" mb={6}>
           <Skeleton h="28px" w="250px" borderRadius="md" />
           <Skeleton h="40px" w="140px" borderRadius="lg" />
@@ -366,19 +332,40 @@ export default function OperationLogs() {
   }
 
   return (
-    <Box p={6}>
-      <HStack justify="space-between" mb={6}>
-        <Heading size="md" color={textColor}>Reporte de Operaciones (Bonos y Horas)</Heading>
-        <Button leftIcon={<Plus size={16} />} colorScheme="brand" onClick={() => {
-          setFormData({
-            employeeIds: [], companyId: '', date: new Date().toISOString().slice(0, 10), type: 'HORA_EXTRA',
-            hoursQty: 0, hourType: 'SIMPLE', bonusQty: 1, bonusAmount: 0, taskDescription: ''
-          });
-          onOpen();
-        }}>
+    <Box p={{ base: 3, md: 6, lg: 8 }}>
+      <Flex
+        justify="space-between"
+        align={{ base: 'stretch', md: 'center' }}
+        direction={{ base: 'column', md: 'row' }}
+        mb={6}
+        flexWrap="wrap"
+        gap={4}
+      >
+        <Box>
+          <Heading size="lg" fontWeight={800} mb={1} color={textColor}>
+            Reporte de Operaciones
+          </Heading>
+          <Text color={mutedTextColor} fontSize="md">
+            Registro de bonos y horas extras · {operationLogs.length} operaciones
+          </Text>
+        </Box>
+        <Button 
+          colorScheme="brand" 
+          leftIcon={<Plus size={16} />} 
+          onClick={() => {
+            setFormData({
+              employeeIds: [], companyId: '', date: new Date().toISOString().slice(0, 10), type: 'HORA_EXTRA',
+              hoursQty: 0, hourType: 'SIMPLE', bonusQty: 1, bonusAmount: 0, taskDescription: ''
+            });
+            onOpen();
+          }}
+          borderRadius="lg" 
+          transition="all 0.3s"
+          _hover={{ shadow: 'lg' }}
+        >
           Nuevo Registro
         </Button>
-      </HStack>
+      </Flex>
 
       <Tabs variant="soft-rounded" colorScheme="brand" mb={4} index={tabIndex} onChange={(idx) => { setTabIndex(idx); setFilterStatus('ALL'); }}>
         <TabList>
@@ -420,8 +407,8 @@ export default function OperationLogs() {
       </HStack>
 
       {selectedRowIds.length > 0 && isManagerOrAdmin && (
-        <HStack mb={4} p={3} bg="blue.50" borderRadius="md" shadow="sm" justify="space-between">
-          <Text fontSize="sm" fontWeight="bold" color="blue.700">
+        <HStack mb={4} p={3} bg={bulkBg} borderRadius="md" shadow="sm" justify="space-between">
+          <Text fontSize="sm" fontWeight="bold" color={bulkTextColor}>
             {selectedRowIds.length} solicitudes seleccionadas
           </Text>
           <HStack>
@@ -528,18 +515,24 @@ export default function OperationLogs() {
               <FormControl isRequired>
                 <FormLabel fontSize="sm">Empleados</FormLabel>
                 <HStack mb={2} spacing={3} width="100%">
-                  <Menu closeOnSelect={false}>
-                    <MenuButton as={Button} size="sm" variant="outline" rightIcon={<ChevronDown size={14}/>} flex={1} textAlign="left" fontWeight="normal" bg={useColorModeValue('white', 'gray.800')} borderRadius="md" px={3}>
-                      {modalAreaFilter.length > 0 ? `${modalAreaFilter.length} Áreas...` : 'Área...'}
-                    </MenuButton>
-                    <MenuList maxH="300px" overflowY="auto" zIndex={100} boxShadow="lg">
-                      <MenuOptionGroup type="checkbox" value={modalAreaFilter} onChange={setModalAreaFilter}>
-                        {areas?.map(a => (
-                          <MenuItemOption key={a.id} value={String(a.id)} fontSize="sm">{a.nombre}</MenuItemOption>
-                        ))}
-                      </MenuOptionGroup>
-                    </MenuList>
-                  </Menu>
+                  {user?.idDepartamento ? (
+                    <Button size="sm" variant="outline" flex={1} textAlign="left" fontWeight="normal" bg={bg} borderRadius="md" px={3} isDisabled _disabled={{ opacity: 0.8, cursor: 'not-allowed', color: textColor }}>
+                      {departments?.find(d => String(d.id) === String(user.idDepartamento))?.nombre_dimension || user.idDepartamento}
+                    </Button>
+                  ) : (
+                    <Menu closeOnSelect={false}>
+                      <MenuButton as={Button} size="sm" variant="outline" rightIcon={<ChevronDown size={14}/>} flex={1} textAlign="left" fontWeight="normal" bg={bg} borderRadius="md" px={3}>
+                        {modalAreaFilter.length > 0 ? `${modalAreaFilter.length} Deptos...` : 'Departamento...'}
+                      </MenuButton>
+                      <MenuList maxH="300px" overflowY="auto" zIndex={100} boxShadow="lg">
+                        <MenuOptionGroup type="checkbox" value={modalAreaFilter} onChange={setModalAreaFilter}>
+                          {departments?.map(d => (
+                            <MenuItemOption key={d.id} value={String(d.id)} fontSize="sm">{d.nombre_dimension}</MenuItemOption>
+                          ))}
+                        </MenuOptionGroup>
+                      </MenuList>
+                    </Menu>
+                  )}
                   <Button size="md" flexShrink={0} variant="outline" colorScheme="brand" borderRadius="lg" onClick={handleSelectAllEmployees}>
                     {formData.employeeIds.length === filteredModalEmployees.length && filteredModalEmployees.length > 0 ? 'Deseleccionar Todos' : 'Seleccionar Todos'}
                   </Button>
@@ -557,16 +550,17 @@ export default function OperationLogs() {
                       {(() => {
                         const groups = {};
                         filteredModalEmployees.forEach(emp => {
-                          const areaName = areas?.find(a => String(a.id) === String(emp.areaId))?.nombre || 'Sin Área';
-                          if (!groups[areaName]) groups[areaName] = [];
-                          groups[areaName].push(emp);
+                          const dept = departments?.find(d => String(d.id) === String(emp.departmentId));
+                          const deptName = dept?.nombre_dimension || emp.departmentData?.nombre_dimension || 'Sin Departamento';
+                          if (!groups[deptName]) groups[deptName] = [];
+                          groups[deptName].push(emp);
                         });
-                        return Object.keys(groups).sort().map(areaName => (
-                          <Box key={areaName} w="100%">
+                        return Object.keys(groups).sort().map(deptName => (
+                          <Box key={deptName} w="100%">
                             <Text fontSize="xs" fontWeight="bold" color="brand.400" textTransform="uppercase" mt={2} mb={1} borderBottomWidth="1px" borderColor="gray.600" pb={1}>
-                              {areaName}
+                              {deptName}
                             </Text>
-                            {groups[areaName].map(emp => (
+                            {groups[deptName].map(emp => (
                               <Checkbox key={emp.id} value={emp.id.toString()} w="100%" py={0.5}>
                                 {[emp.primer_nombre, emp.segundo_nombre, emp.otro_nombre, emp.primer_apellido, emp.segundo_apellido].filter(Boolean).join(' ')}
                               </Checkbox>
@@ -778,18 +772,24 @@ export default function OperationLogs() {
                 <FormControl isRequired>
                   <FormLabel fontSize="sm">Empleado</FormLabel>
                   <HStack mb={2} spacing={3} width="100%">
-                    <Menu closeOnSelect={false}>
-                      <MenuButton as={Button} size="sm" variant="outline" rightIcon={<ChevronDown size={14}/>} flex={1} textAlign="left" fontWeight="normal" bg={useColorModeValue('white', 'gray.800')} borderRadius="md" px={3}>
-                        {editModalAreaFilter.length > 0 ? `${editModalAreaFilter.length} Áreas...` : 'Área...'}
-                      </MenuButton>
-                      <MenuList maxH="300px" overflowY="auto" zIndex={100} boxShadow="lg">
-                        <MenuOptionGroup type="checkbox" value={editModalAreaFilter} onChange={setEditModalAreaFilter}>
-                          {areas?.map(a => (
-                            <MenuItemOption key={a.id} value={String(a.id)} fontSize="sm">{a.nombre}</MenuItemOption>
-                          ))}
-                        </MenuOptionGroup>
-                      </MenuList>
-                    </Menu>
+                    {user?.idDepartamento ? (
+                      <Button size="sm" variant="outline" flex={1} textAlign="left" fontWeight="normal" bg={bg} borderRadius="md" px={3} isDisabled _disabled={{ opacity: 0.8, cursor: 'not-allowed', color: textColor }}>
+                        {departments?.find(d => String(d.id) === String(user.idDepartamento))?.nombre_dimension || user.idDepartamento}
+                      </Button>
+                    ) : (
+                      <Menu closeOnSelect={false}>
+                        <MenuButton as={Button} size="sm" variant="outline" rightIcon={<ChevronDown size={14}/>} flex={1} textAlign="left" fontWeight="normal" bg={bg} borderRadius="md" px={3}>
+                          {editModalAreaFilter.length > 0 ? `${editModalAreaFilter.length} Deptos...` : 'Departamento...'}
+                        </MenuButton>
+                        <MenuList maxH="300px" overflowY="auto" zIndex={100} boxShadow="lg">
+                          <MenuOptionGroup type="checkbox" value={editModalAreaFilter} onChange={setEditModalAreaFilter}>
+                            {departments?.map(d => (
+                              <MenuItemOption key={d.id} value={String(d.id)} fontSize="sm">{d.nombre_dimension}</MenuItemOption>
+                            ))}
+                          </MenuOptionGroup>
+                        </MenuList>
+                      </Menu>
+                    )}
                   </HStack>
                   <Input 
                     size="sm" 
@@ -804,16 +804,17 @@ export default function OperationLogs() {
                         {(() => {
                           const groups = {};
                           filteredEditModalEmployees.forEach(emp => {
-                            const areaName = areas?.find(a => String(a.id) === String(emp.areaId))?.nombre || 'Sin Área';
-                            if (!groups[areaName]) groups[areaName] = [];
-                            groups[areaName].push(emp);
+                            const dept = departments?.find(d => String(d.id) === String(emp.departmentId));
+                            const deptName = dept?.nombre_dimension || emp.departmentData?.nombre_dimension || 'Sin Departamento';
+                            if (!groups[deptName]) groups[deptName] = [];
+                            groups[deptName].push(emp);
                           });
-                          return Object.keys(groups).sort().map(areaName => (
-                            <Box key={areaName} w="100%">
+                          return Object.keys(groups).sort().map(deptName => (
+                            <Box key={deptName} w="100%">
                               <Text fontSize="xs" fontWeight="bold" color="brand.400" textTransform="uppercase" mt={2} mb={1} borderBottomWidth="1px" borderColor="gray.600" pb={1}>
-                                {areaName}
+                                {deptName}
                               </Text>
-                              {groups[areaName].map(emp => (
+                              {groups[deptName].map(emp => (
                                 <Radio key={emp.id} value={emp.id.toString()} w="100%" py={0.5}>
                                   {[emp.primer_nombre, emp.segundo_nombre, emp.otro_nombre, emp.primer_apellido, emp.segundo_apellido].filter(Boolean).join(' ')}
                                 </Radio>

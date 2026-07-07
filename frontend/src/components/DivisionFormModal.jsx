@@ -94,16 +94,17 @@ export default function DivisionFormModal({ isOpen, onClose, onSave, initialData
                     value={formData.nombre}
                     onChange={handleChange}
                     placeholder="E.g. 101010 - GERENCIA GENERAL"
-                    bg={inputBg}
+                    bg={useColorModeValue('gray.100', 'whiteAlpha.200')}
                     border="1px solid"
                     borderColor={inputBorder}
                     _focus={{ borderColor: '#60a5fa', boxShadow: 'none' }}
                     _hover={{ borderColor: useColorModeValue('gray.300', '#4b5563') }}
-                    color={useColorModeValue('gray.800', '#d1d5db')}
+                    color={useColorModeValue('gray.600', 'gray.400')}
                     size="lg"
                     fontSize="sm"
                     borderRadius="md"
                     isRequired
+                    isReadOnly
                   />
                 </Box>
 

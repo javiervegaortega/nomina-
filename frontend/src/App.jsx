@@ -13,15 +13,18 @@ import Sidebar, { DRAWER_WIDTH } from './components/Sidebar';
 import Dashboard from './pages/Dashboard';
 import Employees from './pages/Employees';
 import PayrollProcessing from './pages/PayrollProcessing';
+import PayrollHistory from './pages/PayrollHistory';
+import ReactivatePayroll from './pages/ReactivatePayroll';
 import Departments from './pages/Departments';
 import Areas from './pages/Areas';
 import Divisions from './pages/Divisions';
 import Subdivisions from './pages/Subdivisions';
+import Dimension5 from './pages/Dimension5';
 import Companies from './pages/Companies';
-import PayrollHistory from './pages/PayrollHistory';
 import Settings from './pages/Settings';
 import OperationLogs from './pages/OperationLogs';
 import Login from './pages/auth/Login';
+import Users from './pages/Users';
 
 import ForgotPassword from './pages/auth/ForgotPassword';
 import './index.css';
@@ -122,30 +125,41 @@ function AppContent() {
                   <Route path="/" element={<Navigate to="/dashboard" replace />} />
                   
                   {/* ALL ROLES */}
-                  <Route element={<RoleProtectedRoute allowedRoles={['ADMIN', 'NOMINA', 'AUDITOR', 'GERENTE', 'SOLICITANTE', 'DIGITADOR']} />}>
+                  <Route element={<RoleProtectedRoute allowedRoles={['ADMIN', 'GERENTE GENERAL', 'NOMINA', 'AUDITOR', 'GERENTE', 'SOLICITANTE', 'DIGITADOR']} />}>
                     <Route path="/dashboard" element={<Dashboard />} />
                   </Route>
 
-                  {/* ADMIN, NOMINA, AUDITOR */}
-                  <Route element={<RoleProtectedRoute allowedRoles={['ADMIN', 'NOMINA', 'AUDITOR']} />}>
+                  {/* ADMIN, GERENTE GENERAL */}
+                  <Route element={<RoleProtectedRoute allowedRoles={['ADMIN', 'GERENTE GENERAL']} />}>
+                    <Route path="/reactivate" element={<ReactivatePayroll />} />
+                  </Route>
+
+                  {/* ADMIN, GERENTE GENERAL, NOMINA, AUDITOR */}
+                  <Route element={<RoleProtectedRoute allowedRoles={['ADMIN', 'GERENTE GENERAL', 'NOMINA', 'AUDITOR']} />}>
                     <Route path="/payroll" element={<PayrollProcessing />} />
                     <Route path="/history" element={<PayrollHistory />} />
                     <Route path="/departments" element={<Departments />} />
                     <Route path="/areas" element={<Areas />} />
                     <Route path="/divisions" element={<Divisions />} />
                     <Route path="/subdivisions" element={<Subdivisions />} />
+                    <Route path="/dimension5" element={<Dimension5 />} />
                     <Route path="/companies" element={<Companies />} />
                     <Route path="/settings" element={<Settings />} />
                   </Route>
 
-                  {/* ADMIN, NOMINA, AUDITOR, DIGITADOR */}
-                  <Route element={<RoleProtectedRoute allowedRoles={['ADMIN', 'NOMINA', 'AUDITOR', 'DIGITADOR']} />}>
+                  {/* ADMIN, GERENTE GENERAL, NOMINA, AUDITOR, DIGITADOR */}
+                  <Route element={<RoleProtectedRoute allowedRoles={['ADMIN', 'GERENTE GENERAL', 'NOMINA', 'AUDITOR', 'DIGITADOR']} />}>
                     <Route path="/employees" element={<Employees />} />
                   </Route>
 
-                  {/* ADMIN, GERENTE, SOLICITANTE */}
-                  <Route element={<RoleProtectedRoute allowedRoles={['ADMIN', 'GERENTE', 'SOLICITANTE']} />}>
+                  {/* ADMIN, GERENTE GENERAL, GERENTE, SOLICITANTE */}
+                  <Route element={<RoleProtectedRoute allowedRoles={['ADMIN', 'GERENTE GENERAL', 'GERENTE', 'SOLICITANTE']} />}>
                     <Route path="/operations" element={<OperationLogs />} />
+                  </Route>
+
+                  {/* ADMIN, GERENTE GENERAL, NOMINA, DIGITADOR */}
+                  <Route element={<RoleProtectedRoute allowedRoles={['ADMIN', 'GERENTE GENERAL', 'NOMINA', 'DIGITADOR']} />}>
+                    <Route path="/users" element={<Users />} />
                   </Route>
                 </Route>
               </Route>

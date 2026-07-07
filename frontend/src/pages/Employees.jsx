@@ -37,7 +37,7 @@ import {
 
 export default function Employees() {
   const { confirmAction } = useContext(AppContext);
-  const { employees, addEmployee, updateEmployee, deleteEmployee, companies, departments, areas, divisions, subdivisions, isLoading } = useContext(DataContext);
+  const { employees, addEmployee, updateEmployee, deleteEmployee, companies, departments, areas, divisions, subdivisions, dimension5s, isLoading } = useContext(DataContext);
   const { user } = useContext(AuthContext);
   const isReadOnly = user?.role === 'AUDITOR';
   
@@ -1096,6 +1096,7 @@ export default function Employees() {
           areas={areas}
           divisions={divisions}
           subdivisions={subdivisions}
+          dimension5s={dimension5s}
         />
       )}
 

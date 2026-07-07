@@ -4,7 +4,7 @@ import { AppContext } from '../App';
 import usePagination from '../hooks/usePagination';
 import Pagination from '../components/Pagination';
 import { AuthContext } from '../context/AuthContext';
-import { History, Calendar, Trash2, Eye, Download, FileText, CheckCircle2, ArrowLeft, Building2, X, Search, ChevronDown, LayoutGrid } from 'lucide-react';
+import { History, Calendar, Trash2, Eye, Download, FileText, CheckCircle2, ArrowLeft, Building2, X, Search, ChevronDown, LayoutGrid, RotateCcw } from 'lucide-react';
 import { formatQ, CUOTA_LABORAL_RATE, CUOTA_PATRONAL_RATE } from '../data/mockData';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
@@ -28,7 +28,7 @@ export const getEmployeeFullName = (e) => {
 };
 
 import {
-  Box, Flex, Heading, Text, Button, Input, Select,
+  Box, Flex, Heading, Text, Button, Input, Select, Textarea, FormControl, FormLabel,
   Table, Thead, Tbody, Tr, Th, Td, TableContainer,
   IconButton, Badge, Avatar, HStack, VStack,
   InputGroup, InputLeftElement, useColorModeValue,
@@ -46,6 +46,11 @@ export default function PayrollHistory() {
   const isReadOnly = user?.role === 'AUDITOR';
   const [selectedGroup, setSelectedGroup] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
+  
+  // Reactivation Modal State
+  const [reactivationGroup, setReactivationGroup] = useState(null);
+  const [conceptoReactivacion, setConceptoReactivacion] = useState('');
+  const [isReactivating, setIsReactivating] = useState(false);
 
   // Group by title
   const groupedHistory = useMemo(() => {
@@ -128,6 +133,44 @@ export default function PayrollHistory() {
       showToast('Registro eliminado exitosamente', 'info');
       if (selectedGroup && selectedGroup.title === title) setSelectedGroup(null);
     });
+  };
+
+  const handleRequestReactivation = (group) => {
+    setReactivationGroup(group);
+    setConceptoReactivacion('');
+  };
+
+  const submitReactivation = async () => {
+    if (!reactivationGroup) return;
+    const payrollIds = reactivationGroup.records.map(r => r.id);
+    
+    setIsReactivating(true);
+    try {
+      const token = localStorage.getItem('nomina-token');
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      
+      const response = await fetch('http://localhost:3000/api/payrolls/request-reactivation', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ 
+          payrollIds, 
+          concepto: conceptoReactivacion 
+        })
+      });
+      
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || 'Error al solicitar reactivación');
+      }
+      
+      showToast('Solicitud de reactivación enviada por correo', 'success');
+      setReactivationGroup(null);
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      setIsReactivating(false);
+    }
   };
 
   const cardBg = useColorModeValue('white', 'gray.800');
@@ -264,6 +307,11 @@ export default function PayrollHistory() {
                   </Box>
                   <HStack spacing={1}>
                     <IconButton aria-label="Ver Detalle" icon={<Eye size={18} />} onClick={() => setSelectedGroup(group)} variant="ghost" />
+                    {!isReadOnly && (user?.role === 'ADMIN' || user?.role === 'NOMINA' || user?.role === 'GERENTE GENERAL') && (
+                      <Tooltip label="Solicitar Reactivación">
+                        <IconButton aria-label="Reactivar Nómina" icon={<RotateCcw size={18} />} colorScheme="blue" variant="ghost" onClick={() => handleRequestReactivation(group)} />
+                      </Tooltip>
+                    )}
                     {!isReadOnly && <IconButton aria-label="Eliminar Registro" icon={<Trash2 size={18} />} colorScheme="red" variant="ghost" onClick={() => handleDeleteGroup(group.title, group.records)} />}
                   </HStack>
                 </Flex>
@@ -301,6 +349,38 @@ export default function PayrollHistory() {
           <Pagination {...pagination} />
         </Box>
       )}
+
+      {/* Reactivation Modal */}
+      <Modal isOpen={!!reactivationGroup} onClose={() => setReactivationGroup(null)} isCentered>
+        <ModalOverlay />
+        <ModalContent>
+          <ModalHeader>Solicitar Reactivación</ModalHeader>
+          <ModalCloseButton />
+          <ModalBody>
+            <Text mb={4}>
+              Ingresa el motivo o concepto por el cual solicitas la reactivación de la nómina <strong>{reactivationGroup?.title}</strong>. Esto se enviará por correo a Gerencia General.
+            </Text>
+            <FormControl>
+              <FormLabel>Concepto / Motivo</FormLabel>
+              <Textarea 
+                placeholder="Ej. Error en cálculos de IGSS, se necesita corregir un empleado..." 
+                value={conceptoReactivacion}
+                onChange={(e) => setConceptoReactivacion(e.target.value)}
+                rows={4}
+              />
+            </FormControl>
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="ghost" mr={3} onClick={() => setReactivationGroup(null)} isDisabled={isReactivating}>
+              Cancelar
+            </Button>
+            <Button colorScheme="blue" onClick={submitReactivation} isLoading={isReactivating} loadingText="Enviando...">
+              Solicitar Reactivación
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
     </Box>
   );
 }

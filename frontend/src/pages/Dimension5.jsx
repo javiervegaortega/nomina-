@@ -1,9 +1,7 @@
 import React, { useState, useContext } from 'react';
 import { DataContext } from '../context/DataContext';
-import { AppContext } from '../App';
 import { AuthContext } from '../context/AuthContext';
-import { Plus, Edit2, Trash2, Eye, Search } from 'lucide-react';
-import DepartmentFormModal from '../components/DepartmentFormModal';
+import { Search } from 'lucide-react';
 import usePagination from '../hooks/usePagination';
 import Pagination from '../components/Pagination';
 import {
@@ -11,40 +9,31 @@ import {
   Flex,
   Heading,
   Text,
-  Button,
   Table,
   Thead,
   Tbody,
   Tr,
   Th,
   Td,
-  IconButton,
   Badge,
-  Tooltip,
   useColorModeValue,
   Skeleton,
-  SkeletonText,
   Input,
   InputGroup,
   InputLeftElement,
 } from '@chakra-ui/react';
 
-export default function Departments() {
-  const { departments, isSapConnected, addDepartment, updateDepartment, deleteDepartment, isLoading } = useContext(DataContext);
-  const { confirmAction } = useContext(AppContext);
+export default function Dimension5() {
+  const { dimension5s, isLoading } = useContext(DataContext);
   const { user } = useContext(AuthContext);
-  const isReadOnly = user?.role === 'AUDITOR';
-  const [showModal, setShowModal] = useState(false);
-  const [editingId, setEditingId] = useState(null);
-  const [editingData, setEditingData] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
 
-  const filteredDepartments = departments.filter(d => 
-    d.nombre_dimension?.toLowerCase().includes(searchQuery.toLowerCase()) || 
+  const filteredDimension5s = (dimension5s || []).filter(d => 
+    d.nombre?.toLowerCase().includes(searchQuery.toLowerCase()) || 
     String(d.id).includes(searchQuery)
   );
 
-  const pagination = usePagination(filteredDepartments, 10);
+  const pagination = usePagination(filteredDimension5s, 10);
 
   // Color mode values
   const tableBorderColor = useColorModeValue('gray.200', 'whiteAlpha.100');
@@ -52,58 +41,28 @@ export default function Departments() {
   const subtitleColor = useColorModeValue('gray.600', 'gray.400');
   const idColor = useColorModeValue('gray.500', 'gray.400');
   const nameColor = useColorModeValue('gray.800', 'white');
-  const gerenteColor = useColorModeValue('gray.500', 'gray.400');
+  const estadoColor = useColorModeValue('gray.500', 'gray.400');
   const emptyTextColor = useColorModeValue('gray.500', 'gray.500');
   const badgeBg = useColorModeValue('brand.50', 'brand.900');
   const badgeColor = useColorModeValue('brand.700', 'brand.200');
-  const viewHoverBg = useColorModeValue('brand.50', 'whiteAlpha.100');
-  const editHoverBg = useColorModeValue('accent.50', 'whiteAlpha.100');
-  const deleteHoverBg = useColorModeValue('red.50', 'whiteAlpha.100');
-  const viewIconColor = useColorModeValue('brand.500', 'brand.300');
-  const editIconColor = useColorModeValue('accent.600', 'accent.300');
-  const deleteIconColor = useColorModeValue('red.500', 'red.300');
   const inputBgColor = useColorModeValue('white', 'gray.800');
-
-  const openAdd = () => {
-    setEditingId(null);
-    setEditingData(null);
-    setShowModal(true);
-  };
-
-  const openEdit = (d) => {
-    setEditingId(d.id);
-    setEditingData(d);
-    setShowModal(true);
-  };
-
-  const handleSave = (formData) => {
-    if (editingId) {
-      updateDepartment(editingId, formData);
-    } else {
-      addDepartment(formData);
-    }
-    setShowModal(false);
-  };
 
   if (isLoading) {
     return (
       <Box p={{ base: 4, md: 6, lg: 8 }}>
         <Flex justify="space-between" align="center" mb={6}>
           <Box>
-            <Skeleton h="28px" w="220px" mb={2} />
-            <Skeleton h="14px" w="280px" />
+            <Skeleton h="28px" w="240px" mb={2} />
+            <Skeleton h="14px" w="260px" />
           </Box>
-          <Skeleton h="40px" w="180px" borderRadius="lg" />
         </Flex>
         <Box border="1px solid" borderColor={tableBorderColor} borderRadius="xl" overflow="hidden">
           <Table variant="modern" minW="650px">
             <Thead>
               <Tr>
                 <Th>ID</Th>
-                <Th>Nombre Dimensión</Th>
-                <Th>Gerente</Th>
-                <Th>Área</Th>
-                <Th textAlign="right">Acciones</Th>
+                <Th>Nombre Dimensión 5</Th>
+                <Th>ID Estado</Th>
               </Tr>
             </Thead>
             <Tbody>
@@ -111,9 +70,7 @@ export default function Departments() {
                 <Tr key={i}>
                   <Td><Skeleton h="14px" w="40px" /></Td>
                   <Td><Skeleton h="14px" w="140px" /></Td>
-                  <Td><Skeleton h="14px" w="100px" /></Td>
-                  <Td><Skeleton h="14px" w="100px" /></Td>
-                  <Td textAlign="right"><Skeleton h="14px" w="80px" ml="auto" /></Td>
+                  <Td><Skeleton h="14px" w="60px" /></Td>
                 </Tr>
               ))}
             </Tbody>
@@ -141,12 +98,12 @@ export default function Departments() {
             mb={1}
             letterSpacing="-0.02em"
           >
-            Directorio de Departamentos
+            Directorio de Dimensión 5
           </Heading>
           
           <Flex align="center" gap={2}>
             <Text fontSize="sm" color={subtitleColor}>
-              Gestión de dimensiones y áreas
+              Gestión de dimensión 5
             </Text>
             <Badge
               bg={badgeBg}
@@ -157,7 +114,7 @@ export default function Departments() {
               py={0.5}
               borderRadius="full"
             >
-              {departments.length} registros
+              {(dimension5s || []).length} registros
             </Badge>
           </Flex>
         </Box>
@@ -167,7 +124,7 @@ export default function Departments() {
               <Search size={14} color="gray.400" />
             </InputLeftElement>
             <Input
-              placeholder="Buscar departamento..."
+              placeholder="Buscar dimensión..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               bg={inputBgColor}
@@ -195,10 +152,8 @@ export default function Departments() {
             <Thead>
               <Tr>
                 <Th>ID</Th>
-                <Th>Nombre Dimensión</Th>
-                <Th>Gerente</Th>
-                <Th>Área</Th>
-                <Th textAlign="right">Acciones</Th>
+                <Th>Nombre Dimensión 5</Th>
+                <Th>ID Estado</Th>
               </Tr>
             </Thead>
             <Tbody>
@@ -220,52 +175,26 @@ export default function Departments() {
                         fontWeight={500}
                         color={nameColor}
                       >
-                        {d.nombre_dimension || 'Sin Nombre'}
+                        {d.nombre || 'Sin Nombre'}
                       </Text>
+                      
                     </Flex>
                   </Td>
                   <Td>
                     <Text
                       fontSize="sm"
-                      color={gerenteColor}
+                      color={estadoColor}
                     >
-                      {d.gerente || '-'}
+                      {d.id_estado}
                     </Text>
-                  </Td>
-                  <Td>
-                    <Text
-                      fontSize="sm"
-                      color={gerenteColor}
-                    >
-                      {d.areaData ? d.areaData.nombre : (d.areaId || '-')}
-                    </Text>
-                  </Td>
-                  <Td textAlign="right">
-                    <Flex justify="flex-end" gap={1}>
-                      <Tooltip label="Ver detalles" hasArrow>
-                        <IconButton
-                          aria-label="Ver departamento"
-                          icon={<Eye size={16} />}
-                          size="sm"
-                          variant="ghost"
-                          color={viewIconColor}
-                          borderRadius="lg"
-                          transition="all 0.3s"
-                          _hover={{
-                            bg: viewHoverBg,
-                          }}
-                          onClick={() => openEdit(d)}
-                        />
-                      </Tooltip>
-                    </Flex>
                   </Td>
                 </Tr>
               ))}
-              {departments.length === 0 && (
+              {(!dimension5s || dimension5s.length === 0) && (
                 <Tr>
-                  <Td colSpan={5} textAlign="center" py={12}>
+                  <Td colSpan={3} textAlign="center" py={12}>
                     <Text fontSize="sm" color={emptyTextColor}>
-                      No hay departamentos registrados en el sistema.
+                      No hay registros de Dimensión 5 en el sistema.
                     </Text>
                   </Td>
                 </Tr>
@@ -275,14 +204,6 @@ export default function Departments() {
         </Box>
         <Pagination {...pagination} />
       </Box>
-
-      {/* Form Modal */}
-      <DepartmentFormModal
-        isOpen={showModal}
-        onClose={() => setShowModal(false)}
-        onSave={handleSave}
-        initialData={editingData}
-      />
     </Box>
   );
 }

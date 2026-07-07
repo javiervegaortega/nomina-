@@ -1,9 +1,9 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Modal, ModalOverlay, ModalContent, ModalHeader, ModalBody, ModalFooter, ModalCloseButton,
-  Button, Box, Table, Thead, Tbody, Tr, Th, Td, Heading, Text, Flex, useColorModeValue, Badge
+  Button, Box, Table, Thead, Tbody, Tr, Th, Td, Heading, Text, Flex, useColorModeValue, Badge, Spinner, Center
 } from '@chakra-ui/react';
-import { Download, FileText } from 'lucide-react';
+import { Download, FileText, Printer } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -37,6 +37,172 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
   const subtotalRowBg    = useColorModeValue('gray.50', 'gray.700');
   const totalRowBg       = useColorModeValue('gray.100', 'gray.600');
   const previewBg        = useColorModeValue('gray.100', 'gray.900');
+
+  const [pdfPreviewUrl, setPdfPreviewUrl] = useState(null);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+
+  // Helper to generate Libro Doc
+  const generateLibroDoc = () => {
+    const doc = new jsPDF('landscape', 'pt', 'legal');
+    data.forEach((e, index) => {
+      if (index > 0) doc.addPage();
+      
+      const pageW = doc.internal.pageSize.width;
+      const margin = 36;
+      const usableW = pageW - margin * 2;
+
+      // ── Centered titles ──
+      doc.setFontSize(14); doc.setFont('helvetica', 'bold');
+      doc.text('ECONACIONAL, SOCIEDAD ANÓNIMA', pageW / 2, 36, { align: 'center' });
+      doc.setFontSize(10); doc.setFont('helvetica', 'normal');
+      doc.text('LIBRO DE SALARIOS PARA TRABAJADORES PERMANENTES', pageW / 2, 50, { align: 'center' });
+      doc.text('AUTORIZADO POR EL MINISTERIO DE TRABAJO Y PREVISION SOCIAL, SEGÚN ARTÍCULO 102 DEL CÓDIGO DE TRABAJO', pageW / 2, 62, { align: 'center' });
+
+      // Folio top-right
+      doc.setFontSize(9); doc.setFont('helvetica', 'normal');
+      doc.text(`Folio No. ${index + 1}`, pageW - margin, 36, { align: 'right' });
+
+      // ── Helper: draw a labeled underlined field ──
+      const drawField = (label, value, x, y, w) => {
+        doc.setFontSize(7); doc.setFont('helvetica', 'normal');
+        // Draw the underline
+        doc.line(x, y, x + w, y);
+        // Label below the line — with more breathing room
+        doc.text(label, x, y + 9);
+        // Value above the line — with more breathing room
+        doc.setFontSize(8);
+        const val = value || '';
+        doc.text(val, x, y - 6);
+      };
+
+      // ── Row 1: 5 fields ──
+      const r1y = 88;
+      const col5 = usableW / 5;
+      drawField('Nombre del Trabajador', getEmpName(e),      margin,                 r1y, col5 * 1.6);
+      drawField('Edad',                  e.edad || '',        margin + col5 * 1.7,    r1y, col5 * 0.7);
+      drawField('Sexo',                  e.genero || '',      margin + col5 * 2.5,    r1y, col5 * 0.8);
+      drawField('Nacionalidad',          e.nacionalidad || 'Guatemalteca', margin + col5 * 3.4, r1y, col5 * 0.9);
+      drawField('Ocupación o Puesto',    e.puesto || '',      margin + col5 * 4.35,   r1y, col5 * 0.65);
+
+      // ── Row 2: 4 fields ──
+      const r2y = 118;
+      const col4 = usableW / 4;
+      drawField('No. de Afiliación al IGSS',       e.no_igss || '',  margin,                r2y, col4 * 0.9);
+      drawField('No. DPI o Permiso de Trabajo',    e.dpi || '',      margin + col4,         r2y, col4 * 0.9);
+      drawField('Fecha de Ingreso',                e.fecha_ingreso ? new Date(e.fecha_ingreso).toLocaleDateString('es-GT') : '', margin + col4 * 2, r2y, col4 * 0.9);
+      drawField('Fecha Finalización de Relación Laboral', '', margin + col4 * 3, r2y, col4 * 0.9);
+
+      const ord = fmtN(e.calculated.baseSalary);
+      const ext = fmtN((e.extras?.simplesVal || 0) + (e.extras?.doblesVal || 0));
+      const septimos = fmtN(e.extras?.septimosVal || 0);
+      const vacaciones = fmtN(e.extras?.vacacionesVal || 0); 
+      const totalDev = fmtN(e.calculated.gross);
+      
+      const igss = fmtN(e.deductions?.igss || 0);
+      const otrasDed = fmtN((e.calculated.ded || 0) - (e.deductions?.igss || 0));
+      const totalDed = fmtN(e.calculated.ded);
+      
+      const dec4292 = fmtN((e.calculated.bonusDec || 0) + (e.calculated.bonos || 0));
+      const bonInc = fmtN(e.calculated.bonusLey || 0);
+      const liq = fmtN(e.calculated.net);
+
+      autoTable(doc, {
+        startY: r2y + 30,
+        head: [
+          [
+            { content: 'No. de orden', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } },
+            { content: 'Período de trabajo', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } },
+            { content: 'Salario en\nQuetzales', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } },
+            { content: 'Días\ntrabajados', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } },
+            { content: 'HORAS TRABAJADAS', colSpan: 2, styles: { halign: 'center' } },
+            { content: 'SALARIO DEVENGADO', colSpan: 5, styles: { halign: 'center' } },
+            { content: 'DEDUCCIONES LEGALES', colSpan: 3, styles: { halign: 'center' } },
+            { content: 'Decreto 42-92,\nAguinaldo y Otras', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } },
+            { content: 'Bonificación\nIncentivo Dec. 37-2001', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } },
+            { content: 'Líquido a Recibir', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } },
+            { content: 'FIRMA', rowSpan: 2, styles: { halign: 'center', valign: 'middle', cellWidth: 90 } },
+            { content: 'Observaciones', rowSpan: 2, styles: { halign: 'center', valign: 'middle', cellWidth: 80 } }
+          ],
+          [
+            { content: 'Ordinarias', styles: { halign: 'center' } },
+            { content: 'Extra ordinarias', styles: { halign: 'center' } },
+            { content: 'Ordinario', styles: { halign: 'center' } },
+            { content: 'Extra-ordinario', styles: { halign: 'center' } },
+            { content: 'Séptimos y Asuetos', styles: { halign: 'center' } },
+            { content: 'Vacaciones', styles: { halign: 'center' } },
+            { content: 'SALARIO TOTAL', styles: { halign: 'center' } },
+            { content: 'IGSS', styles: { halign: 'center' } },
+            { content: 'Otras deducciones', styles: { halign: 'center' } },
+            { content: 'TOTAL DEDUCCIONES', styles: { halign: 'center' } }
+          ]
+        ],
+        body: [
+          [
+            1,
+            group.title || 'Nómina',
+            fmtN(e.sueldo_ordinario || 0),
+            e.days || 30,
+            '',
+            e.extras?.simplesQty || 0,
+            ord,
+            ext,
+            septimos,
+            vacaciones,
+            totalDev,
+            igss,
+            otrasDed,
+            totalDed,
+            dec4292,
+            bonInc,
+            liq,
+            '',
+            ''
+          ]
+        ],
+        theme: 'grid',
+        headStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: 'bold', fontSize: 8, lineColor: [0, 0, 0], lineWidth: 0.5 },
+        bodyStyles: { fontSize: 8, textColor: [0, 0, 0], lineColor: [0, 0, 0], lineWidth: 0.5 },
+        styles: { cellPadding: 4 },
+        columnStyles: {
+          2:  { halign: 'right' },
+          3:  { halign: 'center' },
+          4:  { halign: 'center', cellWidth: 38 },   // Ordinarias
+          5:  { halign: 'center' },
+          6:  { halign: 'right',  cellWidth: 52 },   // Ordinario
+          7:  { halign: 'right',  cellWidth: 52 },   // Extra-ordinario
+          8:  { halign: 'right' },
+          9:  { halign: 'right',  cellWidth: 42 },   // Vacaciones
+          10: { halign: 'right' },
+          11: { halign: 'right' },
+          12: { halign: 'right' },
+          13: { halign: 'right' },
+          14: { halign: 'right' },
+          15: { halign: 'right' },
+          16: { halign: 'right',  cellWidth: 50, fontStyle: 'bold' }  // Líquido a Recibir
+        }
+      });
+    });
+    return doc;
+  };
+
+  useEffect(() => {
+    if (isOpen && reportType === 'libro' && data && group) {
+      setIsGeneratingPdf(true);
+      setPdfPreviewUrl(null);
+      setTimeout(() => {
+        try {
+          const doc = generateLibroDoc();
+          setPdfPreviewUrl(doc.output('datauristring'));
+        } catch (err) {
+          console.error(err);
+        } finally {
+          setIsGeneratingPdf(false);
+        }
+      }, 50);
+    } else {
+      setPdfPreviewUrl(null);
+    }
+  }, [isOpen, reportType, data, group]);
 
   if (!isOpen || !group || !data) return null;
 
@@ -160,14 +326,7 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
 
     // ── Libro de Salarios ────────────────────────────────────
     else if (reportType === 'libro') {
-      const doc = new jsPDF('landscape', 'pt', 'letter');
-      addHeader(doc, 'Libro de Salarios');
-      const body = data.map((e, i) => [
-        i + 1, getEmpName(e), e.puesto || '', fmtQ(e.calculated.baseSalary),
-        e.days || 30, fmtQ(e.calculated.gross), fmtQ(e.calculated.bonusLey + e.calculated.bonusDec + e.calculated.bonos),
-        fmtQ(e.calculated.ded), { content: fmtQ(e.calculated.net), styles: { fontStyle: 'bold', textColor: [0, 120, 0] } }, '___________________'
-      ]);
-      autoTable(doc, { startY: 100, head: [['No.', 'Nombre Completo', 'Puesto / Ocupación', 'S. Ordinario Base', 'Días', 'Total Devengado', 'Bonificaciones', 'Total Descuentos', 'Sueldo Líquido', 'Firma']], body, theme: 'grid', headStyles: { fillColor: [41, 128, 185], textColor: 255, fontStyle: 'bold' }, styles: { fontSize: 7, cellPadding: 3 }, columnStyles: { 3: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' }, 7: { halign: 'right' }, 8: { halign: 'right' } } });
+      const doc = generateLibroDoc();
       doc.save(`Libro_Salarios_${safe}.pdf`);
     }
 
@@ -221,6 +380,17 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
 
       autoTable(doc, { startY: 100, head: [['Tipo', 'No. Cuenta', 'Corr.', 'Nombre', 'Monto', 'Concepto']], body, theme: 'grid', headStyles: { fillColor: [41, 128, 185], textColor: 255, fontStyle: 'bold' }, styles: { fontSize: 8, cellPadding: 3 }, columnStyles: { 0: { cellWidth: 35 }, 1: { cellWidth: 90 }, 2: { cellWidth: 35 }, 3: { cellWidth: 185 }, 4: { cellWidth: 75, halign: 'right' }, 5: { cellWidth: 100 } } });
       doc.save(`Plantilla_Industrial_${safe}.pdf`);
+    }
+  };
+
+  const handlePrint = () => {
+    if (reportType === 'libro') {
+      const doc = generateLibroDoc();
+      doc.autoPrint();
+      const blobUrl = doc.output('bloburl');
+      window.open(blobUrl, '_blank');
+    } else {
+      window.print();
     }
   };
 
@@ -313,12 +483,15 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
     // ── Libro de Salarios ─────────────────────────────────────
     if (reportType === 'libro') {
       return (
-        <Box border="1px solid" borderColor={borderColor} borderRadius="md" overflowX="auto">
-          <Table size="sm" variant="simple"><Thead bg={theadBg}><Tr><Th>No.</Th><Th>Nombre Completo</Th><Th>Puesto / Ocupación</Th><Th isNumeric>S. Ordinario</Th><Th isNumeric>Días</Th><Th isNumeric>Total Dev.</Th><Th isNumeric>Bonificaciones</Th><Th isNumeric>Total Desc.</Th><Th isNumeric>Sueldo Líquido</Th><Th>Firma</Th></Tr></Thead>
-            <Tbody bg={tdBg}>
-              {data.map((e, i) => (<Tr key={i}><Td fontSize="xs">{i+1}</Td><Td fontSize="xs" fontWeight="semibold">{getEmpName(e)}</Td><Td fontSize="xs">{e.puesto || 'N/A'}</Td><Td isNumeric fontFamily="mono" fontSize="xs">{fmtQ(e.calculated.baseSalary)}</Td><Td isNumeric fontSize="xs">{e.days || 30}</Td><Td isNumeric fontFamily="mono" fontSize="xs" fontWeight="bold">{fmtQ(e.calculated.gross)}</Td><Td isNumeric fontFamily="mono" fontSize="xs">{fmtQ(e.calculated.bonusLey + e.calculated.bonusDec + e.calculated.bonos)}</Td><Td isNumeric fontFamily="mono" fontSize="xs" color="red.500">{fmtQ(e.calculated.ded)}</Td><Td isNumeric fontFamily="mono" fontSize="xs" fontWeight="bold" color="green.600">{fmtQ(e.calculated.net)}</Td><Td fontSize="xs" color="gray.400">___________________</Td></Tr>))}
-            </Tbody>
-          </Table>
+        <Box border="1px solid" borderColor={borderColor} borderRadius="md" overflow="hidden" h="600px" position="relative">
+          {isGeneratingPdf || !pdfPreviewUrl ? (
+            <Center h="100%" bg={previewBg} flexDirection="column" gap={4}>
+              <Spinner size="xl" color="brand.500" thickness="4px" />
+              <Text color="gray.500" fontWeight="medium">Generando previsualización del libro...</Text>
+            </Center>
+          ) : (
+            <embed src={`${pdfPreviewUrl}#toolbar=0`} type="application/pdf" width="100%" height="100%" style={{ border: 'none' }} title="Libro de Salarios" />
+          )}
         </Box>
       );
     }
@@ -416,6 +589,9 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
 
         <ModalFooter borderTop="1px solid" borderColor={borderColor} gap={3}>
           <Button variant="ghost" onClick={onClose}>Cancelar</Button>
+          <Button colorScheme="purple" leftIcon={<Printer size={18} />} onClick={handlePrint}>
+            Imprimir
+          </Button>
           <Button colorScheme="red" leftIcon={<Download size={18} />} onClick={handleDownloadPDF}>
             Descargar PDF
           </Button>

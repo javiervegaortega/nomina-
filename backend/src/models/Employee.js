@@ -94,7 +94,7 @@ module.exports = (sequelize) => {
     edad: { type: DataTypes.STRING },
     emision_dpi: { type: DataTypes.STRING },
     nit: { type: DataTypes.STRING },
-    departamento_laboral: { type: DataTypes.STRING },
+    departmentId: { type: DataTypes.INTEGER },
     areaId: { type: DataTypes.INTEGER },
     divisionId: { type: DataTypes.INTEGER },
     subdivisionId: { type: DataTypes.INTEGER },

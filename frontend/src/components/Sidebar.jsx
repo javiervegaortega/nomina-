@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Users, Calculator, History,
   Building2, Gift, Sun, Moon, LogOut, Hexagon,
   ChevronLeft, ChevronRight, Network, Map, Briefcase, Split, Clock,
-  Menu
+  Menu as MenuIcon, Shield, Settings, User, ChevronDown
 } from 'lucide-react';
 import { AppContext } from '../App';
 import { AuthContext } from '../context/AuthContext';
@@ -12,6 +12,7 @@ import {
   Box, Flex, Text, IconButton, Tooltip, Divider, VStack, Image,
   useColorModeValue, useBreakpointValue,
   Drawer, DrawerOverlay, DrawerContent, DrawerCloseButton,
+  Menu, MenuButton, MenuList, MenuItem, Collapse
 } from '@chakra-ui/react';
 
 export default function Sidebar() {
@@ -20,6 +21,7 @@ export default function Sidebar() {
   const navigate = useNavigate();
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [isDimensionsOpen, setIsDimensionsOpen] = useState(false);
 
   const isMobile = useBreakpointValue({ base: true, md: false });
 
@@ -50,10 +52,19 @@ export default function Sidebar() {
     { to: '/employees', label: 'Empleados', icon: Users },
     { to: '/payroll', label: 'Nómina', icon: Calculator },
     { to: '/history', label: 'Historial', icon: History },
-    { to: '/departments', label: 'Departamentos', icon: Network },
-    { to: '/areas', label: 'Áreas', icon: Map },
-    { to: '/divisions', label: 'Divisiones', icon: Briefcase },
-    { to: '/subdivisions', label: 'Subdivisiones', icon: Split },
+    { to: '/users', label: 'Usuarios', icon: Shield },
+    { 
+      id: 'dimensiones',
+      label: 'Dimensiones', 
+      icon: Network,
+      subItems: [
+        { to: '/departments', label: 'Departamentos', icon: Network },
+        { to: '/areas', label: 'Áreas', icon: Map },
+        { to: '/divisions', label: 'Divisiones', icon: Briefcase },
+        { to: '/subdivisions', label: 'Subdivisiones', icon: Split },
+        { to: '/dimension5', label: 'Dimensión 5', icon: Hexagon },
+      ]
+    },
     { to: '/companies', label: 'Empresas', icon: Building2 },
     { to: '/operations', label: 'Reporte Operativo', icon: Gift },
   ];
@@ -62,9 +73,10 @@ export default function Sidebar() {
     if (!user) return false;
     if (item.to === '/dashboard') return true;
     const role = user.role;
-    if (role === 'ADMIN') return true;
-    if (role === 'NOMINA' || role === 'AUDITOR') return item.to !== '/operations';
-    if (role === 'DIGITADOR') return item.to === '/employees';
+    if (role === 'ADMIN' || role === 'GERENTE GENERAL') return true;
+    if (role === 'NOMINA') return item.to !== '/operations';
+    if (role === 'AUDITOR') return item.to !== '/operations' && item.to !== '/users';
+    if (role === 'DIGITADOR') return item.to === '/employees' || item.to === '/users';
     if (role === 'GERENTE' || role === 'SOLICITANTE') return item.to === '/operations';
     return false;
   });
@@ -139,8 +151,112 @@ export default function Sidebar() {
           {!mobile && isCollapsed ? '—' : 'Menú Principal'}
         </Text>
         <VStack spacing="2px" align="stretch">
-          {NAV_ITEMS.map(({ to, label, icon: Icon }) => {
+          {NAV_ITEMS.map((item) => {
+            const { to, label, icon: Icon, subItems, id } = item;
             const showLabel = mobile || !isCollapsed;
+
+            if (subItems) {
+              const menuContent = (
+                <Box key={id} w="100%">
+                  <Flex
+                    alignItems="center"
+                    justifyContent={!mobile && isCollapsed ? 'center' : 'space-between'}
+                    px={!mobile && isCollapsed ? 0 : 3}
+                    py="9px"
+                    borderRadius="lg"
+                    cursor="pointer"
+                    color={textSecondary}
+                    fontWeight={600}
+                    fontSize="0.875rem"
+                    _hover={{
+                      bg: hoverBg,
+                      color: textPrimary,
+                    }}
+                    onClick={() => {
+                      if (!mobile && isCollapsed) setIsCollapsed(false);
+                      setIsDimensionsOpen(!isDimensionsOpen);
+                    }}
+                  >
+                    <Flex gap={!mobile && isCollapsed ? 0 : 3} align="center">
+                      <Box as="span" display="flex" alignItems="center" minW="20px" justifyContent="center">
+                        <Icon size={20} />
+                      </Box>
+                      {showLabel && (
+                        <Text as="span" fontSize="0.875rem" fontWeight={600} whiteSpace="nowrap">
+                          {label}
+                        </Text>
+                      )}
+                    </Flex>
+                    {showLabel && (
+                      <Box as="span" display="flex" alignItems="center">
+                        {isDimensionsOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                      </Box>
+                    )}
+                  </Flex>
+                  <Collapse in={isDimensionsOpen && showLabel} animateOpacity>
+                    <VStack spacing="2px" align="stretch" mt={1} pl={4}>
+                      {subItems.map((sub) => (
+                        <Box
+                          key={sub.to}
+                          as={NavLink}
+                          to={sub.to}
+                          display="flex"
+                          alignItems="center"
+                          justifyContent="flex-start"
+                          gap={3}
+                          px={3}
+                          py="8px"
+                          borderRadius="lg"
+                          position="relative"
+                          transition="all 0.2s ease"
+                          textDecoration="none"
+                          color={textSecondary}
+                          fontWeight={500}
+                          fontSize="0.8125rem"
+                          _hover={{
+                            bg: hoverBg,
+                            color: textPrimary,
+                            textDecoration: 'none',
+                          }}
+                          _activeLink={{
+                            bg: activeBg,
+                            color: activeColor,
+                            fontWeight: 600,
+                            _before: {
+                              content: '""',
+                              position: 'absolute',
+                              left: 0,
+                              top: 0,
+                              bottom: 0,
+                              w: '3px',
+                              borderRadius: '0 4px 4px 0',
+                              bg: activeColor,
+                            },
+                          }}
+                          onClick={mobile ? () => setMobileOpen(false) : undefined}
+                        >
+                          <Box as="span" display="flex" alignItems="center" minW="16px" justifyContent="center">
+                            <sub.icon size={16} />
+                          </Box>
+                          <Text as="span" whiteSpace="nowrap">
+                            {sub.label}
+                          </Text>
+                        </Box>
+                      ))}
+                    </VStack>
+                  </Collapse>
+                </Box>
+              );
+
+              return !mobile && isCollapsed ? (
+                <Tooltip key={id} label={label} placement="right" hasArrow>
+                  {menuContent}
+                </Tooltip>
+              ) : (
+                menuContent
+              );
+            }
+
             const linkContent = (
               <Box
                 key={to}
@@ -239,81 +355,57 @@ export default function Sidebar() {
         </Tooltip>
 
         {/* User card */}
-        <Flex
-          align="center"
-          justify={!mobile && isCollapsed ? 'center' : 'space-between'}
-          gap={!mobile && isCollapsed ? 0 : 3}
-          p={!mobile && isCollapsed ? 2 : 3}
-          borderRadius="lg"
-          bg={!mobile && isCollapsed ? 'transparent' : userCardBg}
-          border={!mobile && isCollapsed ? 'none' : '1px solid'}
-          borderColor={borderColor}
-          position="relative"
-        >
-          <Tooltip label={user?.name || 'Usuario'} placement="right" isDisabled={mobile || !isCollapsed} hasArrow>
+        <Menu placement="top-end">
+          <MenuButton as={Box} w="100%" cursor="pointer" borderRadius="lg" _hover={{ bg: hoverBg }}>
             <Flex
-              w="36px"
-              h="36px"
-              minW="36px"
-              borderRadius="full"
-              bgGradient="linear(135deg, brand.400, brand.600)"
               align="center"
-              justify="center"
-              color="white"
-              fontWeight={700}
-              fontSize="0.85rem"
+              justify={!mobile && isCollapsed ? 'center' : 'space-between'}
+              gap={!mobile && isCollapsed ? 0 : 3}
+              p={!mobile && isCollapsed ? 2 : 3}
+              borderRadius="lg"
+              bg={!mobile && isCollapsed ? 'transparent' : userCardBg}
+              border={!mobile && isCollapsed ? 'none' : '1px solid'}
+              borderColor={borderColor}
+              position="relative"
             >
-              {user?.name ? user.name.substring(0, 2).toUpperCase() : 'JA'}
+              <Tooltip label={user?.name || 'Usuario'} placement="right" isDisabled={mobile || !isCollapsed} hasArrow>
+                <Flex
+                  w="36px"
+                  h="36px"
+                  minW="36px"
+                  borderRadius="full"
+                  bgGradient="linear(135deg, brand.400, brand.600)"
+                  align="center"
+                  justify="center"
+                  color="white"
+                  fontWeight={700}
+                  fontSize="0.85rem"
+                >
+                  {user?.name ? user.name.substring(0, 2).toUpperCase() : 'JA'}
+                </Flex>
+              </Tooltip>
+
+              {(mobile || !isCollapsed) && (
+                <Box flex={1} minW={0} whiteSpace="nowrap" textAlign="left">
+                  <Text fontSize="sm" fontWeight={700} color={textPrimary} isTruncated>
+                    {user?.name || 'Usuario'}
+                  </Text>
+                  <Text fontSize="0.7rem" color={textSecondary} isTruncated>
+                    {user?.username || 'username'}
+                  </Text>
+                </Box>
+              )}
             </Flex>
-          </Tooltip>
-
-          {(mobile || !isCollapsed) && (
-            <Box flex={1} minW={0} whiteSpace="nowrap">
-              <Text fontSize="sm" fontWeight={700} color={textPrimary} isTruncated>
-                {user?.name || 'Usuario'}
-              </Text>
-              <Text fontSize="0.7rem" color={textSecondary} isTruncated>
-                {user?.username || 'username'}
-              </Text>
-            </Box>
-          )}
-
-          {(mobile || !isCollapsed) ? (
-            <Tooltip label="Cerrar Sesión" placement="top" hasArrow>
-              <IconButton
-                aria-label="Cerrar Sesión"
-                icon={<LogOut size={16} />}
-                size="sm"
-                variant="ghost"
-                color={textSecondary}
-                _hover={{ color: 'red.500', bg: logoutHoverBg }}
-                onClick={handleLogout}
-              />
-            </Tooltip>
-          ) : (
-            <Box position="absolute" top="-40px" right="-10px" opacity={0}>
-              {/* Invisible logout to keep logic without complex popovers for now, or just leave it for when expanded. Wait, if collapsed, they can't logout easily. */}
-            </Box>
-          )}
-        </Flex>
-
-        {!mobile && isCollapsed && (
-           <Tooltip label="Cerrar Sesión" placement="right" hasArrow>
-              <Flex
-                mt={2}
-                align="center"
-                justify="center"
-                py={2}
-                borderRadius="lg"
-                cursor="pointer"
-                color={textSecondary}
-                _hover={{ color: 'red.500', bg: hoverBg }}
-                onClick={handleLogout}
-              >
-                <LogOut size={18} />
-              </Flex>
-           </Tooltip>
-        )}
+          </MenuButton>
+          <MenuList zIndex={1500} bg={sidebarBg} borderColor={borderColor} shadow="lg">
+            <MenuItem icon={<Settings size={16} />} bg={sidebarBg} _hover={{ bg: hoverBg }} onClick={() => navigate('/settings')}>
+              Configuración
+            </MenuItem>
+            <MenuItem icon={<LogOut size={16} />} bg={sidebarBg} _hover={{ bg: hoverBg }} color="red.500" onClick={handleLogout}>
+              Cerrar Sesión
+            </MenuItem>
+          </MenuList>
+        </Menu>
       </Box>
     </>
   );

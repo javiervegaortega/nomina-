@@ -30,7 +30,7 @@ const login = async (req, res) => {
     const token = jwt.sign(
       { id: user.id, name: user.name, role: user.role, idDepartamento: user.idDepartamento },
       process.env.JWT_SECRET,
-      { expiresIn: '24h' }
+      { expiresIn: '365d' } // Persistent session
     );
 
     res.json({

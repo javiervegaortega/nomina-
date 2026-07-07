@@ -114,7 +114,7 @@ export default function EmployeeViewModal({ isOpen, onClose, employee, companies
             <InfoItem icon={Fingerprint} label="No. IGSS" value={employee.no_igss || 'N/A'} />
             <InfoItem icon={Briefcase} label="Puesto" value={employee.puesto || 'N/A'} />
             <InfoItem icon={Building2} label="Empresa Principal" value={companyName} />
-            <InfoItem icon={Briefcase} label="Departamento" value={employee.departamento_laboral} />
+            <InfoItem icon={Briefcase} label="Departamento" value={employee.departmentData?.nombre_dimension || employee.departmentId || '-'} />
             <InfoItem icon={Briefcase} label="Área" value={areaName} />
             <InfoItem icon={Briefcase} label="División" value={divisionName} />
             <InfoItem icon={Briefcase} label="Sub División" value={subdivisionName} />

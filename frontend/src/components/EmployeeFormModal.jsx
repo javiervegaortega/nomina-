@@ -192,7 +192,7 @@ function InlineRecordForm({ fields, onSave, onCancel, initialData }) {
 }
 
 
-export default function EmployeeFormModal({ mode, initialData, onClose, onSave, employees = [], companies, departments, areas, divisions, subdivisions }) {
+export default function EmployeeFormModal({ mode, initialData, onClose, onSave, employees = [], companies, departments, areas, divisions, subdivisions, dimension5s }) {
   const { addEmployeeRecord, updateEmployeeRecord, deleteEmployeeRecord } = useContext(DataContext);
   const { user } = useContext(AuthContext);
   const isReadOnly = user?.role === 'AUDITOR';
@@ -395,11 +395,11 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
               <Box>
                 <SectionTitle title="Jerarquía Corporativa" />
                 <SimpleGrid columns={{ base: 1, sm: 3 }} spacing={6} mb={8}>
-                  <SelectField label="Departamento (OBLIGATORIO)" val={form.departamento_laboral} onChange={v => { handleChange('departamento_laboral', v); handleChange('areaId', ''); handleChange('divisionId', ''); handleChange('subdivisionId', ''); handleChange('nivel_5', ''); }} options={(departments || []).map(d => ({ value: d.nombre_dimension, label: d.nombre_dimension }))} required />
+                  <SelectField label="Departamento (OBLIGATORIO)" val={String(form.departmentId || '')} onChange={v => { handleChange('departmentId', v); handleChange('areaId', ''); handleChange('divisionId', ''); handleChange('subdivisionId', ''); handleChange('nivel_5', ''); }} options={(departments || []).map(d => ({ value: String(d.id), label: d.nombre_dimension }))} required />
                   <SelectField label="Área (OBLIGATORIO)" val={String(form.areaId || '')} onChange={v => { handleChange('areaId', v); handleChange('divisionId', ''); handleChange('subdivisionId', ''); handleChange('nivel_5', ''); }} options={areas || []} required />
                   <SelectField label="División (OBLIGATORIO)" val={String(form.divisionId || '')} onChange={v => { handleChange('divisionId', v); handleChange('subdivisionId', ''); handleChange('nivel_5', ''); }} options={divisions || []} required />
                   <SelectField label="Sub División" val={String(form.subdivisionId || '')} onChange={v => { handleChange('subdivisionId', v); handleChange('nivel_5', ''); }} options={subdivisions || []} />
-                  <SelectField label="Nivel 5" val={form.nivel_5} onChange={v => handleChange('nivel_5', v)} options={[]} />
+                  <SelectField label="Nivel 5" val={form.nivel_5} onChange={v => handleChange('nivel_5', v)} options={dimension5s || []} />
                   <Field label="Puesto (OBLIGATORIO)" val={form.puesto} onChange={v => handleChange('puesto', v)} required />
                 </SimpleGrid>
 

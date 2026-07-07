@@ -40,18 +40,16 @@ import {
   Avatar,
   useColorModeValue,
   useDisclosure,
-  useToast,
   Skeleton,
   SkeletonText,
 } from '@chakra-ui/react';
 
 export default function Commissions() {
   const { employees, companies, commissions, addCommission, deleteCommission, isLoading } = useContext(DataContext);
-  const { confirmAction } = useContext(AppContext);
+  const { confirmAction, showToast } = useContext(AppContext);
   const { user } = useContext(AuthContext);
   const isReadOnly = user?.role === 'AUDITOR';
   const { isOpen, onOpen, onClose } = useDisclosure();
-  const toast = useToast();
 
   const pagination = usePagination(commissions, 10);
 
@@ -148,7 +146,7 @@ export default function Commissions() {
 
   const handleSave = () => {
     if (!selectedEmp) {
-      toast({ title: 'Seleccione un empleado', status: 'warning', duration: 2500, isClosable: true });
+      showToast('Seleccione un empleado', 'warning');
       return;
     }
     const payload = {
@@ -159,7 +157,7 @@ export default function Commissions() {
       monto_bono: Number(form.monto_bono) || 0,
     };
     addCommission(payload);
-    toast({ title: 'Solicitud guardada', status: 'success', duration: 2500, isClosable: true });
+    showToast('Solicitud guardada', 'success');
     onClose();
   };
 

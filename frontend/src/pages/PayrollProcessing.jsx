@@ -113,6 +113,7 @@ function PayrollHub({ onSelectDraft }) {
 
   const cardBg = useColorModeValue('white', 'gray.800');
   const borderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
+  const emptyStateBg = useColorModeValue('gray.50', 'whiteAlpha.50');
 
   if (isLoading) {
     return (
@@ -280,7 +281,7 @@ function PayrollHub({ onSelectDraft }) {
             borderRadius="xl" 
             border="2px dashed" 
             borderColor={borderColor}
-            bg={useColorModeValue('gray.50', 'whiteAlpha.50')}
+            bg={emptyStateBg}
           >
             <Text color="gray.500">
               No hay nóminas en progreso. Crea una nueva para comenzar.
@@ -877,6 +878,17 @@ function ListadoPagosTab({
 }) {
   const { companies } = useContext(DataContext);
   const [viewMode, setViewMode] = useState('summary');
+  const [highlightedRows, setHighlightedRows] = useState(new Set());
+  const toggleRowHighlight = (id) => {
+    setHighlightedRows(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  const highlightColor = useColorModeValue('yellow.100', 'yellow.800');
+  const liquidoBg = useColorModeValue('brand.50', 'brand.900');
   const borderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
   const theadBg = useColorModeValue('gray.100', 'gray.900');
   const tdBg = useColorModeValue('white', 'gray.800');
@@ -1092,7 +1104,7 @@ function ListadoPagosTab({
         return (
           <Box key={gIdx} mb={8}>
             {group.title && (
-              <Heading size="sm" mb={3} color="brand.600" bg={useColorModeValue('brand.50', 'brand.900')} p={2} borderRadius="md" display="inline-flex" alignItems="center" gap={2}>
+              <Heading size="sm" mb={3} color="brand.600" bg={liquidoBg} p={2} borderRadius="md" display="inline-flex" alignItems="center" gap={2}>
                 {group.title} <Badge colorScheme="brand" borderRadius="full">{groupData.length}</Badge>
               </Heading>
             )}
@@ -1194,19 +1206,23 @@ function ListadoPagosTab({
                     const q1 = periodType === '2da' ? anticipo : liquido;
                     const q2 = periodType === '2da' ? liquido - anticipo : 0;
 
+                    const isHighlighted = highlightedRows.has(e.id);
+                    const rowBg = isHighlighted ? highlightColor : 'transparent';
+                    const stickyBg = isHighlighted ? highlightColor : tdBg;
+
                     return (
-                      <Tr key={e.id} _hover={{ bg: hoverBg }}>
+                      <Tr key={e.id} _hover={{ bg: isHighlighted ? highlightColor : hoverBg }} bg={rowBg} onDoubleClick={() => toggleRowHighlight(e.id)} userSelect="none">
                         {/* Sticky Cells */}
-                        <Td position="sticky" left={0} zIndex={5} bg={tdBg} borderRight="1px solid" borderColor={borderColor} fontWeight="bold" fontSize="xs">
+                        <Td position="sticky" left={0} zIndex={5} bg={stickyBg} borderRight="1px solid" borderColor={borderColor} fontWeight="bold" fontSize="xs" cursor="pointer">
                           {i + 1}
                         </Td>
-                        <Td position="sticky" left="60px" zIndex={5} bg={tdBg} borderRight="1px solid" borderColor={borderColor} fontWeight="600" color="brand.500" fontSize="xs" isTruncated maxW="200px" title={[e.primer_nombre, e.segundo_nombre, e.otro_nombre, e.primer_apellido, e.segundo_apellido, e.apellido_casada].filter(Boolean).join(' ')}>
+                        <Td position="sticky" left="60px" zIndex={5} bg={stickyBg} borderRight="1px solid" borderColor={borderColor} fontWeight="600" color="brand.500" fontSize="xs" isTruncated maxW="200px" title={[e.primer_nombre, e.segundo_nombre, e.otro_nombre, e.primer_apellido, e.segundo_apellido, e.apellido_casada].filter(Boolean).join(' ')} cursor="pointer">
                           {[e.primer_nombre, e.segundo_nombre, e.otro_nombre, e.primer_apellido, e.segundo_apellido, e.apellido_casada].filter(Boolean).join(' ')}
                         </Td>
-                        <Td position="sticky" left="260px" zIndex={5} bg={tdBg} borderRight="1px solid" borderColor={borderColor} fontSize="xs" isTruncated maxW="120px" title={companies?.find(c => c.id == e.empresa_principal)?.nombre_comercial || e.company || 'Sin Empresa'}>
+                        <Td position="sticky" left="260px" zIndex={5} bg={stickyBg} borderRight="1px solid" borderColor={borderColor} fontSize="xs" isTruncated maxW="120px" title={companies?.find(c => c.id == e.empresa_principal)?.nombre_comercial || e.company || 'Sin Empresa'}>
                           {companies?.find(c => c.id == e.empresa_principal)?.nombre_comercial || e.company || 'Sin Empresa'}
                         </Td>
-                        <Td position="sticky" left="380px" zIndex={5} bg={tdBg} borderRight="1px solid" borderColor={borderColor} boxShadow="4px 0 8px -4px rgba(0,0,0,0.15)" fontSize="xs" isTruncated maxW="120px">
+                        <Td position="sticky" left="380px" zIndex={5} bg={stickyBg} borderRight="1px solid" borderColor={borderColor} boxShadow="4px 0 8px -4px rgba(0,0,0,0.15)" fontSize="xs" isTruncated maxW="120px">
                           {e.puesto || 'Sin Puesto'}
                         </Td>
 
@@ -1242,7 +1258,7 @@ function ListadoPagosTab({
                         <EditableCell onNavigate={handleNavigation} id={e.id} field="otros_egresos" section="deductions" value={e.deductions?.otros_egresos || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={85} isMoney isDanger />
                         <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="red.500">{formatQ(totalEgresos)}</Td>
                         
-                        <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500" bg={useColorModeValue('brand.50', 'brand.900')}>
+                        <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500" bg={liquidoBg}>
                           {periodType === '2da' ? formatQ(liquido) : formatQ(liquido)}
                         </Td>
                         {periodType === '2da' && (
@@ -1381,18 +1397,22 @@ function ListadoPagosTab({
                     const q1 = periodType === '2da' ? anticipo : liquido;
                     const q2 = periodType === '2da' ? liquido - anticipo : 0;
 
+                    const isHighlighted = highlightedRows.has(e.id);
+                    const rowBg = isHighlighted ? highlightColor : 'transparent';
+                    const stickyBg = isHighlighted ? highlightColor : tdBg;
+
                     return (
-                      <Tr key={e.id} _hover={{ bg: hoverBg }}>
-                        <Td position="sticky" left={0} zIndex={5} bg={tdBg} borderRight="1px solid" borderColor={borderColor} fontWeight="bold" fontSize="xs">
+                      <Tr key={e.id} _hover={{ bg: isHighlighted ? highlightColor : hoverBg }} bg={rowBg} onDoubleClick={() => toggleRowHighlight(e.id)} userSelect="none">
+                        <Td position="sticky" left={0} zIndex={5} bg={stickyBg} borderRight="1px solid" borderColor={borderColor} fontWeight="bold" fontSize="xs" cursor="pointer">
                           {i + 1}
                         </Td>
-                        <Td position="sticky" left="60px" zIndex={5} bg={tdBg} borderRight="1px solid" borderColor={borderColor} fontWeight="600" color="brand.500" fontSize="xs" isTruncated maxW="200px" title={[e.primer_nombre, e.segundo_nombre, e.otro_nombre, e.primer_apellido, e.segundo_apellido, e.apellido_casada].filter(Boolean).join(' ')}>
+                        <Td position="sticky" left="60px" zIndex={5} bg={stickyBg} borderRight="1px solid" borderColor={borderColor} fontWeight="600" color="brand.500" fontSize="xs" isTruncated maxW="200px" title={[e.primer_nombre, e.segundo_nombre, e.otro_nombre, e.primer_apellido, e.segundo_apellido, e.apellido_casada].filter(Boolean).join(' ')} cursor="pointer">
                           {[e.primer_nombre, e.segundo_nombre, e.otro_nombre, e.primer_apellido, e.segundo_apellido, e.apellido_casada].filter(Boolean).join(' ')}
                         </Td>
-                        <Td position="sticky" left="260px" zIndex={5} bg={tdBg} borderRight="1px solid" borderColor={borderColor} fontSize="xs" isTruncated maxW="120px" title={companies?.find(c => c.id == e.empresa_principal)?.nombre_comercial || e.company || 'Sin Empresa'}>
+                        <Td position="sticky" left="260px" zIndex={5} bg={stickyBg} borderRight="1px solid" borderColor={borderColor} fontSize="xs" isTruncated maxW="120px" title={companies?.find(c => c.id == e.empresa_principal)?.nombre_comercial || e.company || 'Sin Empresa'}>
                           {companies?.find(c => c.id == e.empresa_principal)?.nombre_comercial || e.company || 'Sin Empresa'}
                         </Td>
-                        <Td position="sticky" left="380px" zIndex={5} bg={tdBg} borderRight="1px solid" borderColor={borderColor} boxShadow="4px 0 8px -4px rgba(0,0,0,0.15)" fontSize="xs" isTruncated maxW="120px">
+                        <Td position="sticky" left="380px" zIndex={5} bg={stickyBg} borderRight="1px solid" borderColor={borderColor} boxShadow="4px 0 8px -4px rgba(0,0,0,0.15)" fontSize="xs" isTruncated maxW="120px">
                           {e.puesto || 'Sin Puesto'}
                         </Td>
 
@@ -1401,7 +1421,7 @@ function ListadoPagosTab({
                         <Td fontFamily="mono" fontSize="xs">{formatQ(bonusLey + bonusDec)}</Td>
                         <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="gold.500">{formatQ(totalExtras)}</Td>
                         <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="red.500">{formatQ(totalEgresos)}</Td>
-                        <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500" bg={useColorModeValue('brand.50', 'brand.900')}>{formatQ(liquido)}</Td>
+                        <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500" bg={liquidoBg}>{formatQ(liquido)}</Td>
                         
                         {periodType === '2da' && (
                           <>
@@ -1683,7 +1703,7 @@ function DistributionTab({ data }) {
                   </Td>
                 </Tr>
                 {isExpanded && (
-                  <Tr bg={useColorModeValue('gray.50', 'whiteAlpha.50')}>
+                  <Tr bg={footerBg}>
                     <Td colSpan={6} p={0}>
                       <Box p={4} m={2} bg={cardBg} borderRadius="md" border="1px solid" borderColor={borderColor}>
                         <Text fontSize="sm" fontWeight={600} mb={3}>Empleados que contribuyen a {c.nombre_comercial || c.nit}</Text>

@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
 import {
-  Box, VStack, HStack, FormControl, FormLabel, Select, Input, Button, Table, Thead, Tbody, Tr, Th, Td, IconButton, Text, useToast, Checkbox, Badge
+  Box, VStack, HStack, FormControl, FormLabel, Select, Input, Button, Table, Thead, Tbody, Tr, Th, Td, IconButton, Text, Checkbox, Badge
 } from '@chakra-ui/react';
 import { Trash2 } from 'lucide-react';
 import { formatQ } from '../data/mockData';
+import { AppContext } from '../App';
+import { useContext } from 'react';
 
 const DEDUCTION_TYPES = [
   { key: 'cell', label: 'Celular' },
@@ -17,7 +19,7 @@ const DEDUCTION_TYPES = [
 ];
 
 export default function EmployeeDeductions({ employee, onSave, onDelete }) {
-  const toast = useToast();
+  const { showToast } = useContext(AppContext);
   const [type, setType] = useState('');
   const [isSinglePayment, setIsSinglePayment] = useState(true);
   const [totalAmount, setTotalAmount] = useState('');
@@ -25,13 +27,13 @@ export default function EmployeeDeductions({ employee, onSave, onDelete }) {
 
   const handleSave = () => {
     if (!type) {
-      toast({ title: 'Faltan campos', description: 'Debe seleccionar un tipo de egreso', status: 'warning' });
+      showToast('Debe seleccionar un tipo de egreso', 'warning');
       return;
     }
 
     const total = Number(totalAmount);
     if (isNaN(total) || total <= 0) {
-      toast({ title: 'Monto inválido', description: 'El monto total debe ser mayor a 0', status: 'warning' });
+      showToast('El monto total debe ser mayor a 0', 'warning');
       return;
     }
 
@@ -39,7 +41,7 @@ export default function EmployeeDeductions({ employee, onSave, onDelete }) {
     if (!isSinglePayment) {
       cuotas = Number(installments);
       if (isNaN(cuotas) || cuotas <= 0) {
-        toast({ title: 'Cuotas inválidas', description: 'La cantidad de cuotas debe ser mayor a 0', status: 'warning' });
+        showToast('La cantidad de cuotas debe ser mayor a 0', 'warning');
         return;
       }
     }
@@ -61,9 +63,10 @@ export default function EmployeeDeductions({ employee, onSave, onDelete }) {
     
     // Reset form
     setType('');
-    setIsSinglePayment(true);
     setTotalAmount('');
     setInstallments('');
+    setIsSinglePayment(true);
+    // Notificamos solo en la pantalla principal
   };
 
   const deductionsHistory = employee?.deductionsHistory || [];

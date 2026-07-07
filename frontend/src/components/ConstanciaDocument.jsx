@@ -54,7 +54,7 @@ const ConstanciaDocument = React.forwardRef(({ emp, desde, al, hastaLaFecha, rep
       </Text>
 
       <Text mb={8} textAlign="justify">
-        Por este medio hago constar que <strong>{fullName}</strong> quien se identifica con el dpi <strong>{emp.dpi || '_________'}</strong> labora para esta empresa, desde el día <strong>{fechaDesdeStr}</strong> {hastaLaFecha ? '' : 'al '}<strong>{fechaAlStr}</strong>. desempeñando el cargo de <strong>{puesto || emp.puesto || '_________'}</strong> en el área de <strong>{emp.departamento_laboral || '_________'}</strong>, percibiendo ingresos mensuales de la siguiente forma:
+        Por este medio hago constar que <strong>{fullName}</strong> quien se identifica con el dpi <strong>{emp.dpi || '_________'}</strong> labora para esta empresa, desde el día <strong>{fechaDesdeStr}</strong> {hastaLaFecha ? '' : 'al '}<strong>{fechaAlStr}</strong>. desempeñando el cargo de <strong>{puesto || emp.puesto || '_________'}</strong> en el área de <strong>{emp.departmentData?.nombre_dimension || emp.departmentId || '_________'}</strong>, percibiendo ingresos mensuales de la siguiente forma:
       </Text>
 
       <Box display="flex" justifyContent="center" mb={12} mt={10}>
