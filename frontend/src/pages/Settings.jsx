@@ -1,4 +1,4 @@
-import React, { useContext } from 'react';
+import React, { useContext, useRef } from 'react';
 import { AppContext } from '../App';
 import { AuthContext } from '../context/AuthContext';
 import { User, Shield, Bell, Database, Palette, Smartphone, Globe } from 'lucide-react';
@@ -6,6 +6,14 @@ import { User, Shield, Bell, Database, Palette, Smartphone, Globe } from 'lucide
 export default function Settings() {
   const { theme, toggleTheme, showToast } = useContext(AppContext);
   const { user } = useContext(AuthContext);
+  
+  const perfilRef = useRef(null);
+  const aparienciaRef = useRef(null);
+  const basedatosRef = useRef(null);
+
+  const scrollToSection = (ref) => {
+    ref.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
 
   const handleSave = () => {
     showToast('Configuraciones guardadas exitosamente', 'success');
@@ -18,28 +26,10 @@ export default function Settings() {
         <p style={{ color: 'var(--text-secondary)', margin: 0 }}>Gestiona tus preferencias, cuenta y parámetros del sistema de nóminas.</p>
       </header>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '250px 1fr', gap: '2rem', alignItems: 'start' }}>
-        
-        {/* Menu Lateral de Configuración */}
-        <div style={{ background: 'var(--bg-surface)', padding: '1rem', borderRadius: 'var(--radius-lg)', border: '1px solid var(--border)' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-            <button className="btn btn-ghost" style={{ justifyContent: 'flex-start', background: 'var(--accent-subtle)', color: 'var(--accent-light)' }}>
-              <User size={18} style={{ marginRight: '0.5rem' }} /> Mi Perfil
-            </button>
-            <button className="btn btn-ghost" style={{ justifyContent: 'flex-start' }}>
-              <Palette size={18} style={{ marginRight: '0.5rem' }} /> Apariencia
-            </button>
-            <button className="btn btn-ghost" style={{ justifyContent: 'flex-start' }}>
-              <Database size={18} style={{ marginRight: '0.5rem' }} /> Base de Datos
-            </button>
-          </div>
-        </div>
-
-        {/* Panel Principal de Configuración */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', width: '100%' }}>
           
           {/* Tarjeta: Mi Perfil */}
-          <div style={{ background: 'var(--bg-surface)', padding: '2rem', borderRadius: 'var(--radius-lg)', border: '1px solid var(--border)' }}>
+          <div ref={perfilRef} style={{ background: 'var(--bg-surface)', padding: '2rem', borderRadius: 'var(--radius-lg)', border: '1px solid var(--border)' }}>
             <h2 style={{ fontSize: '1.25rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <User size={20} color="var(--accent)" /> Datos Personales
             </h2>
@@ -60,7 +50,7 @@ export default function Settings() {
           </div>
 
           {/* Tarjeta: Apariencia */}
-          <div style={{ background: 'var(--bg-surface)', padding: '2rem', borderRadius: 'var(--radius-lg)', border: '1px solid var(--border)' }}>
+          <div ref={aparienciaRef} style={{ background: 'var(--bg-surface)', padding: '2rem', borderRadius: 'var(--radius-lg)', border: '1px solid var(--border)' }}>
             <h2 style={{ fontSize: '1.25rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <Palette size={20} color="var(--accent)" /> Preferencias de Interfaz
             </h2>
@@ -79,7 +69,7 @@ export default function Settings() {
           </div>
 
           {/* Tarjeta: Integración SAP */}
-          <div style={{ background: 'var(--bg-surface)', padding: '2rem', borderRadius: 'var(--radius-lg)', border: '1px solid var(--border)' }}>
+          <div ref={basedatosRef} style={{ background: 'var(--bg-surface)', padding: '2rem', borderRadius: 'var(--radius-lg)', border: '1px solid var(--border)' }}>
             <h2 style={{ fontSize: '1.25rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <Globe size={20} color="var(--accent)" /> Integración ERP (SAP B1)
             </h2>
@@ -114,7 +104,6 @@ export default function Settings() {
           </div>
 
         </div>
-      </div>
     </div>
   );
 }

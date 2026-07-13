@@ -25,6 +25,8 @@ import Settings from './pages/Settings';
 import OperationLogs from './pages/OperationLogs';
 import Login from './pages/auth/Login';
 import Users from './pages/Users';
+import BillingDistribution from './pages/BillingDistribution';
+import BillingRules from './pages/BillingRules';
 
 import ForgotPassword from './pages/auth/ForgotPassword';
 import './index.css';
@@ -145,6 +147,8 @@ function AppContent() {
                     <Route path="/dimension5" element={<Dimension5 />} />
                     <Route path="/companies" element={<Companies />} />
                     <Route path="/settings" element={<Settings />} />
+                    <Route path="/billing" element={<BillingDistribution />} />
+                    <Route path="/billing/rules" element={<BillingRules />} />
                   </Route>
 
                   {/* ADMIN, GERENTE GENERAL, NOMINA, AUDITOR, DIGITADOR */}
@@ -152,8 +156,8 @@ function AppContent() {
                     <Route path="/employees" element={<Employees />} />
                   </Route>
 
-                  {/* ADMIN, GERENTE GENERAL, GERENTE, SOLICITANTE */}
-                  <Route element={<RoleProtectedRoute allowedRoles={['ADMIN', 'GERENTE GENERAL', 'GERENTE', 'SOLICITANTE']} />}>
+                  {/* ADMIN, GERENTE GENERAL, GERENTE, SOLICITANTE, NOMINA */}
+                  <Route element={<RoleProtectedRoute allowedRoles={['ADMIN', 'GERENTE GENERAL', 'GERENTE', 'SOLICITANTE', 'NOMINA']} />}>
                     <Route path="/operations" element={<OperationLogs />} />
                   </Route>
 

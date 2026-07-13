@@ -5,15 +5,35 @@ const { sendReactivationEmail } = require('../services/email.service');
 const getPayrolls = async (req, res) => {
   try {
     const payrolls = await PayrollHistory.findAll();
-    res.json(payrolls);
+    
+    const formattedPayrolls = payrolls.map(p => {
+      const payrollObj = p.toJSON();
+      let emps = typeof payrollObj.data === 'string' ? JSON.parse(payrollObj.data) : payrollObj.data;
+      emps = calculatePayrollBatch(emps, payrollObj.periodType);
+      payrollObj.data = emps;
+      return payrollObj;
+    });
+
+    res.json(formattedPayrolls);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
 
+const { calculatePayrollBatch } = require('../services/payrollCalculator.service');
+
 const createPayroll = async (req, res) => {
   try {
-    const newPayroll = await PayrollHistory.create(req.body);
+    const payload = req.body;
+    
+    // SERVER-SIDE CALCULATION ENFORCEMENT
+    let emps = typeof payload.data === 'string' ? JSON.parse(payload.data) : payload.data;
+    if (emps && emps.length > 0) {
+      emps = calculatePayrollBatch(emps, payload.periodType);
+      payload.data = typeof payload.data === 'string' ? JSON.stringify(emps) : emps;
+    }
+
+    const newPayroll = await PayrollHistory.create(payload);
     res.status(201).json(newPayroll);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -59,15 +79,21 @@ const requestReactivation = async (req, res) => {
       totalEmployees += emps.length;
       
       emps.forEach(e => {
-        const baseFactor = (e.days || 30) / 30;
-        const sueldoOrd = Number(e.sueldo_ordinario) || 0;
-        const bonInc = Number(e.bon_incentivo) || 0;
-        const bonDec = Number(e.bon_dec_37_2001) || 0;
-        const bonos = Number(e.extras?.bonos) || 0;
-        const extrasTotal = (e.extras?.simplesVal || 0) + (e.extras?.doblesVal || 0) + (e.extras?.comisiones || 0) + (e.extras?.otrosIngresos || 0);
-        const bonusesSum = Object.values(e.appliedBonuses || {}).reduce((a, b) => a + b, 0);
-
-        totalGross += (sueldoOrd * baseFactor) + (bonInc * baseFactor) + (bonDec * baseFactor) + bonos + extrasTotal + bonusesSum;
+        // The data is already calculated by the backend!
+        if (e.calculated && e.calculated.gross) {
+          totalGross += e.calculated.gross;
+        } else {
+          // Fallback if it's an older payroll without e.calculated
+          const baseFactor = (e.days || 30) / 30;
+          const sueldoOrd = Number(e.sueldo_ordinario) || 0;
+          const bonInc = Number(e.bon_incentivo) || 0;
+          const bonDec = Number(e.bon_dec_37_2001) || 0;
+          const bonos = Number(e.extras?.bonos) || 0;
+          const extrasTotal = (e.extras?.simplesVal || 0) + (e.extras?.doblesVal || 0) + (e.extras?.comisiones || 0) + (e.extras?.otrosIngresos || 0);
+          const bonusesSum = Object.values(e.appliedBonuses || {}).reduce((a, b) => a + b, 0);
+  
+          totalGross += (sueldoOrd * baseFactor) + (bonInc * baseFactor) + (bonDec * baseFactor) + bonos + extrasTotal + bonusesSum;
+        }
       });
     }
 

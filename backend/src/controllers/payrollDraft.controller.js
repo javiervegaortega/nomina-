@@ -1,4 +1,5 @@
 const { PayrollDraft, PayrollDraftEmployee, sequelize } = require('../models');
+const { calculatePayrollBatch } = require('../services/payrollCalculator.service');
 
 const getAll = async (req, res) => {
   try {
@@ -9,13 +10,16 @@ const getAll = async (req, res) => {
     // Transform backend structure back to what frontend expects
     const formattedDrafts = drafts.map(d => {
       const draftObj = d.toJSON();
-      const employeesArr = draftObj.draftEmployees.map(de => {
+      let employeesArr = draftObj.draftEmployees.map(de => {
         try {
           return typeof de.data === 'string' ? JSON.parse(de.data) : de.data;
         } catch(e) {
           return de.data;
         }
       });
+      // Retrofit calculations for old drafts
+      employeesArr = calculatePayrollBatch(employeesArr, draftObj.periodType);
+
       return {
         id: draftObj.id,
         title: draftObj.title,
@@ -38,6 +42,11 @@ const create = async (req, res) => {
   try {
     const { id, title, companies, employees, createdAt, periodType, notes } = req.body;
     
+    // SERVER-SIDE CALCULATION ENFORCEMENT
+    const calculatedEmployees = employees && employees.length > 0 
+      ? calculatePayrollBatch(employees, periodType) 
+      : [];
+    
     // Create main draft record
     const newDraft = await PayrollDraft.create({
       id,
@@ -45,13 +54,13 @@ const create = async (req, res) => {
       companies,
       periodType,
       notes,
-      employeesCount: employees ? employees.length : 0,
+      employeesCount: calculatedEmployees.length,
       createdAt
     }, { transaction: t });
 
     // Create secondary records
-    if (employees && employees.length > 0) {
-      const employeeRecords = employees.map(emp => ({
+    if (calculatedEmployees.length > 0) {
+      const employeeRecords = calculatedEmployees.map(emp => ({
         draftId: id,
         employeeId: emp.id,
         data: emp
@@ -60,7 +69,7 @@ const create = async (req, res) => {
     }
 
     await t.commit();
-    res.status(201).json(req.body); // Send back the identical payload frontend sent
+    res.status(201).json({ ...req.body, employees: calculatedEmployees }); // Return the calculated payload
   } catch (err) {
     await t.rollback();
     res.status(400).json({ error: err.message });
@@ -81,6 +90,11 @@ const update = async (req, res) => {
     const { title, companies, employees, createdAt, periodType, notes } = req.body;
     console.log("UPDATE DRAFT ID:", draftId, "PAYLOAD PERIOD:", periodType);
     
+    // SERVER-SIDE CALCULATION ENFORCEMENT
+    const calculatedEmployees = employees && employees.length > 0 
+      ? calculatePayrollBatch(employees, periodType) 
+      : [];
+
     // Update main record
     await draft.update({
       title,
@@ -88,15 +102,15 @@ const update = async (req, res) => {
       periodType,
       notes,
       createdAt,
-      employeesCount: employees ? employees.length : 0
+      employeesCount: calculatedEmployees.length
     }, { transaction: t });
 
     // If employees array is provided, rebuild the employees table for this draft
     if (employees) {
       await PayrollDraftEmployee.destroy({ where: { draftId }, transaction: t });
       
-      if (employees.length > 0) {
-        const employeeRecords = employees.map(emp => {
+      if (calculatedEmployees.length > 0) {
+        const employeeRecords = calculatedEmployees.map(emp => {
           const empObj = typeof emp === 'string' ? JSON.parse(emp) : emp;
           return {
             draftId,
@@ -109,7 +123,7 @@ const update = async (req, res) => {
     }
 
     await t.commit();
-    res.json(req.body);
+    res.json({ ...req.body, employees: calculatedEmployees });
   } catch (err) {
     await t.rollback();
     res.status(400).json({ error: err.message });

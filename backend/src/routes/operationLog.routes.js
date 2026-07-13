@@ -7,6 +7,7 @@ router.use(authMiddleware);
 
 router.get('/', operationLogController.getAll);
 router.post('/', operationLogController.create);
+router.post('/notify', operationLogController.notifyManager);
 router.put('/:id', operationLogController.update);
 router.put('/:id/status', operationLogController.updateStatus);
 router.delete('/:id', operationLogController.remove);

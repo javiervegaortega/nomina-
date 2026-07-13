@@ -473,7 +473,7 @@ function calculateGroupTotals(groupData, periodType) {
 }
 
 function PayrollHistoryDetail({ group, onBack }) {
-  const { bonuses, areas, departments, divisions, subdivisions, companies } = useContext(DataContext);
+  const { bonuses, areas, departments, divisions, subdivisions, companies, dimension5s, employees } = useContext(DataContext);
   const { showToast } = useContext(AppContext);
   const [selectedVoucherEmp, setSelectedVoucherEmp] = useState(null);
 
@@ -482,6 +482,7 @@ function PayrollHistoryDetail({ group, onBack }) {
   const [filterDept, setFilterDept] = useState([]);
   const [filterDiv, setFilterDiv] = useState([]);
   const [filterSubdiv, setFilterSubdiv] = useState([]);
+  const [filterDim5, setFilterDim5] = useState([]);
   const [filterStatus, setFilterStatus] = useState('Activo');
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState('detailed');
@@ -509,22 +510,10 @@ function PayrollHistoryDetail({ group, onBack }) {
       const companyName = group.companies.size > 0 ? Array.from(group.companies)[0] : 'Sin empresa';
       
       list.forEach(e => {
-        const baseFactor = (e.days || 30) / 30;
-        const sueldoOrd = Number(e.sueldo_ordinario) || 0;
-        const bonInc = Number(e.bon_incentivo) || 0;
-        const bonDec = Number(e.bon_dec_37_2001) || 0;
-
-        const baseSalary = sueldoOrd * baseFactor;
-        const bonusLey = bonInc * baseFactor;
-        const bonusDec = bonDec * baseFactor;
-        const bonos = Number(e.extras?.bonos) || 0;
-        
-        const extrasTotal = (e.extras?.simplesVal || 0) + (e.extras?.doblesVal || 0) + (e.extras?.comisiones || 0) + (e.extras?.otrosIngresos || 0);
-        const bonusesSum = Object.values(e.appliedBonuses || {}).reduce((a, b) => a + b, 0);
-        const gross = baseSalary + bonusLey + bonusDec + bonos + extrasTotal + bonusesSum;
-        
-        const ded = Object.values(e.deductions || {}).reduce((a, b) => a + b, 0);
-        const patronal = baseSalary * CUOTA_PATRONAL_RATE;
+        // Enforce backend calculated properties
+        const gross = e.calculated?.gross || 0;
+        const ded = e.calculated?.ded || 0;
+        const patronal = e.calculated?.patronal || 0;
         
         grossTotal += gross;
         dedTotal += ded;
@@ -533,7 +522,10 @@ function PayrollHistoryDetail({ group, onBack }) {
         emps.push({
           ...e,
           company: companyName,
-          calculated: { baseSalary, bonusLey, bonusDec, bonos, extrasTotal, bonusesSum, gross, ded, net: gross - ded }
+          // Ensure e.calculated is preserved, fallback if needed
+          calculated: e.calculated || {
+             baseSalary: 0, bonusLey: 0, bonusDec: 0, bonos: 0, extrasTotal: 0, bonusesSum: 0, gross, ded, net: gross - ded, patronal
+          }
         });
       });
     });
@@ -543,10 +535,18 @@ function PayrollHistoryDetail({ group, onBack }) {
       if (filterStatus === 'Activo' && String(e.estado).toLowerCase() !== 'activo') return false;
       if (filterStatus === 'De Baja' && String(e.estado).toLowerCase() !== 'de baja') return false;
       
-      if (filterDept.length > 0 && !filterDept.includes(e.departamento_laboral)) return false;
-      if (filterArea.length > 0 && !filterArea.includes(String(e.areaId))) return false;
-      if (filterDiv.length > 0 && !filterDiv.includes(String(e.divisionId))) return false;
-      if (filterSubdiv.length > 0 && !filterSubdiv.includes(String(e.subdivisionId))) return false;
+      const liveEmp = employees?.find(emp => emp.dpi === e.dpi) || e;
+      const dept = liveEmp.departamento_laboral || e.departamento_laboral || liveEmp.departmentId;
+      const area = liveEmp.areaId || e.areaId;
+      const div = liveEmp.divisionId || e.divisionId;
+      const subdiv = liveEmp.subdivisionId || e.subdivisionId;
+      const dim5 = liveEmp.nivel_5 || liveEmp.dimension_5 || e.nivel_5 || e.dimension_5;
+
+      if (filterDept.length > 0 && !filterDept.includes(dept) && !filterDept.includes(String(dept))) return false;
+      if (filterArea.length > 0 && !filterArea.includes(String(area))) return false;
+      if (filterDiv.length > 0 && !filterDiv.includes(String(div))) return false;
+      if (filterSubdiv.length > 0 && !filterSubdiv.includes(String(subdiv))) return false;
+      if (filterDim5.length > 0 && !filterDim5.includes(String(dim5))) return false;
       
       if (searchQuery) {
         const term = searchQuery.toLowerCase();
@@ -576,30 +576,41 @@ function PayrollHistoryDetail({ group, onBack }) {
     });
     
     return { data: filteredEmps, totals: { grossTotal: fGrossTotal, dedTotal: fDedTotal, patronalTotal: fPatronalTotal, netTotal: fGrossTotal - fDedTotal } };
-  }, [group, filterStatus, filterDept, filterArea, filterDiv, filterSubdiv, searchQuery, areas]);
+  }, [group, filterStatus, filterDept, filterArea, filterDiv, filterSubdiv, filterDim5, searchQuery, areas]);
 
   const groupedData = useMemo(() => {
-    if (filterDept.length === 0 && filterArea.length === 0 && filterDiv.length === 0 && filterSubdiv.length === 0) {
+    if (filterDept.length === 0 && filterArea.length === 0 && filterDiv.length === 0 && filterSubdiv.length === 0 && filterDim5.length === 0) {
       return [{ title: '', data }];
     }
 
     const groups = {};
     data.forEach(e => {
+      const liveEmp = employees?.find(emp => emp.dpi === e.dpi) || e;
+      const dept = liveEmp.departamento_laboral || e.departamento_laboral || liveEmp.departmentId;
+      const area = liveEmp.areaId || e.areaId;
+      const div = liveEmp.divisionId || e.divisionId;
+      const subdiv = liveEmp.subdivisionId || e.subdivisionId;
+      const dim5 = liveEmp.nivel_5 || liveEmp.dimension_5 || e.nivel_5 || e.dimension_5;
+
       const keyParts = [];
       if (filterDept.length > 0) {
-        keyParts.push(`Depto: ${e.departamento_laboral || 'Sin Departamento'}`);
+        keyParts.push(`Depto: ${dept || 'Sin Departamento'}`);
       }
       if (filterDiv.length > 0) {
-        const divName = divisions?.find(d => String(d.id) === String(e.divisionId))?.nombre || 'Sin División';
+        const divName = divisions?.find(d => String(d.id) === String(div))?.nombre || 'Sin División';
         keyParts.push(`División: ${divName}`);
       }
       if (filterArea.length > 0) {
-        const areaName = areas?.find(a => String(a.id) === String(e.areaId))?.nombre || 'Sin Área';
+        const areaName = areas?.find(a => String(a.id) === String(area))?.nombre || 'Sin Área';
         keyParts.push(`Área: ${areaName}`);
       }
       if (filterSubdiv.length > 0) {
-        const subdivName = subdivisions?.find(s => String(s.id) === String(e.subdivisionId))?.nombre || 'Sin Subdivisión';
+        const subdivName = subdivisions?.find(s => String(s.id) === String(subdiv))?.nombre || 'Sin Subdivisión';
         keyParts.push(`Subdivisión: ${subdivName}`);
+      }
+      if (filterDim5.length > 0) {
+        const d5Name = dimension5s?.find(d => String(d.id) === String(dim5) || d.nombre === dim5)?.nombre || dim5 || 'Sin Dim 5';
+        keyParts.push(`Dim 5: ${d5Name}`);
       }
       
       const key = keyParts.length > 0 ? keyParts.join(' | ') : 'Otros';
@@ -1309,6 +1320,19 @@ function PayrollHistoryDetail({ group, onBack }) {
               </MenuOptionGroup>
             </MenuList>
           </Menu>
+
+          <Menu closeOnSelect={false}>
+            <MenuButton as={Button} size="sm" variant="outline" rightIcon={<ChevronDown size={14}/>} w={{ base: '100%', sm: '180px' }} textAlign="left" fontWeight="normal" bg={tdBg} borderRadius="md" px={3}>
+              {filterDim5.length > 0 ? `${filterDim5.length} Dim 5...` : 'Dimensión 5...'}
+            </MenuButton>
+            <MenuList maxH="300px" overflowY="auto" zIndex={100} boxShadow="lg">
+              <MenuOptionGroup type="checkbox" value={filterDim5} onChange={setFilterDim5}>
+                {(dimension5s || []).map(d => (
+                  <MenuItemOption key={d.id} value={String(d.id)} fontSize="sm">{d.nombre}</MenuItemOption>
+                ))}
+              </MenuOptionGroup>
+            </MenuList>
+          </Menu>
           
           <Select 
             placeholder="Estado..." 
@@ -1459,6 +1483,7 @@ function PayrollHistoryDetail({ group, onBack }) {
                   <Th minW="100px" w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Bol. Ornato</Th>
                   <Th minW="100px" w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Otros Egr.</Th>
                 </>
+            
               )}
               <Th minW="130px" w="130px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.500">Total Egresos</Th>
               
@@ -1644,7 +1669,7 @@ function PayrollHistoryDetail({ group, onBack }) {
             <ModalBody p={0} bg="white">
               {/* Captured printable voucher container */}
               <Box id="voucher-content" p={{ base: 4, md: 8 }}>
-                <BoletaTemplate emp={selectedVoucherEmp} group={group} />
+                <BoletaTemplate emp={selectedVoucherEmp} group={group} companies={companies} />
               </Box>
             </ModalBody>
             <ModalFooter bg={tdBg} borderTop="1px solid" borderColor={borderColor}>
@@ -1659,6 +1684,11 @@ function PayrollHistoryDetail({ group, onBack }) {
       </Box>
 
       {/* Hidden Print Container for Bulk Export */}
+      <style>{`
+        @media print {
+          @page { size: letter portrait; margin: 6mm; }
+        }
+      `}</style>
       <Box display="none" sx={{ '@media print': { display: 'block', bg: 'white', color: 'black' } }}>
         {(() => {
           const allPrintableEmployees = groupedData.flatMap(g => g.data);
@@ -1669,35 +1699,35 @@ function PayrollHistoryDetail({ group, onBack }) {
           }
           return chunks.map((chunk, idx) => (
             <Box 
-              key={`page-${idx}`} 
-              sx={{ 
+              key={`page-${idx}`}
+              sx={{
                 pageBreakAfter: idx === chunks.length - 1 ? 'auto' : 'always',
                 pageBreakInside: 'avoid',
                 height: '100vh',
                 display: 'flex',
                 flexDirection: 'column',
                 justifyContent: 'flex-start',
+                gap: '4px',
                 p: 0,
-                pt: 4
               }}
             >
-              {/* Top Half: Employee 1 */}
-              <Flex gap={8} w="100%" h="48%">
-                <Box flex={1} border="1px solid #ddd" borderRadius="md" p={4}><BoletaTemplate emp={chunk[0]} group={group} isPrint /></Box>
-                <Box flex={1} border="1px solid #ddd" borderRadius="md" p={4}><BoletaTemplate emp={chunk[0]} group={group} isPrint /></Box>
+              {/* Top Half: Employee 1 — 2 identical copies side by side */}
+              <Flex gap="4px" w="100%" flex="1" maxH="49%">
+                <Box flex={1} border="1px solid #ccc" p="4px" overflow="hidden"><BoletaTemplate emp={chunk[0]} group={group} companies={companies} isPrint /></Box>
+                <Box flex={1} border="1px solid #ccc" p="4px" overflow="hidden"><BoletaTemplate emp={chunk[0]} group={group} companies={companies} isPrint /></Box>
               </Flex>
-              
-              {/* Divider */}
-              <Divider borderStyle="dashed" borderColor="gray.400" my={4} />
-              
+
+              {/* Dashed cut line */}
+              <Box sx={{ borderTop: '1px dashed #aaa', mx: 0, my: '2px' }} />
+
               {/* Bottom Half: Employee 2 (if exists) */}
               {chunk[1] ? (
-                <Flex gap={8} w="100%" h="48%">
-                  <Box flex={1} border="1px solid #ddd" borderRadius="md" p={4}><BoletaTemplate emp={chunk[1]} group={group} isPrint /></Box>
-                  <Box flex={1} border="1px solid #ddd" borderRadius="md" p={4}><BoletaTemplate emp={chunk[1]} group={group} isPrint /></Box>
+                <Flex gap="4px" w="100%" flex="1" maxH="49%">
+                  <Box flex={1} border="1px solid #ccc" p="4px" overflow="hidden"><BoletaTemplate emp={chunk[1]} group={group} companies={companies} isPrint /></Box>
+                  <Box flex={1} border="1px solid #ccc" p="4px" overflow="hidden"><BoletaTemplate emp={chunk[1]} group={group} companies={companies} isPrint /></Box>
                 </Flex>
               ) : (
-                <Flex gap={8} w="100%" h="48%" opacity={0}></Flex>
+                <Flex gap="4px" w="100%" flex="1" maxH="49%" opacity={0}></Flex>
               )}
             </Box>
           ));
@@ -1723,153 +1753,180 @@ function PayrollHistoryDetail({ group, onBack }) {
   );
 }
 
-function BoletaTemplate({ emp, group, isPrint }) {
+function BoletaTemplate({ emp, group, isPrint, companies }) {
   if (!emp) return null;
 
-  const labelMap = {
-    igss: 'IGSS Laboral (4.83%)',
-    isr: 'ISR Retención',
-    cafe: 'Cafetería',
-    cell: 'Consumo Celular',
-    uniform: 'Descuento Uniforme',
-    shoes: 'Descuento Calzado',
-    equipo: 'Descuento Equipo',
-    product: 'Compra Producto',
-    bancos: 'Retención Bancos',
-    otros: 'Otros Descuentos',
-    judiciales: 'Retención Judicial',
-    seguro: 'Seguro Médico/Vida',
-    parqueo: 'Servicio Parqueo',
-    boleto_de_ornato: 'Boleta de Ornato',
-    otros_egresos: 'Otros Egresos'
-  };
+  const fullName = getEmployeeFullName(emp);
+  const puesto = emp.puesto || 'N/A';
+  const companyObj = companies?.find(c => c.id == emp.empresa_principal);
+  const companyName = companyObj?.nombre_comercial || emp.company || 'EMPRESA';
+  const companySubtitle = companyObj?.razon_social || '';
+  const companyNit = companyObj?.nit ? `NIT: ${companyObj.nit}` : '';
+  const periodo = group?.title || 'PERÍODO';
+  const fechaPago = group?.date ? new Date(group.date).toLocaleDateString('es-GT') : new Date().toLocaleDateString('es-GT');
+
+  const days = emp.days || 30;
+  const baseSalary = emp.calculated?.baseSalary || 0;
+  const bonusLey = emp.calculated?.bonusLey || 0;
+  const bonusDec = emp.calculated?.bonusDec || 0;
+  const bonos = emp.calculated?.bonos || 0;
+  const simplesQty = emp.extras?.simplesQty || 0;
+  const simplesVal = emp.extras?.simplesVal || 0;
+  const doblesQty = emp.extras?.doblesQty || 0;
+  const doblesVal = emp.extras?.doblesVal || 0;
+  const otrosIngresos = emp.extras?.otrosIngresos || 0;
+  const gross = emp.calculated?.gross || 0;
+
+  const igss = Number(emp.deductions?.igss) || 0;
+  const bancos = Number(emp.deductions?.bancos) || 0;
+  const isr = Number(emp.deductions?.isr) || 0;
+  const cell = Number(emp.deductions?.cell) || 0;
+  const otros_egresos = Number(emp.deductions?.otros_egresos) || 0;
+  const anticipo = Number(emp.anticipo1ra) || 0;
+  const otrosDesc = (Number(emp.deductions?.cafe) || 0) + (Number(emp.deductions?.uniform) || 0) +
+    (Number(emp.deductions?.shoes) || 0) + (Number(emp.deductions?.equipo) || 0) +
+    (Number(emp.deductions?.product) || 0) + (Number(emp.deductions?.otros) || 0) +
+    (Number(emp.deductions?.judiciales) || 0) + (Number(emp.deductions?.seguro) || 0) +
+    (Number(emp.deductions?.parqueo) || 0) + (Number(emp.deductions?.boleto_de_ornato) || 0);
+  const baseNet = emp.calculated?.net || 0;
+  
+  // En la 2da quincena, el líquido final debe restar el anticipo de la 1ra
+  const net = group?.periodType === '2da' ? baseNet - anticipo : baseNet;
+
+  const fmt = (n) => (typeof n === 'number' ? n.toLocaleString('es-GT', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00');
+
+  const IRow = ({ label, value }) => (
+    <Flex justify="space-between" align="baseline" py="3.5px" borderBottom="1px dotted" borderColor="gray.100">
+      <Text fontSize="7.5px" color="gray.700">{label}</Text>
+      <Text fontSize="7.5px" fontFamily="mono" fontWeight="600" color="gray.900">{value}</Text>
+    </Flex>
+  );
+
+  const DRow = ({ label, value }) => (
+    <Flex justify="space-between" align="baseline" py="3.5px" borderBottom="1px dotted" borderColor="gray.100">
+      <Text fontSize="7.5px" color="gray.700">{label}</Text>
+      <Text fontSize="7.5px" fontFamily="mono" fontWeight="600" color="red.700">{value}</Text>
+    </Flex>
+  );
 
   return (
-    <Box w="100%" fontFamily="sans-serif">
-      <Flex justify="space-between" borderBottom="2px solid" borderColor="gray.200" pb={3} mb={4}>
+    // h="100%" + display="flex" + flexDirection="column" makes footer stick to bottom
+    // eliminating blank white space below the signature
+    <Box
+      w="100%"
+      h="100%"
+      display="flex"
+      flexDirection="column"
+      fontFamily="'Arial', sans-serif"
+      bg="white"
+      color="black"
+      fontSize="8px"
+      p={2}
+      sx={{ '@media print': { pageBreakInside: 'avoid' } }}
+    >
+      {/* ── HEADER ─────────────────────────────────────────── */}
+      <Flex justify="space-between" align="flex-start" pb={2} mb={2} borderBottom="2px solid black">
         <Box>
-          <Heading size="sm" fontWeight={800} color="gray.900">
-            {emp.company}
-          </Heading>
-          <Text fontSize="2xs" color="gray.500" mt={1}>
-            Recibo de Pago de Planilla
-          </Text>
+          <Text fontSize="15px" fontWeight="900" letterSpacing="tight" lineHeight="1">{companyName.toUpperCase()}</Text>
+          {companySubtitle && companySubtitle !== companyName && (
+            <Text fontSize="6px" color="gray.500" letterSpacing="widest" mt="1px">{companySubtitle.toUpperCase()}</Text>
+          )}
+          {companyNit && <Text fontSize="6px" color="gray.400">{companyNit}</Text>}
         </Box>
-        <VStack align="end" spacing={0}>
-          <Text fontSize="xs" fontWeight={700} color="gray.700">
-            Periodo: {group.title}
-          </Text>
-          <Text fontSize="2xs" color="gray.500">
-            Fecha de Pago: {new Date(group.date).toLocaleDateString()}
-          </Text>
-        </VStack>
+        <Box textAlign="right">
+          <Text fontSize="8px" fontWeight="700" color="gray.700">Recibo de Pago de Sueldos y Salarios</Text>
+        </Box>
       </Flex>
 
-      <Flex justify="space-between" mb={4} wrap="wrap" gap={2}>
-        <Box>
-          <Text fontSize="8px" color="gray.400" textTransform="uppercase" letterSpacing="wider">Empleado</Text>
-          <Text fontSize="sm" fontWeight={800} color="gray.900">
-            {getEmployeeFullName(emp)}
-          </Text>
-          <Text fontSize="2xs" color="gray.600">
-            Puesto: {emp.puesto || 'N/A'}
-          </Text>
+      {/* ── EMPLOYEE INFO + EL VALOR ─────────────────────── */}
+      <Flex justify="space-between" align="flex-start" mb={2} pb={2} borderBottom="1px solid" borderColor="gray.300">
+        <SimpleGrid columns={2} spacing={4} flex="1" mr={4}>
+          <Box>
+            <Flex gap={2} mb="1px">
+              <Text color="gray.500" minW="60px" fontSize="7px">Nombre:</Text>
+              <Text fontWeight="bold" fontSize="7px">{fullName}</Text>
+            </Flex>
+            <Flex gap={2} mb="1px">
+              <Text color="gray.500" minW="60px" fontSize="7px">Puesto:</Text>
+              <Text fontSize="7px">{puesto}</Text>
+            </Flex>
+          </Box>
+          <Box>
+            <Flex gap={2} mb="1px">
+              <Text color="gray.500" minW="70px" fontSize="7px">Recibe de:</Text>
+              <Text fontWeight="bold" fontSize="7px">{companyName.toUpperCase()}</Text>
+            </Flex>
+            <Flex gap={2}>
+              <Text color="gray.500" minW="70px" fontSize="7px">Por concepto de:</Text>
+              <Text fontWeight="bold" fontSize="7px">{periodo.toUpperCase()}</Text>
+            </Flex>
+          </Box>
+        </SimpleGrid>
+        <Box textAlign="right" whiteSpace="nowrap">
+          <Text fontSize="7px" color="gray.500">El valor:</Text>
+          <Text fontSize="11px" fontWeight="900" fontFamily="mono">Q &nbsp;{fmt(net)}</Text>
         </Box>
-        <VStack align="end" spacing={0}>
-          <Text fontSize="8px" color="gray.400" textTransform="uppercase" letterSpacing="wider">Depósito Bancario</Text>
-          <Text fontSize="2xs" fontWeight={700} color="gray.900">
-            {emp.banco || 'N/A'} - {emp.no_cuenta || 'N/A'}
-          </Text>
-          <Text fontSize="2xs" color="gray.600">
-            Afiliación IGSS: {emp.no_igss || 'N/A'}
-          </Text>
-        </VStack>
       </Flex>
 
-      <SimpleGrid columns={2} spacing={6} mb={4}>
-        {/* Income column */}
+      {/* ── MAIN BODY: Two columns side by side ──────────── */}
+      {/* flex="1" makes this section grow to fill available space */}
+      <SimpleGrid columns={2} spacing={4} flex="1">
+
+        {/* LEFT: (+) Desglose */}
         <Box>
-          <Heading size="2xs" borderBottom="1px solid" borderColor="gray.200" pb={1} mb={2} color="gray.900">
-            Ingresos
-          </Heading>
-          <VStack align="stretch" spacing={1} fontSize="2xs">
-            <Flex justify="space-between">
-              <Text>Salario Ordinario</Text>
-              <Text fontFamily="mono" fontWeight={600}>{formatQ(emp.calculated.baseSalary)}</Text>
-            </Flex>
-            <Flex justify="space-between">
-              <Text>Bono Incentivo (Ley)</Text>
-              <Text fontFamily="mono" fontWeight={600}>{formatQ(emp.calculated.bonusLey)}</Text>
-            </Flex>
-            <Flex justify="space-between">
-              <Text>Bono Decreto 37-2001</Text>
-              <Text fontFamily="mono" fontWeight={600}>{formatQ(emp.calculated.bonusDec)}</Text>
-            </Flex>
-            {emp.calculated.bonos > 0 && (
-              <Flex justify="space-between">
-                <Text>Otros Bonos</Text>
-                <Text fontFamily="mono" fontWeight={600}>{formatQ(emp.calculated.bonos)}</Text>
-              </Flex>
-            )}
-            {emp.calculated.extrasTotal > 0 && (
-              <Flex justify="space-between">
-                <Text>Horas Extras y Otros</Text>
-                <Text fontFamily="mono" fontWeight={600}>{formatQ(emp.calculated.extrasTotal)}</Text>
-              </Flex>
-            )}
-            <Flex justify="space-between" borderTop="1px dashed" borderColor="gray.300" pt={1} fontWeight={700} color="gray.900">
-              <Text>Total Ingresos</Text>
-              <Text fontFamily="mono">{formatQ(emp.calculated.gross)}</Text>
-            </Flex>
-          </VStack>
+          <Flex justify="space-between" align="center" bg="gray.800" color="white" px={2} py="3px" borderRadius="2px" mb={1}>
+            <Text fontWeight="bold" fontSize="7.5px" color="green">(+) DESGLOSE DE INGRESOS</Text>
+            <Text fontWeight="bold" fontSize="7.5px">Monto (Q)</Text>
+          </Flex>
+
+          <IRow label="Días Laborados en el mes" value={days} />
+          <IRow label="Sueldo Devengado" value={fmt(baseSalary)} />
+          <IRow label="Bonificación Incentivo Decrs. 37-2001 y 78-89" value={fmt(bonusLey + bonusDec + bonos)} />
+          <IRow label={`Horas extras diurnas (${simplesQty} hrs)`} value={fmt(simplesVal)} />
+          <IRow label={`Horas extras nocturnas (${doblesQty} hrs)`} value={fmt(doblesVal)} />
+          <IRow label="Otros Ingresos Mensuales" value={fmt(otrosIngresos)} />
+
+          <Flex justify="space-between" align="baseline" pt="2px" mt="2px" borderTop="1.5px solid black">
+            <Text fontSize="7.5px" fontWeight="bold">TOTAL INGRESOS DE MES</Text>
+            <Text fontSize="7.5px" fontFamily="mono" fontWeight="bold">{fmt(gross)}</Text>
+          </Flex>
         </Box>
 
-        {/* Deductions column */}
+        {/* RIGHT: (-) Descuentos */}
         <Box>
-          <Heading size="2xs" borderBottom="1px solid" borderColor="gray.200" pb={1} mb={2} color="gray.900">
-            Deducciones
-          </Heading>
-          <VStack align="stretch" spacing={1} fontSize="2xs">
-            {Object.entries(emp.deductions || {}).map(([key, val]) => {
-              const numVal = Number(val) || 0;
-              if (numVal <= 0) return null;
-              
-              return (
-                <Flex justify="space-between" key={key} color="red.600">
-                  <Text>{labelMap[key] || key}</Text>
-                  <Text fontFamily="mono" fontWeight={600}>{formatQ(numVal)}</Text>
-                </Flex>
-              );
-            })}
-            <Flex justify="space-between" borderTop="1px dashed" borderColor="gray.300" pt={1} fontWeight={700} color="red.600">
-              <Text>Total Egresos</Text>
-              <Text fontFamily="mono">{formatQ(emp.calculated.ded)}</Text>
-            </Flex>
-          </VStack>
+          <Flex justify="space-between" align="center" bg="red.700" color="white" px={2} py="3px" borderRadius="2px" mb={1}>
+            <Text fontWeight="bold" fontSize="7.5px"  color="red">(-) DESCUENTOS</Text>
+            <Text fontWeight="bold" fontSize="7.5px">Monto (Q)</Text>
+          </Flex>
+
+          <DRow label="IGSS Mensual" value={fmt(igss)} />
+          <DRow label="Bantrab Mensual" value={fmt(bancos)} />
+          <DRow label="ISR Mensual" value={fmt(isr)} />
+          <DRow label="Celulares" value={fmt(cell)} />
+          <DRow label="Otros Egresos Mensuales" value={fmt(otrosDesc)} />
+          <DRow label="Primera Quincena (anticipo)" value={fmt(anticipo)} />
+          <DRow label="Otros Egresos" value={fmt(otros_egresos)} />
+
+          <Flex justify="space-between" align="baseline" pt="2px" mt="2px" borderTop="1.5px solid black">
+            <Text fontSize="7.5px" fontWeight="bold" color="black">LÍQUIDO A RECIBIR</Text>
+            <Text fontSize="9px" fontFamily="mono" fontWeight="900" color="black">{fmt(net)}</Text>
+          </Flex>
         </Box>
+
       </SimpleGrid>
 
-      {/* Net Pay Box */}
-      <Flex bg="gray.100" p={2} borderRadius="md" justify="space-between" align="center" mb={6}>
-        <Text fontSize="xs" fontWeight={800} color="gray.900">LÍQUIDO A RECIBIR</Text>
-        <Text fontFamily="mono" fontSize="md" fontWeight={900} color="green.500">
-          {formatQ(emp.calculated.net)}
-        </Text>
-      </Flex>
-
-      {/* Signature Lines */}
-      <Flex justify="space-between" align="end" mt={isPrint ? 4 : 8} pt={4} borderTop="1px solid" borderColor="gray.100" direction="row" gap={4}>
-        <Box w="150px" textAlign="center">
-          <Box borderBottom="1px solid" borderColor="gray.400" h="20px" />
-          <Text fontSize="8px" color="gray.400" mt={1}>Firma del Empleado</Text>
+      {/* ── FOOTER — mt="auto" pushes it to bottom, no blank space ── */}
+      <Flex justify="space-between" align="flex-end" pt={2} mt="auto">
+        <Box>
+          <Box borderBottom="1px solid black" w="180px" />
+          <Text fontSize="7px" textAlign="center" mt="1px" fontWeight="600">{fullName}</Text>
         </Box>
-        <Text fontSize="7px" color="gray.400">
-          Generado el {new Date().toLocaleDateString()}
-        </Text>
+        <Text fontSize="7px" color="gray.600">Guatemala, {fechaPago}</Text>
       </Flex>
     </Box>
   );
 }
+
 
 function SummaryStat({ label, value, color, large }) {
   return (

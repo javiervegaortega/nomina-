@@ -14,7 +14,7 @@ import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
 
 export default function OperationLogs() {
-  const { employees, departments, areas, companies, operationLogs, addOperationLog, updateOperationLogStatus, deleteOperationLog, updateOperationLog, isLoading } = useContext(DataContext);
+  const { employees, departments, areas, divisions, subdivisions, dimension5s, companies, operationLogs, addOperationLog, updateOperationLogStatus, deleteOperationLog, updateOperationLog, isLoading } = useContext(DataContext);
   const { user } = useContext(AuthContext);
   const [filterMonth, setFilterMonth] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
   const [filterType, setFilterType] = useState('ALL');
@@ -28,10 +28,18 @@ export default function OperationLogs() {
   const { isOpen: isEditOpen, onOpen: onEditOpen, onClose: onEditClose } = useDisclosure();
   const [editFormData, setEditFormData] = useState(null);
   const [editModalAreaFilter, setEditModalAreaFilter] = useState([]);
+  const [editModalFilterArea, setEditModalFilterArea] = useState([]);
+  const [editModalFilterDiv, setEditModalFilterDiv] = useState([]);
+  const [editModalFilterSubdiv, setEditModalFilterSubdiv] = useState([]);
+  const [editModalFilterDim5, setEditModalFilterDim5] = useState([]);
   const [editModalSearchQuery, setEditModalSearchQuery] = useState('');
 
   const openEdit = (log) => {
     setEditModalAreaFilter([]);
+    setEditModalFilterArea([]);
+    setEditModalFilterDiv([]);
+    setEditModalFilterSubdiv([]);
+    setEditModalFilterDim5([]);
     setEditModalSearchQuery('');
     setEditFormData({
       id: log.id,
@@ -58,7 +66,28 @@ export default function OperationLogs() {
         bonusAmount: editFormData.type === 'BONO' ? Number(editFormData.bonusAmount) : 0,
         taskDescription: editFormData.taskDescription
       });
-      toast.success('Registro corregido y enviado al gerente');
+      
+      if (user?.role === 'SOLICITANTE') {
+        try {
+          const token = localStorage.getItem('nomina-token');
+          await fetch('http://localhost:3000/api/operation-logs/notify', {
+            method: 'POST',
+            headers: { 
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}` 
+            },
+            body: JSON.stringify({ count: 1 })
+          });
+        } catch (e) {
+          console.error('Error enviando notificación', e);
+        }
+      }
+
+      if (user?.role === 'SOLICITANTE') {
+        toast.success('Registro corregido y enviado al gerente. Se enviará un correo a su gerente de área.');
+      } else {
+        toast.success('Registro corregido y enviado al gerente');
+      }
       onEditClose();
     } catch(e) {
       toast.error('Error al guardar');
@@ -69,6 +98,7 @@ export default function OperationLogs() {
   const cancelRef = React.useRef();
 
   const isManagerOrAdmin = ['gerente', 'nomina', 'admin'].includes(user?.role?.toLowerCase());
+  const isGlobalRole = ['admin', 'nomina', 'gerente general'].includes(user?.role?.toLowerCase());
   const isReadOnly = user?.role === 'AUDITOR';
 
   const bg = useColorModeValue('white', 'gray.800');
@@ -83,16 +113,16 @@ export default function OperationLogs() {
   const availableEmployees = useMemo(() => {
     let filtered = employees;
     
-    // Si el usuario tiene un departamento asignado, solo puede ver empleados de su misma área/departamento.
-    // Esto aplica sin importar el rol (por solicitud explícita del usuario).
-    if (user && user.idDepartamento) {
+    // Bypass department filter for ADMIN and NOMINA so they can create bonuses for anyone
+
+    if (user && user.idDepartamento && !isGlobalRole) {
       const normalize = (str) => (str ? str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase() : "");
       const userDept = normalize(user.idDepartamento);
       
       filtered = employees.filter(emp => {
         const dept = departments?.find(d => String(d.id) === String(emp.departmentId));
-        const deptName = dept?.nombre_dimension || emp.departmentData?.nombre_dimension || '';
-        return normalize(deptName).includes(userDept);
+        const groupName = dept?.nombre_dimension || emp.departmentData?.nombre_dimension || '';
+        return normalize(groupName).includes(userDept);
       });
     }
 
@@ -106,6 +136,10 @@ export default function OperationLogs() {
   }, [employees, user, isManagerOrAdmin]);
 
   const [modalAreaFilter, setModalAreaFilter] = useState([]);
+  const [modalFilterArea, setModalFilterArea] = useState([]);
+  const [modalFilterDiv, setModalFilterDiv] = useState([]);
+  const [modalFilterSubdiv, setModalFilterSubdiv] = useState([]);
+  const [modalFilterDim5, setModalFilterDim5] = useState([]);
   const [modalSearchQuery, setModalSearchQuery] = useState('');
 
   const [formData, setFormData] = useState({
@@ -131,9 +165,19 @@ export default function OperationLogs() {
 
 
     if (modalAreaFilter.length > 0) {
-      result = result.filter(emp => {
-        return modalAreaFilter.some(filterIdStr => String(emp.departmentId) === filterIdStr);
-      });
+      result = result.filter(emp => modalAreaFilter.some(id => String(emp.departmentId) === id));
+    }
+    if (modalFilterArea.length > 0) {
+      result = result.filter(emp => modalFilterArea.some(id => String(emp.areaId) === id));
+    }
+    if (modalFilterDiv.length > 0) {
+      result = result.filter(emp => modalFilterDiv.some(id => String(emp.divisionId) === id));
+    }
+    if (modalFilterSubdiv.length > 0) {
+      result = result.filter(emp => modalFilterSubdiv.some(id => String(emp.subdivisionId) === id));
+    }
+    if (modalFilterDim5.length > 0) {
+      result = result.filter(emp => modalFilterDim5.some(id => String(emp.dimension5Id) === id));
     }
 
     if (modalSearchQuery.trim()) {
@@ -145,7 +189,7 @@ export default function OperationLogs() {
     }
 
     return result;
-  }, [availableEmployees, modalAreaFilter, areas, modalSearchQuery]);
+  }, [availableEmployees, modalAreaFilter, modalFilterArea, modalFilterDiv, modalFilterSubdiv, modalFilterDim5, areas, modalSearchQuery]);
 
   const filteredEditModalEmployees = useMemo(() => {
     const normalize = (str) => {
@@ -158,9 +202,19 @@ export default function OperationLogs() {
 
 
     if (editModalAreaFilter.length > 0) {
-      result = result.filter(emp => {
-        return editModalAreaFilter.some(filterIdStr => String(emp.departmentId) === filterIdStr);
-      });
+      result = result.filter(emp => editModalAreaFilter.some(id => String(emp.departmentId) === id));
+    }
+    if (editModalFilterArea.length > 0) {
+      result = result.filter(emp => editModalFilterArea.some(id => String(emp.areaId) === id));
+    }
+    if (editModalFilterDiv.length > 0) {
+      result = result.filter(emp => editModalFilterDiv.some(id => String(emp.divisionId) === id));
+    }
+    if (editModalFilterSubdiv.length > 0) {
+      result = result.filter(emp => editModalFilterSubdiv.some(id => String(emp.subdivisionId) === id));
+    }
+    if (editModalFilterDim5.length > 0) {
+      result = result.filter(emp => editModalFilterDim5.some(id => String(emp.dimension5Id) === id));
     }
 
     if (editModalSearchQuery.trim()) {
@@ -172,7 +226,7 @@ export default function OperationLogs() {
     }
 
     return result;
-  }, [availableEmployees, editModalAreaFilter, areas, editModalSearchQuery]);
+  }, [availableEmployees, editModalAreaFilter, editModalFilterArea, editModalFilterDiv, editModalFilterSubdiv, editModalFilterDim5, areas, editModalSearchQuery]);
 
   const handleSelectAllEmployees = () => {
     if (formData.employeeIds.length === filteredModalEmployees.length) {
@@ -233,10 +287,30 @@ export default function OperationLogs() {
         });
         await Promise.all(promises);
         
+        if (user?.role === 'SOLICITANTE') {
+          try {
+            const token = localStorage.getItem('nomina-token');
+            await fetch('http://localhost:3000/api/operation-logs/notify', {
+              method: 'POST',
+              headers: { 
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}` 
+              },
+              body: JSON.stringify({ count: formData.employeeIds.length })
+            });
+          } catch (e) {
+            console.error('Error enviando notificación', e);
+          }
+        }
+        
         onClose();
         setFormData(prev => ({ ...prev, employeeIds: [] }));
-        setModalDeptFilter('ALL');
-        toast.success(`Se agregaron ${formData.employeeIds.length} registros exitosamente`);
+        setModalAreaFilter([]);
+        if (user?.role === 'SOLICITANTE') {
+          toast.success(`Se agregaron ${formData.employeeIds.length} registros exitosamente. Se enviará un correo a su gerente de área.`);
+        } else {
+          toast.success(`Se agregaron ${formData.employeeIds.length} registros exitosamente`);
+        }
       } else if (action === 'APPROVE') {
         await updateOperationLogStatus(data, 'APPROVED_MANAGER');
         toast.success('Solicitud aprobada');
@@ -506,7 +580,7 @@ export default function OperationLogs() {
       </Box>
 
       {/* Modal Agregar Registro */}
-      <Modal isOpen={isOpen} onClose={onClose} size="lg" isCentered>
+      <Modal isOpen={isOpen} onClose={onClose} size="2xl" isCentered>
         <ModalOverlay backdropFilter="blur(4px)" />
         <ModalContent bg={bg} color={textColor}>
           <ModalHeader>Nuevo Registro de Operación</ModalHeader>
@@ -514,29 +588,96 @@ export default function OperationLogs() {
             <VStack spacing={4}>
               <FormControl isRequired>
                 <FormLabel fontSize="sm">Empleados</FormLabel>
-                <HStack mb={2} spacing={3} width="100%">
-                  {user?.idDepartamento ? (
-                    <Button size="sm" variant="outline" flex={1} textAlign="left" fontWeight="normal" bg={bg} borderRadius="md" px={3} isDisabled _disabled={{ opacity: 0.8, cursor: 'not-allowed', color: textColor }}>
-                      {departments?.find(d => String(d.id) === String(user.idDepartamento))?.nombre_dimension || user.idDepartamento}
+                <Flex mb={2} gap={2} wrap="wrap" align="center" justify="space-between">
+                    <Flex gap={2} wrap="wrap" flex="1">
+                      {user?.idDepartamento && !isGlobalRole ? (
+                        <Input 
+                          size="sm" 
+                          flex={1} 
+                          minW="140px" 
+                          bg={bg} 
+                          isReadOnly 
+                          value={departments?.find(d => String(d.id) === String(user.idDepartamento))?.nombre_dimension || user.idDepartamento} 
+                          title={departments?.find(d => String(d.id) === String(user.idDepartamento))?.nombre_dimension || user.idDepartamento}
+                          opacity={0.8}
+                          cursor="not-allowed"
+                        />
+                      ) : (
+                        <Menu closeOnSelect={false}>
+                          <MenuButton as={Button} size="sm" variant="outline" rightIcon={<ChevronDown size={14}/>} flex={1} minW="140px" textAlign="left" fontWeight="normal" bg={bg} borderRadius="md" px={3}>
+                            {modalAreaFilter.length > 0 ? `${modalAreaFilter.length} Deptos...` : 'Departamento...'}
+                          </MenuButton>
+                          <MenuList maxH="300px" overflowY="auto" zIndex={100} boxShadow="lg">
+                            <MenuOptionGroup type="checkbox" value={modalAreaFilter} onChange={setModalAreaFilter}>
+                              {departments?.map(d => (
+                                <MenuItemOption key={d.id} value={String(d.id)} fontSize="sm">{d.nombre_dimension}</MenuItemOption>
+                              ))}
+                            </MenuOptionGroup>
+                          </MenuList>
+                        </Menu>
+                      )}
+                      
+                      {user?.role?.toUpperCase() !== 'SOLICITANTE' && (
+                        <>
+                          <Menu closeOnSelect={false}>
+                            <MenuButton as={Button} size="sm" variant="outline" rightIcon={<ChevronDown size={14}/>} flex={1} minW="140px" textAlign="left" fontWeight="normal" bg={bg} borderRadius="md" px={3}>
+                              {modalFilterArea.length > 0 ? `${modalFilterArea.length} Áreas...` : 'Área...'}
+                            </MenuButton>
+                            <MenuList maxH="300px" overflowY="auto" zIndex={100} boxShadow="lg">
+                              <MenuOptionGroup type="checkbox" value={modalFilterArea} onChange={setModalFilterArea}>
+                                {areas?.map(a => (
+                                  <MenuItemOption key={a.id} value={String(a.id)} fontSize="sm">{a.nombre}</MenuItemOption>
+                                ))}
+                              </MenuOptionGroup>
+                            </MenuList>
+                          </Menu>
+
+                          <Menu closeOnSelect={false}>
+                            <MenuButton as={Button} size="sm" variant="outline" rightIcon={<ChevronDown size={14}/>} flex={1} minW="140px" textAlign="left" fontWeight="normal" bg={bg} borderRadius="md" px={3}>
+                              {modalFilterDiv.length > 0 ? `${modalFilterDiv.length} Divs...` : 'División...'}
+                            </MenuButton>
+                            <MenuList maxH="300px" overflowY="auto" zIndex={100} boxShadow="lg">
+                              <MenuOptionGroup type="checkbox" value={modalFilterDiv} onChange={setModalFilterDiv}>
+                                {divisions?.map(d => (
+                                  <MenuItemOption key={d.id} value={String(d.id)} fontSize="sm">{d.nombre}</MenuItemOption>
+                                ))}
+                              </MenuOptionGroup>
+                            </MenuList>
+                          </Menu>
+
+                          <Menu closeOnSelect={false}>
+                            <MenuButton as={Button} size="sm" variant="outline" rightIcon={<ChevronDown size={14}/>} flex={1} minW="140px" textAlign="left" fontWeight="normal" bg={bg} borderRadius="md" px={3}>
+                              {modalFilterSubdiv.length > 0 ? `${modalFilterSubdiv.length} Subdivs...` : 'Subdivisión...'}
+                            </MenuButton>
+                            <MenuList maxH="300px" overflowY="auto" zIndex={100} boxShadow="lg">
+                              <MenuOptionGroup type="checkbox" value={modalFilterSubdiv} onChange={setModalFilterSubdiv}>
+                                {subdivisions?.map(s => (
+                                  <MenuItemOption key={s.id} value={String(s.id)} fontSize="sm">{s.nombre}</MenuItemOption>
+                                ))}
+                              </MenuOptionGroup>
+                            </MenuList>
+                          </Menu>
+
+                          <Menu closeOnSelect={false}>
+                            <MenuButton as={Button} size="sm" variant="outline" rightIcon={<ChevronDown size={14}/>} flex={1} minW="140px" textAlign="left" fontWeight="normal" bg={bg} borderRadius="md" px={3}>
+                              {modalFilterDim5.length > 0 ? `${modalFilterDim5.length} Dim 5...` : 'Dimensión 5...'}
+                            </MenuButton>
+                            <MenuList maxH="300px" overflowY="auto" zIndex={100} boxShadow="lg">
+                              <MenuOptionGroup type="checkbox" value={modalFilterDim5} onChange={setModalFilterDim5}>
+                                {dimension5s?.map(d => (
+                                  <MenuItemOption key={d.id} value={String(d.id)} fontSize="sm">{d.nombre}</MenuItemOption>
+                                ))}
+                              </MenuOptionGroup>
+                            </MenuList>
+                          </Menu>
+                        </>
+                      )}
+                    </Flex>
+                    
+                    <Button size="sm" flexShrink={0} variant="outline" colorScheme="brand" borderRadius="md" onClick={handleSelectAllEmployees}>
+                      {formData.employeeIds.length === filteredModalEmployees.length && filteredModalEmployees.length > 0 ? 'Deseleccionar Todos' : 'Seleccionar Todos'}
                     </Button>
-                  ) : (
-                    <Menu closeOnSelect={false}>
-                      <MenuButton as={Button} size="sm" variant="outline" rightIcon={<ChevronDown size={14}/>} flex={1} textAlign="left" fontWeight="normal" bg={bg} borderRadius="md" px={3}>
-                        {modalAreaFilter.length > 0 ? `${modalAreaFilter.length} Deptos...` : 'Departamento...'}
-                      </MenuButton>
-                      <MenuList maxH="300px" overflowY="auto" zIndex={100} boxShadow="lg">
-                        <MenuOptionGroup type="checkbox" value={modalAreaFilter} onChange={setModalAreaFilter}>
-                          {departments?.map(d => (
-                            <MenuItemOption key={d.id} value={String(d.id)} fontSize="sm">{d.nombre_dimension}</MenuItemOption>
-                          ))}
-                        </MenuOptionGroup>
-                      </MenuList>
-                    </Menu>
-                  )}
-                  <Button size="md" flexShrink={0} variant="outline" colorScheme="brand" borderRadius="lg" onClick={handleSelectAllEmployees}>
-                    {formData.employeeIds.length === filteredModalEmployees.length && filteredModalEmployees.length > 0 ? 'Deseleccionar Todos' : 'Seleccionar Todos'}
-                  </Button>
-                </HStack>
+                  </Flex>
                 <Input 
                   size="sm" 
                   placeholder="Buscar empleado por nombre..." 
@@ -550,17 +691,33 @@ export default function OperationLogs() {
                       {(() => {
                         const groups = {};
                         filteredModalEmployees.forEach(emp => {
-                          const dept = departments?.find(d => String(d.id) === String(emp.departmentId));
-                          const deptName = dept?.nombre_dimension || emp.departmentData?.nombre_dimension || 'Sin Departamento';
-                          if (!groups[deptName]) groups[deptName] = [];
-                          groups[deptName].push(emp);
+                          let groupName = 'Sin Departamento';
+                          if (modalFilterDim5.length > 0) {
+                            const dim = dimension5s?.find(d => String(d.id) === String(emp.dimension5Id));
+                            groupName = dim?.nombre || 'Sin Dimensión 5';
+                          } else if (modalFilterSubdiv.length > 0) {
+                            const dim = subdivisions?.find(s => String(s.id) === String(emp.subdivisionId));
+                            groupName = dim?.nombre || 'Sin Subdivisión';
+                          } else if (modalFilterDiv.length > 0) {
+                            const dim = divisions?.find(d => String(d.id) === String(emp.divisionId));
+                            groupName = dim?.nombre || 'Sin División';
+                          } else if (modalFilterArea.length > 0) {
+                            const dim = areas?.find(a => String(a.id) === String(emp.areaId));
+                            groupName = dim?.nombre || 'Sin Área';
+                          } else {
+                            const dept = departments?.find(d => String(d.id) === String(emp.departmentId));
+                            groupName = dept?.nombre_dimension || emp.departmentData?.nombre_dimension || 'Sin Departamento';
+                          }
+                          
+                          if (!groups[groupName]) groups[groupName] = [];
+                          groups[groupName].push(emp);
                         });
-                        return Object.keys(groups).sort().map(deptName => (
-                          <Box key={deptName} w="100%">
+                        return Object.keys(groups).sort().map(groupName => (
+                          <Box key={groupName} w="100%">
                             <Text fontSize="xs" fontWeight="bold" color="brand.400" textTransform="uppercase" mt={2} mb={1} borderBottomWidth="1px" borderColor="gray.600" pb={1}>
-                              {deptName}
+                              {groupName}
                             </Text>
-                            {groups[deptName].map(emp => (
+                            {groups[groupName].map(emp => (
                               <Checkbox key={emp.id} value={emp.id.toString()} w="100%" py={0.5}>
                                 {[emp.primer_nombre, emp.segundo_nombre, emp.otro_nombre, emp.primer_apellido, emp.segundo_apellido].filter(Boolean).join(' ')}
                               </Checkbox>
@@ -614,12 +771,30 @@ export default function OperationLogs() {
               )}
 
               {formData.type === 'BONO' && (
-                <HStack w="100%">
-                  <FormControl flex={1}>
-                    <FormLabel fontSize="sm">Monto del Bono (Q)</FormLabel>
-                    <Input type="number" value={formData.bonusAmount} onChange={(e) => setFormData({...formData, bonusAmount: e.target.value})} />
+                <VStack w="100%" spacing={4}>
+                  <FormControl>
+                    <FormLabel fontSize="sm">Concepto Predeterminado</FormLabel>
+                    <Select 
+                      placeholder="Seleccionar concepto por defecto..."
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val) {
+                          const [amount] = val.split('|');
+                          setFormData({...formData, bonusAmount: amount});
+                        }
+                      }}
+                    >
+                      <option value="225|Producción">Producción (Q 225.00)</option>
+                      <option value="240|Bodega y Logística">Bodega y Logística (Q 240.00)</option>
+                      <option value="250|Mantenimiento 1">Mantenimiento 1 (Q 250.00)</option>
+                      <option value="275|Mantenimiento 2">Mantenimiento 2 (Q 275.00)</option>
+                    </Select>
                   </FormControl>
-                </HStack>
+                  <FormControl isRequired w="100%">
+                    <FormLabel fontSize="sm">Monto del Bono (Q)</FormLabel>
+                    <Input type="number" step="0.01" value={formData.bonusAmount} onChange={(e) => setFormData({...formData, bonusAmount: e.target.value})} />
+                  </FormControl>
+                </VStack>
               )}
 
               <FormControl isRequired>
@@ -713,7 +888,16 @@ export default function OperationLogs() {
               Confirmar Acción
             </AlertDialogHeader>
             <AlertDialogBody>
-              {confirmState.action === 'SAVE' && '¿Estás seguro de que deseas guardar estos registros?'}
+              {confirmState.action === 'SAVE' && (
+                <VStack align="stretch" spacing={3}>
+                  <Text>¿Estás seguro de que deseas guardar estos registros?</Text>
+                  {user?.role?.toUpperCase() === 'SOLICITANTE' && (
+                    <Text fontSize="sm" color="blue.500" fontWeight="medium">
+                      Nota: Se enviará una notificación por correo a tu gerente de área para su aprobación.
+                    </Text>
+                  )}
+                </VStack>
+              )}
               {confirmState.action === 'APPROVE' && '¿Deseas aprobar esta solicitud de operación?'}
               {confirmState.action === 'REJECT' && (
                 <VStack align="stretch" spacing={3}>
@@ -759,7 +943,7 @@ export default function OperationLogs() {
       </AlertDialog>
 
       {/* Modal Editar y Reenviar */}
-      <Modal isOpen={isEditOpen} onClose={onEditClose} size="md" isCentered>
+      <Modal isOpen={isEditOpen} onClose={onEditClose} size="2xl" isCentered>
         <ModalOverlay backdropFilter="blur(4px)" />
         <ModalContent bg={bg} color={textColor}>
           <ModalHeader>Editar y Reenviar Solicitud</ModalHeader>
@@ -771,14 +955,22 @@ export default function OperationLogs() {
                 </Text>
                 <FormControl isRequired>
                   <FormLabel fontSize="sm">Empleado</FormLabel>
-                  <HStack mb={2} spacing={3} width="100%">
-                    {user?.idDepartamento ? (
-                      <Button size="sm" variant="outline" flex={1} textAlign="left" fontWeight="normal" bg={bg} borderRadius="md" px={3} isDisabled _disabled={{ opacity: 0.8, cursor: 'not-allowed', color: textColor }}>
-                        {departments?.find(d => String(d.id) === String(user.idDepartamento))?.nombre_dimension || user.idDepartamento}
-                      </Button>
+                  <Flex mb={2} gap={2} wrap="wrap">
+                    {user?.idDepartamento && !isGlobalRole ? (
+                      <Input 
+                        size="sm" 
+                        flex={1} 
+                        minW="140px" 
+                        bg={bg} 
+                        isReadOnly 
+                        value={departments?.find(d => String(d.id) === String(user.idDepartamento))?.nombre_dimension || user.idDepartamento} 
+                        title={departments?.find(d => String(d.id) === String(user.idDepartamento))?.nombre_dimension || user.idDepartamento}
+                        opacity={0.8}
+                        cursor="not-allowed"
+                      />
                     ) : (
                       <Menu closeOnSelect={false}>
-                        <MenuButton as={Button} size="sm" variant="outline" rightIcon={<ChevronDown size={14}/>} flex={1} textAlign="left" fontWeight="normal" bg={bg} borderRadius="md" px={3}>
+                        <MenuButton as={Button} size="sm" variant="outline" rightIcon={<ChevronDown size={14}/>} flex={1} minW="140px" textAlign="left" fontWeight="normal" bg={bg} borderRadius="md" px={3}>
                           {editModalAreaFilter.length > 0 ? `${editModalAreaFilter.length} Deptos...` : 'Departamento...'}
                         </MenuButton>
                         <MenuList maxH="300px" overflowY="auto" zIndex={100} boxShadow="lg">
@@ -790,7 +982,63 @@ export default function OperationLogs() {
                         </MenuList>
                       </Menu>
                     )}
-                  </HStack>
+
+                    {user?.role?.toUpperCase() !== 'SOLICITANTE' && (
+                      <>
+                        <Menu closeOnSelect={false}>
+                          <MenuButton as={Button} size="sm" variant="outline" rightIcon={<ChevronDown size={14}/>} flex={1} minW="140px" textAlign="left" fontWeight="normal" bg={bg} borderRadius="md" px={3}>
+                            {editModalFilterArea.length > 0 ? `${editModalFilterArea.length} Áreas...` : 'Área...'}
+                          </MenuButton>
+                          <MenuList maxH="300px" overflowY="auto" zIndex={100} boxShadow="lg">
+                            <MenuOptionGroup type="checkbox" value={editModalFilterArea} onChange={setEditModalFilterArea}>
+                              {areas?.map(a => (
+                                <MenuItemOption key={a.id} value={String(a.id)} fontSize="sm">{a.nombre}</MenuItemOption>
+                              ))}
+                            </MenuOptionGroup>
+                          </MenuList>
+                        </Menu>
+
+                        <Menu closeOnSelect={false}>
+                          <MenuButton as={Button} size="sm" variant="outline" rightIcon={<ChevronDown size={14}/>} flex={1} minW="140px" textAlign="left" fontWeight="normal" bg={bg} borderRadius="md" px={3}>
+                            {editModalFilterDiv.length > 0 ? `${editModalFilterDiv.length} Divs...` : 'División...'}
+                          </MenuButton>
+                          <MenuList maxH="300px" overflowY="auto" zIndex={100} boxShadow="lg">
+                            <MenuOptionGroup type="checkbox" value={editModalFilterDiv} onChange={setEditModalFilterDiv}>
+                              {divisions?.map(d => (
+                                <MenuItemOption key={d.id} value={String(d.id)} fontSize="sm">{d.nombre}</MenuItemOption>
+                              ))}
+                            </MenuOptionGroup>
+                          </MenuList>
+                        </Menu>
+
+                        <Menu closeOnSelect={false}>
+                          <MenuButton as={Button} size="sm" variant="outline" rightIcon={<ChevronDown size={14}/>} flex={1} minW="140px" textAlign="left" fontWeight="normal" bg={bg} borderRadius="md" px={3}>
+                            {editModalFilterSubdiv.length > 0 ? `${editModalFilterSubdiv.length} Subdivs...` : 'Subdivisión...'}
+                          </MenuButton>
+                          <MenuList maxH="300px" overflowY="auto" zIndex={100} boxShadow="lg">
+                            <MenuOptionGroup type="checkbox" value={editModalFilterSubdiv} onChange={setEditModalFilterSubdiv}>
+                              {subdivisions?.map(s => (
+                                <MenuItemOption key={s.id} value={String(s.id)} fontSize="sm">{s.nombre}</MenuItemOption>
+                              ))}
+                            </MenuOptionGroup>
+                          </MenuList>
+                        </Menu>
+
+                        <Menu closeOnSelect={false}>
+                          <MenuButton as={Button} size="sm" variant="outline" rightIcon={<ChevronDown size={14}/>} flex={1} minW="140px" textAlign="left" fontWeight="normal" bg={bg} borderRadius="md" px={3}>
+                            {editModalFilterDim5.length > 0 ? `${editModalFilterDim5.length} Dim 5...` : 'Dimensión 5...'}
+                          </MenuButton>
+                          <MenuList maxH="300px" overflowY="auto" zIndex={100} boxShadow="lg">
+                            <MenuOptionGroup type="checkbox" value={editModalFilterDim5} onChange={setEditModalFilterDim5}>
+                              {dimension5s?.map(d => (
+                                <MenuItemOption key={d.id} value={String(d.id)} fontSize="sm">{d.nombre}</MenuItemOption>
+                              ))}
+                            </MenuOptionGroup>
+                          </MenuList>
+                        </Menu>
+                      </>
+                    )}
+                  </Flex>
                   <Input 
                     size="sm" 
                     placeholder="Buscar empleado por nombre..." 
@@ -805,16 +1053,16 @@ export default function OperationLogs() {
                           const groups = {};
                           filteredEditModalEmployees.forEach(emp => {
                             const dept = departments?.find(d => String(d.id) === String(emp.departmentId));
-                            const deptName = dept?.nombre_dimension || emp.departmentData?.nombre_dimension || 'Sin Departamento';
-                            if (!groups[deptName]) groups[deptName] = [];
-                            groups[deptName].push(emp);
+                            const groupName = dept?.nombre_dimension || emp.departmentData?.nombre_dimension || 'Sin Departamento';
+                            if (!groups[groupName]) groups[groupName] = [];
+                            groups[groupName].push(emp);
                           });
-                          return Object.keys(groups).sort().map(deptName => (
-                            <Box key={deptName} w="100%">
+                          return Object.keys(groups).sort().map(groupName => (
+                            <Box key={groupName} w="100%">
                               <Text fontSize="xs" fontWeight="bold" color="brand.400" textTransform="uppercase" mt={2} mb={1} borderBottomWidth="1px" borderColor="gray.600" pb={1}>
-                                {deptName}
+                                {groupName}
                               </Text>
-                              {groups[deptName].map(emp => (
+                              {groups[groupName].map(emp => (
                                 <Radio key={emp.id} value={emp.id.toString()} w="100%" py={0.5}>
                                   {[emp.primer_nombre, emp.segundo_nombre, emp.otro_nombre, emp.primer_apellido, emp.segundo_apellido].filter(Boolean).join(' ')}
                                 </Radio>
@@ -843,10 +1091,30 @@ export default function OperationLogs() {
                     </FormControl>
                   </>
                 ) : (
-                  <FormControl isRequired>
-                    <FormLabel fontSize="sm">Monto del Bono</FormLabel>
-                    <Input type="number" step="0.01" value={editFormData.bonusAmount} onChange={(e) => setEditFormData({...editFormData, bonusAmount: e.target.value})} />
-                  </FormControl>
+                  <VStack w="100%" spacing={4} align="stretch">
+                    <FormControl>
+                      <FormLabel fontSize="sm">Concepto Predeterminado</FormLabel>
+                      <Select 
+                        placeholder="Seleccionar concepto por defecto..."
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val) {
+                            const [amount] = val.split('|');
+                            setEditFormData({...editFormData, bonusAmount: amount});
+                          }
+                        }}
+                      >
+                        <option value="225|Producción">Producción (Q 225.00)</option>
+                        <option value="240|Bodega y Logística">Bodega y Logística (Q 240.00)</option>
+                        <option value="250|Mantenimiento 1">Mantenimiento 1 (Q 250.00)</option>
+                        <option value="275|Mantenimiento 2">Mantenimiento 2 (Q 275.00)</option>
+                      </Select>
+                    </FormControl>
+                    <FormControl isRequired>
+                      <FormLabel fontSize="sm">Monto del Bono</FormLabel>
+                      <Input type="number" step="0.01" value={editFormData.bonusAmount} onChange={(e) => setEditFormData({...editFormData, bonusAmount: e.target.value})} />
+                    </FormControl>
+                  </VStack>
                 )}
                 <FormControl isRequired>
                   <FormLabel fontSize="sm">Justificación / Tarea Realizada</FormLabel>
@@ -856,6 +1124,11 @@ export default function OperationLogs() {
             )}
           </ModalBody>
           <ModalFooter>
+            {user?.role?.toUpperCase() === 'SOLICITANTE' && (
+              <Text fontSize="sm" color="blue.500" fontWeight="medium" flex="1" mr={4}>
+                Se enviará una notificación a tu gerente.
+              </Text>
+            )}
             <Button variant="ghost" mr={3} onClick={onEditClose}>Cancelar</Button>
             <Button colorScheme="blue" onClick={handleEditSave}>Guardar y Reenviar</Button>
           </ModalFooter>

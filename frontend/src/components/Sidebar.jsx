@@ -22,6 +22,7 @@ export default function Sidebar() {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [isDimensionsOpen, setIsDimensionsOpen] = useState(false);
+  const [isBillingOpen, setIsBillingOpen] = useState(false);
 
   const isMobile = useBreakpointValue({ base: true, md: false });
 
@@ -67,6 +68,15 @@ export default function Sidebar() {
     },
     { to: '/companies', label: 'Empresas', icon: Building2 },
     { to: '/operations', label: 'Reporte Operativo', icon: Gift },
+    { 
+      id: 'facturacion',
+      label: 'Facturación', 
+      icon: Calculator,
+      subItems: [
+        { to: '/billing', label: 'Distribución' },
+        { to: '/billing/rules', label: 'Reglas de Fact.' }
+      ]
+    },
   ];
 
   const NAV_ITEMS = ALL_NAV_ITEMS.filter(item => {
@@ -74,8 +84,8 @@ export default function Sidebar() {
     if (item.to === '/dashboard') return true;
     const role = user.role;
     if (role === 'ADMIN' || role === 'GERENTE GENERAL') return true;
-    if (role === 'NOMINA') return item.to !== '/operations';
-    if (role === 'AUDITOR') return item.to !== '/operations' && item.to !== '/users';
+    if (role === 'NOMINA') return true;
+    if (role === 'AUDITOR') return item.to !== '/operations' && item.to !== '/users' && item.id !== 'facturacion';
     if (role === 'DIGITADOR') return item.to === '/employees' || item.to === '/users';
     if (role === 'GERENTE' || role === 'SOLICITANTE') return item.to === '/operations';
     return false;
@@ -174,7 +184,8 @@ export default function Sidebar() {
                     }}
                     onClick={() => {
                       if (!mobile && isCollapsed) setIsCollapsed(false);
-                      setIsDimensionsOpen(!isDimensionsOpen);
+                      if (id === 'dimensiones') setIsDimensionsOpen(!isDimensionsOpen);
+                      if (id === 'facturacion') setIsBillingOpen(!isBillingOpen);
                     }}
                   >
                     <Flex gap={!mobile && isCollapsed ? 0 : 3} align="center">
@@ -189,11 +200,11 @@ export default function Sidebar() {
                     </Flex>
                     {showLabel && (
                       <Box as="span" display="flex" alignItems="center">
-                        {isDimensionsOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                        {(id === 'dimensiones' ? isDimensionsOpen : isBillingOpen) ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                       </Box>
                     )}
                   </Flex>
-                  <Collapse in={isDimensionsOpen && showLabel} animateOpacity>
+                  <Collapse in={(id === 'dimensiones' ? isDimensionsOpen : isBillingOpen) && showLabel} animateOpacity>
                     <VStack spacing="2px" align="stretch" mt={1} pl={4}>
                       {subItems.map((sub) => (
                         <Box
@@ -236,7 +247,7 @@ export default function Sidebar() {
                           onClick={mobile ? () => setMobileOpen(false) : undefined}
                         >
                           <Box as="span" display="flex" alignItems="center" minW="16px" justifyContent="center">
-                            <sub.icon size={16} />
+                            {sub.icon ? <sub.icon size={16} /> : <Box w={4} />}
                           </Box>
                           <Text as="span" whiteSpace="nowrap">
                             {sub.label}
@@ -416,7 +427,7 @@ export default function Sidebar() {
       <>
         <IconButton
           aria-label="Menu"
-          icon={<Menu size={22} />}
+          icon={<MenuIcon size={22} />}
           onClick={() => setMobileOpen(true)}
           position="fixed"
           top={3}

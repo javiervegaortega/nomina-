@@ -17,6 +17,8 @@ const Commission = require('./Commission')(sequelize);
 const EmployeeIncidence = require('./EmployeeIncidence')(sequelize);
 const OperationLog = require('./OperationLog')(sequelize);
 const Dimension5 = require('./Dimension5')(sequelize);
+const BillingRule = require('./BillingRule')(sequelize);
+const BillingDistribution = require('./BillingDistribution')(sequelize);
 
 // Definir asociaciones
 Company.hasMany(Employee, { foreignKey: 'companyId' });
@@ -64,5 +66,7 @@ module.exports = {
   Commission,
   EmployeeIncidence,
   OperationLog,
-  Dimension5
+  Dimension5,
+  BillingRule,
+  BillingDistribution
 };

@@ -11,41 +11,23 @@ export default function EmployeeSummaryModal({ isOpen, onClose, employee, compan
 
   if (!employee) return null;
 
-  const baseFactor = (employee.days || 30) / 30;
-  const sueldoOrd = Number(employee.sueldo_ordinario) || 0;
-  const bonInc = Number(employee.bon_incentivo) || 0;
-  const bonDec = Number(employee.bon_dec_37_2001) || 0;
+  const baseSalary = employee.calculated?.baseSalary || 0;
+  const bonusLey = employee.calculated?.bonusLey || 0;
+  const bonusDec = employee.calculated?.bonusDec || 0;
+  const bonos = employee.calculated?.bonos || 0;
 
-  const baseSalary = sueldoOrd * baseFactor;
-  const bonusLey = bonInc * baseFactor;
-  const bonusDec = bonDec * baseFactor;
+  const devengado = employee.calculated?.gross || 0;
+
+  const totalExtras = employee.calculated?.extrasTotal || 0;
   
-  const bonos = Number(employee.extras?.bonos) || 0;
-  const devengado = baseSalary + bonusLey + bonusDec + bonos;
-
   const simplesVal = Number(employee.extras?.simplesVal) || 0;
   const doblesVal = Number(employee.extras?.doblesVal) || 0;
   const otrosIngresos = Number(employee.extras?.otrosIngresos) || 0;
+  
+  const deductions = employee.calculated?.proratedDeductions || employee.deductions || {};
 
-  const salarioTotal = devengado + simplesVal + doblesVal + otrosIngresos;
-
-  const deductions = employee.deductions || {};
-  const totalEgresos = 
-    (Number(deductions.igss) || 0) + 
-    (Number(deductions.isr) || 0) + 
-    (Number(deductions.cafe) || 0) + 
-    (Number(deductions.cell) || 0) + 
-    (Number(deductions.uniform) || 0) + 
-    (Number(deductions.shoes) || 0) + 
-    (Number(deductions.equipo) || 0) + 
-    (Number(deductions.product) || 0) + 
-    (Number(deductions.bancos) || 0) + 
-    (Number(deductions.otros) || 0) + 
-    (Number(deductions.judiciales) || 0) + 
-    (Number(deductions.seguro) || 0) + 
-    (Number(deductions.parqueo) || 0) + 
-    (Number(deductions.boleto_de_ornato) || 0) + 
-    (Number(deductions.otros_egresos) || 0);
+  const salarioTotal = devengado;
+  const totalEgresos = employee.calculated?.ded || 0;
 
   const liquido = salarioTotal - totalEgresos;
 

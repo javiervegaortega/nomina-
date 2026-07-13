@@ -39,7 +39,15 @@ export default function PayrollProcessing() {
 }
 
 function PayrollHub({ onSelectDraft }) {
-  const { activePayrolls, deleteActivePayroll, createActivePayroll, updateDraftMetadata, companies, isLoading } = useContext(DataContext);
+  const { 
+    activePayrolls, 
+    deleteActivePayroll, 
+    createActivePayroll, 
+    updateDraftMetadata, 
+    companies, 
+    dimension5s,
+    isLoading 
+  } = useContext(DataContext);
   const { confirmAction, showToast } = useContext(AppContext);
   const { user } = useContext(AuthContext);
   const isReadOnly = user?.role === 'AUDITOR';
@@ -391,7 +399,9 @@ function PayrollEditor({ draftId, onBack }) {
     departments,
     divisions,
     subdivisions,
-    companies
+    companies,
+    dimension5s,
+    employees
   } = useContext(DataContext);
   
   const { confirmAction, showToast } = useContext(AppContext);
@@ -413,6 +423,7 @@ function PayrollEditor({ draftId, onBack }) {
   const [filterDept, setFilterDept] = useState([]);
   const [filterDiv, setFilterDiv] = useState([]);
   const [filterSubdiv, setFilterSubdiv] = useState([]);
+  const [filterDim5, setFilterDim5] = useState([]);
   const [filterStatus, setFilterStatus] = useState('ACTIVO');
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -569,10 +580,18 @@ function PayrollEditor({ draftId, onBack }) {
       const fullName = [e.primer_nombre, e.segundo_nombre, e.otro_nombre, e.primer_apellido, e.segundo_apellido, e.apellido_casada].filter(Boolean).join(' ');
       const matchSearch = normalize(fullName).includes(normalize(searchQuery)) || normalize(e.puesto).includes(normalize(searchQuery));
       
-      const matchArea = filterArea.length === 0 || filterArea.includes(e.areaId?.toString());
-      const matchDept = filterDept.length === 0 || filterDept.includes(e.departamento_laboral) || filterDept.includes(e.departmentId?.toString());
-      const matchDiv = filterDiv.length === 0 || filterDiv.includes(e.divisionId?.toString());
-      const matchSubdiv = filterSubdiv.length === 0 || filterSubdiv.includes(e.subdivisionId?.toString());
+      const liveEmp = employees?.find(emp => emp.dpi === e.dpi) || e;
+      const dept = liveEmp.departamento_laboral || e.departamento_laboral || liveEmp.departmentId;
+      const area = liveEmp.areaId || e.areaId;
+      const div = liveEmp.divisionId || e.divisionId;
+      const subdiv = liveEmp.subdivisionId || e.subdivisionId;
+      const dim5 = liveEmp.nivel_5 || liveEmp.dimension_5 || e.nivel_5 || e.dimension_5;
+
+      const matchArea = filterArea.length === 0 || filterArea.includes(String(area));
+      const matchDept = filterDept.length === 0 || filterDept.includes(dept) || filterDept.includes(String(dept));
+      const matchDiv = filterDiv.length === 0 || filterDiv.includes(String(div));
+      const matchSubdiv = filterSubdiv.length === 0 || filterSubdiv.includes(String(subdiv));
+      const matchDim5 = filterDim5.length === 0 || filterDim5.includes(String(dim5));
       
       let matchStatus = true;
       if (filterStatus !== 'ALL') {
@@ -581,12 +600,15 @@ function PayrollEditor({ draftId, onBack }) {
         matchStatus = empStatus === selStatus;
       }
 
-      return matchSearch && matchArea && matchDept && matchDiv && matchSubdiv && matchStatus;
+      return matchSearch && matchArea && matchDept && matchDiv && matchSubdiv && matchDim5 && matchStatus;
     });
 
     return filtered.sort((a, b) => {
-      const areaA = areas?.find(area => String(area.id) === String(a.areaId))?.nombre || '';
-      const areaB = areas?.find(area => String(area.id) === String(b.areaId))?.nombre || '';
+      const liveEmpA = employees?.find(emp => emp.dpi === a.dpi) || a;
+      const liveEmpB = employees?.find(emp => emp.dpi === b.dpi) || b;
+      
+      const areaA = areas?.find(area => String(area.id) === String(liveEmpA.areaId || a.areaId))?.nombre || '';
+      const areaB = areas?.find(area => String(area.id) === String(liveEmpB.areaId || b.areaId))?.nombre || '';
       
       const compArea = areaA.localeCompare(areaB);
       if (compArea !== 0) return compArea;
@@ -595,32 +617,24 @@ function PayrollEditor({ draftId, onBack }) {
       const nameB = [b.primer_nombre, b.segundo_nombre, b.otro_nombre, b.primer_apellido, b.segundo_apellido].filter(Boolean).join(' ').trim();
       return nameA.localeCompare(nameB);
     });
-  }, [data, searchQuery, filterArea, filterDept, filterDiv, filterSubdiv, filterStatus, areas]);
+  }, [data, searchQuery, filterArea, filterDept, filterDiv, filterSubdiv, filterDim5, filterStatus, areas, employees]);
 
   // General totals calculation
   const totals = useMemo(() => {
     let grossTotal = 0, dedTotal = 0, patronalTotal = 0;
     data.forEach(e => {
-      const baseFactor = (e.days || 30) / 30;
-      const sueldoOrd = Number(e.sueldo_ordinario) || 0;
-      const bonInc = Number(e.bon_incentivo) || 0;
-      const bonDec = Number(e.bon_dec_37_2001) || 0;
-
-      const baseSalary = sueldoOrd * baseFactor;
-      const bonusLey = bonInc * baseFactor;
-      const bonusDec = bonDec * baseFactor;
-      
-      const bonos = Number(e.extras?.bonos) || 0;
-      const bonusesSum = Object.values(e.appliedBonuses || {}).reduce((a, b) => a + b, 0);
-      const extrasTotal = (e.extras?.simplesVal || 0) + (e.extras?.doblesVal || 0) + (e.extras?.comisiones || 0) + (e.extras?.otrosIngresos || 0);
-
-      const gross = baseSalary + bonusLey + bonusDec + bonos + extrasTotal + bonusesSum;
-      const ded = Object.values(e.deductions || {}).reduce((a, b) => a + b, 0);
-      const patronal = baseSalary * CUOTA_PATRONAL_RATE;
-      
-      grossTotal += gross;
-      dedTotal += ded;
-      patronalTotal += patronal;
+      // Use backend calculated values if available, else 0
+      if (e.calculated) {
+        grossTotal += e.calculated.gross || 0;
+        dedTotal += e.calculated.ded || 0;
+        patronalTotal += e.calculated.patronal || 0;
+      } else {
+        // Fallback (shouldn't happen with the new engine)
+        const baseFactor = (e.days || 30) / 30;
+        const sueldoOrd = Number(e.sueldo_ordinario) || 0;
+        const baseSalary = sueldoOrd * baseFactor;
+        grossTotal += baseSalary;
+      }
     });
     return { grossTotal, dedTotal, patronalTotal, netTotal: grossTotal - dedTotal };
   }, [data]);
@@ -719,6 +733,10 @@ function PayrollEditor({ draftId, onBack }) {
             setFilterDiv={setFilterDiv}
             filterSubdiv={filterSubdiv}
             setFilterSubdiv={setFilterSubdiv}
+            filterDim5={filterDim5}
+            setFilterDim5={setFilterDim5}
+            dimension5s={dimension5s}
+            employees={employees}
             filterStatus={filterStatus}
             setFilterStatus={setFilterStatus}
             searchQuery={searchQuery}
@@ -800,21 +818,22 @@ function calculateGroupTotals(groupData, periodType) {
     const otrosIngresos = Number(e.extras?.otrosIngresos) || 0;
     const salarioTotal = devengado + simplesVal + doblesVal + otrosIngresos;
 
-    const igss = Number(e.deductions?.igss) || 0;
-    const isr = Number(e.deductions?.isr) || 0;
-    const cafe = Number(e.deductions?.cafe) || 0;
-    const cell = Number(e.deductions?.cell) || 0;
-    const uniform = Number(e.deductions?.uniform) || 0;
-    const shoes = Number(e.deductions?.shoes) || 0;
-    const equipo = Number(e.deductions?.equipo) || 0;
-    const product = Number(e.deductions?.product) || 0;
-    const bancos = Number(e.deductions?.bancos) || 0;
-    const otros = Number(e.deductions?.otros) || 0;
-    const judiciales = Number(e.deductions?.judiciales) || 0;
-    const seguro = Number(e.deductions?.seguro) || 0;
-    const parqueo = Number(e.deductions?.parqueo) || 0;
-    const boleto_de_ornato = Number(e.deductions?.boleto_de_ornato) || 0;
-    const otros_egresos = Number(e.deductions?.otros_egresos) || 0;
+    const proDed = e.calculated?.proratedDeductions || e.deductions || {};
+    const igss = Number(proDed.igss) || 0;
+    const isr = Number(proDed.isr) || 0;
+    const cafe = Number(proDed.cafe) || 0;
+    const cell = Number(proDed.cell) || 0;
+    const uniform = Number(proDed.uniform) || 0;
+    const shoes = Number(proDed.shoes) || 0;
+    const equipo = Number(proDed.equipo) || 0;
+    const product = Number(proDed.product) || 0;
+    const bancos = Number(proDed.bancos) || 0;
+    const otros = Number(proDed.otros) || 0;
+    const judiciales = Number(proDed.judiciales) || 0;
+    const seguro = Number(proDed.seguro) || 0;
+    const parqueo = Number(proDed.parqueo) || 0;
+    const boleto_de_ornato = Number(proDed.boleto_de_ornato) || 0;
+    const otros_egresos = Number(proDed.otros_egresos) || 0;
     const anticipo = Number(e.anticipo1ra) || 0;
     
     const totalEgresos = igss + isr + cafe + cell + uniform + shoes + equipo + product + bancos + otros + judiciales + seguro + parqueo + boleto_de_ornato + otros_egresos;
@@ -865,11 +884,12 @@ function calculateGroupTotals(groupData, periodType) {
 
 function ListadoPagosTab({ 
   data, periodType, onChange, editingCell, setEditingCell, 
-  areas, departments, divisions, subdivisions,
+  areas, departments, divisions, subdivisions, dimension5s, employees,
   filterArea, setFilterArea, 
   filterDept, setFilterDept, 
   filterDiv, setFilterDiv,
   filterSubdiv, setFilterSubdiv,
+  filterDim5, setFilterDim5,
   filterStatus, setFilterStatus,
   searchQuery, setSearchQuery,
   handleClose, handleSaveIncidence, handleDeleteIncidence,
@@ -952,27 +972,38 @@ function ListadoPagosTab({
   };
 
   const groupedData = useMemo(() => {
-    if (filterDept.length === 0 && filterArea.length === 0 && filterDiv.length === 0 && filterSubdiv.length === 0) {
+    if (filterDept.length === 0 && filterArea.length === 0 && filterDiv.length === 0 && filterSubdiv.length === 0 && filterDim5.length === 0) {
       return [{ title: '', data }];
     }
 
     const groups = {};
     data.forEach(e => {
+      const liveEmp = employees?.find(emp => emp.dpi === e.dpi) || e;
+      const dept = liveEmp.departamento_laboral || e.departamento_laboral || liveEmp.departmentId;
+      const area = liveEmp.areaId || e.areaId;
+      const div = liveEmp.divisionId || e.divisionId;
+      const subdiv = liveEmp.subdivisionId || e.subdivisionId;
+      const dim5 = liveEmp.nivel_5 || liveEmp.dimension_5 || e.nivel_5 || e.dimension_5;
+
       const keyParts = [];
       if (filterDept.length > 0) {
-        keyParts.push(`Depto: ${e.departamento_laboral || 'Sin Departamento'}`);
+        keyParts.push(`Depto: ${dept || 'Sin Departamento'}`);
       }
       if (filterDiv.length > 0) {
-        const divName = divisions?.find(d => String(d.id) === String(e.divisionId))?.nombre || 'Sin División';
+        const divName = divisions?.find(d => String(d.id) === String(div))?.nombre || 'Sin División';
         keyParts.push(`División: ${divName}`);
       }
       if (filterArea.length > 0) {
-        const areaName = areas?.find(a => String(a.id) === String(e.areaId))?.nombre || 'Sin Área';
+        const areaName = areas?.find(a => String(a.id) === String(area))?.nombre || 'Sin Área';
         keyParts.push(`Área: ${areaName}`);
       }
       if (filterSubdiv.length > 0) {
-        const subdivName = subdivisions?.find(s => String(s.id) === String(e.subdivisionId))?.nombre || 'Sin Subdivisión';
+        const subdivName = subdivisions?.find(s => String(s.id) === String(subdiv))?.nombre || 'Sin Subdivisión';
         keyParts.push(`Subdivisión: ${subdivName}`);
+      }
+      if (filterDim5.length > 0) {
+        const d5Name = dimension5s?.find(d => String(d.id) === String(dim5) || d.nombre === dim5)?.nombre || dim5 || 'Sin Dim 5';
+        keyParts.push(`Dim 5: ${d5Name}`);
       }
       
       const key = keyParts.length > 0 ? keyParts.join(' | ') : 'Otros';
@@ -1041,6 +1072,19 @@ function ListadoPagosTab({
               <MenuOptionGroup type="checkbox" value={filterSubdiv} onChange={setFilterSubdiv}>
                 {(subdivisions || []).map(s => (
                   <MenuItemOption key={s.id} value={String(s.id)} fontSize="sm">{s.nombre}</MenuItemOption>
+                ))}
+              </MenuOptionGroup>
+            </MenuList>
+          </Menu>
+
+          <Menu closeOnSelect={false}>
+            <MenuButton as={Button} size="sm" variant="outline" rightIcon={<ChevronDown size={14}/>} w={{ base: '100%', sm: '180px' }} textAlign="left" fontWeight="normal" bg={tdBg} borderRadius="md" px={3}>
+              {filterDim5.length > 0 ? `${filterDim5.length} Dim 5...` : 'Dimensión 5...'}
+            </MenuButton>
+            <MenuList maxH="300px" overflowY="auto" zIndex={100} boxShadow="lg">
+              <MenuOptionGroup type="checkbox" value={filterDim5} onChange={setFilterDim5}>
+                {(dimension5s || []).map(d => (
+                  <MenuItemOption key={d.id} value={String(d.id)} fontSize="sm">{d.nombre}</MenuItemOption>
                 ))}
               </MenuOptionGroup>
             </MenuList>
@@ -1163,26 +1207,20 @@ function ListadoPagosTab({
                 </Thead>
                 <Tbody>
                   {groupData.map((e, i) => {
-                    // Real-time calculations per row
-                    const baseFactor = (e.days || 30) / 30;
-                    const sueldoOrd = Number(e.sueldo_ordinario) || 0;
-                    const bonInc = Number(e.bon_incentivo) || 0;
-                    const bonDec = Number(e.bon_dec_37_2001) || 0;
-
-                    const baseSalary = sueldoOrd * baseFactor;
-                    const bonusLey = bonInc * baseFactor;
-                    const bonusDec = bonDec * baseFactor;
+                    // Use calculated properties from backend
+                    const baseSalary = e.calculated?.baseSalary || 0;
+                    const bonusLey = e.calculated?.bonusLey || 0;
+                    const bonusDec = e.calculated?.bonusDec || 0;
+                    const bonos = e.calculated?.bonos || 0;
+                    const devengado = e.calculated?.gross || 0;
                     
-                    const bonos = Number(e.extras?.bonos) || 0;
-                    const devengado = baseSalary + bonusLey + bonusDec + bonos;
+                    const salarioTotal = devengado; // gross includes extras
 
                     const simplesQty = Number(e.extras?.simplesQty) || 0;
                     const simplesVal = Number(e.extras?.simplesVal) || 0;
                     const doblesQty = Number(e.extras?.doblesQty) || 0;
                     const doblesVal = Number(e.extras?.doblesVal) || 0;
                     const otrosIngresos = Number(e.extras?.otrosIngresos) || 0;
-                    
-                    const salarioTotal = devengado + simplesVal + doblesVal + otrosIngresos;
 
                     const igss = Number(e.deductions?.igss) || 0;
                     const isr = Number(e.deductions?.isr) || 0;
@@ -1201,8 +1239,8 @@ function ListadoPagosTab({
                     const otros_egresos = Number(e.deductions?.otros_egresos) || 0;
                     const anticipo = Number(e.anticipo1ra) || 0;
 
-                    const totalEgresos = igss + isr + cafe + cell + uniform + shoes + equipo + product + bancos + otros + judiciales + seguro + parqueo + boleto_de_ornato + otros_egresos;
-                    const liquido = salarioTotal - totalEgresos;
+                    const totalEgresos = e.calculated?.ded || 0;
+                    const liquido = e.calculated?.net || 0;
                     const q1 = periodType === '2da' ? anticipo : liquido;
                     const q2 = periodType === '2da' ? liquido - anticipo : 0;
 
@@ -1377,22 +1415,15 @@ function ListadoPagosTab({
                 </Thead>
                 <Tbody>
                   {groupData.map((e, i) => {
-                    const baseFactor = (e.days || 30) / 30;
-                    const sueldoOrd = Number(e.sueldo_ordinario) || 0;
-                    const bonInc = Number(e.bon_incentivo) || 0;
-                    const bonDec = Number(e.bon_dec_37_2001) || 0;
-                    const baseSalary = sueldoOrd * baseFactor;
-                    const bonusLey = bonInc * baseFactor;
-                    const bonusDec = bonDec * baseFactor;
-                    const bonos = Number(e.extras?.bonos) || 0;
-                    const devengado = baseSalary + bonusLey + bonusDec + bonos;
-                    const simplesVal = Number(e.extras?.simplesVal) || 0;
-                    const doblesVal = Number(e.extras?.doblesVal) || 0;
-                    const otrosIngresos = Number(e.extras?.otrosIngresos) || 0;
-                    const totalExtras = bonos + simplesVal + doblesVal + otrosIngresos;
-                    const salarioTotal = devengado + simplesVal + doblesVal + otrosIngresos;
-                    const totalEgresos = (Number(e.deductions?.igss)||0) + (Number(e.deductions?.isr)||0) + (Number(e.deductions?.cafe)||0) + (Number(e.deductions?.cell)||0) + (Number(e.deductions?.uniform)||0) + (Number(e.deductions?.shoes)||0) + (Number(e.deductions?.equipo)||0) + (Number(e.deductions?.product)||0) + (Number(e.deductions?.bancos)||0) + (Number(e.deductions?.otros)||0) + (Number(e.deductions?.judiciales)||0) + (Number(e.deductions?.seguro)||0) + (Number(e.deductions?.parqueo)||0) + (Number(e.deductions?.boleto_de_ornato)||0) + (Number(e.deductions?.otros_egresos)||0);
-                    const liquido = salarioTotal - totalEgresos;
+                    const baseSalary = e.calculated?.baseSalary || 0;
+                    const bonusLey = e.calculated?.bonusLey || 0;
+                    const bonusDec = e.calculated?.bonusDec || 0;
+                    const bonos = e.calculated?.bonos || 0;
+                    const totalExtras = e.calculated?.extrasTotal || 0;
+                    const devengado = e.calculated?.gross || 0;
+                    const totalEgresos = e.calculated?.ded || 0;
+                    const liquido = e.calculated?.net || 0;
+
                     const anticipo = Number(e.anticipo1ra) || 0;
                     const q1 = periodType === '2da' ? anticipo : liquido;
                     const q2 = periodType === '2da' ? liquido - anticipo : 0;

@@ -123,6 +123,60 @@ const sendReactivationEmail = async (gerenteName, recipientEmail, token, details
   }
 };
 
+const sendOperationLogEmail = async (gerenteName, recipientEmail, solicitanteName, count) => {
+  const approvalLink = `http://localhost:5173/operations`;
+  
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('es-GT', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  const timeStr = now.toLocaleTimeString('es-GT', { hour: '2-digit', minute: '2-digit' });
+  
+  const mailOptions = {
+    from: `"Sistema Nómina" <${process.env.GMAIL_USER || 'notificacioneseconsa@gmail.com'}>`,
+    to: recipientEmail,
+    subject: `Aprobación Requerida: Reporte Operativo (${count} registros)`,
+    html: `
+      <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f3f4f6; padding: 20px;">
+        <div style="max-width: 600px; margin: 0 auto; background-color: white; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+          <div style="padding: 15px 20px; font-weight: bold; color: #1e3a8a; font-size: 14px; letter-spacing: 0.5px;">
+            GRUPO ECONSA
+          </div>
+          <div style="background-color: #0d9488; padding: 15px 20px; display: flex; justify-content: center; align-items: center; color: white;">
+            <h2 style="margin: 0; font-size: 18px; font-weight: 600;">Reporte Operativo (Bonos / Horas Extra)</h2>
+          </div>
+          <div style="padding: 20px;">
+            <div style="color: #a0aec0; font-size: 12px; margin-bottom: 15px;">
+              ${dateStr} a las ${timeStr}
+            </div>
+            <p style="color: #4a5568; font-size: 14px; margin-bottom: 15px;">
+              Estimado(a) <strong>${gerenteName}</strong>,
+            </p>
+            <p style="color: #4a5568; font-size: 14px; margin-bottom: 20px;">
+              El usuario <strong>${solicitanteName}</strong> ha registrado <strong>${count}</strong> nueva(s) solicitud(es) de bonos/horas extra que requiere(n) su revisión y autorización.
+            </p>
+            <div style="text-align: center; margin-bottom: 20px;">
+              <a href="${approvalLink}" style="display: inline-block; background-color: #0d9488; color: white; text-decoration: none; padding: 10px 25px; border-radius: 6px; font-weight: 600; font-size: 14px; box-shadow: 0 4px 6px rgba(13, 148, 136, 0.2);">
+                Revisar en el Sistema
+              </a>
+            </div>
+            <div style="background-color: #fffbeb; border-left: 4px solid #d97706; padding: 10px 15px; font-size: 12px; color: #92400e;">
+              Estas solicitudes requieren su aprobación para ser procesadas en la nómina.
+            </div>
+          </div>
+        </div>
+      </div>
+    `
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`Email enviado a ${recipientEmail} para reporte operativo`);
+  } catch (error) {
+    console.error('Error enviando el correo de reporte operativo:', error);
+    throw new Error('No se pudo enviar el correo de reporte operativo.');
+  }
+};
+
 module.exports = {
-  sendReactivationEmail
+  sendReactivationEmail,
+  sendOperationLogEmail
 };

@@ -979,25 +979,58 @@ export function DataProvider({ children }) {
   };
 
   const updateActivePayroll = async (id, newEmployeesData) => {
-    // 1. Update React state immediately for instant UI response
-    const updatedDrafts = activePayrolls.map(p => p.id === id ? { ...p, employees: newEmployeesData } : p);
-    setActivePayrolls(updatedDrafts);
+    try {
+      const draftToUpdate = activePayrolls.find(p => p.id === id);
+      const periodType = draftToUpdate ? draftToUpdate.periodType : 'mensual';
+      const oldEmployees = draftToUpdate ? draftToUpdate.employees : [];
 
-    const draft = updatedDrafts.find(p => p.id === id);
-    if (draft) {
-      // 2. Clear existing timeout for this draft
-      if (saveTimeouts.current[id]) {
-        clearTimeout(saveTimeouts.current[id]);
+      // Find exactly which employees changed by comparing object references
+      const changedEmployees = newEmployeesData.filter(newEmp => {
+        const oldEmp = oldEmployees.find(e => e.id === newEmp.id);
+        return newEmp !== oldEmp; 
+      });
+
+      // If we couldn't find any (e.g. initial load) or there are changes, we send those.
+      // Otherwise we fallback to sending everything (shouldn't happen on edits).
+      const employeesToCalculate = changedEmployees.length > 0 ? changedEmployees : newEmployeesData;
+
+      // 1. Fetch exact calculations from the backend engine only for changed employees
+      const previewRes = await fetch('http://localhost:3000/api/calculator/preview', {
+        method: 'POST',
+        headers: getAuthHeader(),
+        body: JSON.stringify({ employees: employeesToCalculate, periodType })
+      });
+
+      let calculatedEmployees = newEmployeesData;
+      if (previewRes.ok) {
+        const calculatedResults = await previewRes.json();
+        
+        // Merge the newly calculated rows back into the full list
+        calculatedEmployees = newEmployeesData.map(emp => {
+          const calcEmp = calculatedResults.find(c => c.id === emp.id);
+          return calcEmp ? calcEmp : emp;
+        });
       }
-      
-      // 3. Set a new timeout to persist to the database after 1.5 seconds of inactivity
-      saveTimeouts.current[id] = setTimeout(async () => {
-        try {
-          const res = await fetch(`http://localhost:3000/api/payroll-drafts/${id}`, {
-            method: 'PUT',
-            headers: getAuthHeader(),
-            body: JSON.stringify(draft)
-          });
+
+      // 2. Update React state immediately for UI response
+      const updatedDrafts = activePayrolls.map(p => p.id === id ? { ...p, employees: calculatedEmployees } : p);
+      setActivePayrolls(updatedDrafts);
+
+      const draft = updatedDrafts.find(p => p.id === id);
+      if (draft) {
+        // 3. Clear existing timeout for this draft
+        if (saveTimeouts.current[id]) {
+          clearTimeout(saveTimeouts.current[id]);
+        }
+        
+        // 4. Set a new timeout to persist to the database after 1.5 seconds of inactivity
+        saveTimeouts.current[id] = setTimeout(async () => {
+          try {
+            const res = await fetch(`http://localhost:3000/api/payroll-drafts/${id}`, {
+              method: 'PUT',
+              headers: getAuthHeader(),
+              body: JSON.stringify(draft)
+            });
           if (!res.ok) {
             await res.json().catch(() => null);
           }
@@ -1006,8 +1039,10 @@ export function DataProvider({ children }) {
         }
       }, 1500);
     }
-  };
-
+  } catch(err) {
+    console.error("Error in updateActivePayroll:", err);
+  }
+};
   const updateDraftMetadata = async (id, title, companies, createdAt, periodType) => {
     const updatedDrafts = activePayrolls.map(p => p.id === id ? { ...p, title, companies, createdAt, periodType } : p);
     setActivePayrolls(updatedDrafts);
@@ -1047,19 +1082,9 @@ export function DataProvider({ children }) {
       const logsToProcess = [];
 
       draft.employees.forEach(e => {
-        const baseFactor = (e.days || 30) / 30;
-        const sueldoOrd = Number(e.sueldo_ordinario) || 0;
-        const bonInc = Number(e.bon_incentivo) || 0;
-        const bonDec = Number(e.bon_dec_37_2001) || 0;
-
-        const baseSalary = sueldoOrd * baseFactor;
-        const bonusLey = bonInc * baseFactor;
-        const bonusDec = bonDec * baseFactor;
-
-        const extrasVal = (e.extras?.simplesVal || 0) + (e.extras?.doblesVal || 0) + (e.extras?.comisiones || 0) + (e.extras?.otrosIngresos || 0);
-        const bonusesSum = Object.values(e.appliedBonuses || {}).reduce((a, b) => a + b, 0);
-        const gross = baseSalary + bonusLey + bonusDec + extrasVal + bonusesSum;
-        const ded = Object.values(e.deductions || {}).reduce((a, b) => a + b, 0);
+        // Read values exactly as computed by the backend engine
+        const gross = e.calculated?.gross || 0;
+        const ded = e.calculated?.ded || 0;
         const anticipo = e.anticipo1ra || 0;
         
         e.netTotal = gross - ded - anticipo; // Save snapshot of their net pay

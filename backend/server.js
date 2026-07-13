@@ -47,8 +47,14 @@ app.use('/api/operation-logs', operationLogRoutes);
 
 const userRoutes = require('./src/routes/user.routes');
 const sapRoutes = require('./src/routes/sap.routes');
+const calculatorRoutes = require('./src/routes/calculator.routes');
+
 app.use('/api/users', userRoutes);
 app.use('/api/sap', sapRoutes);
+app.use('/api/calculator', calculatorRoutes);
+
+const billingRoutes = require('./src/routes/billing.routes');
+app.use('/api/billing', billingRoutes);
 
 // ======================= INTEGRACION FRONTEND =======================
 // Servir la carpeta estática del Build de React

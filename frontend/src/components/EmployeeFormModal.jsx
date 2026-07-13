@@ -10,6 +10,7 @@ import {
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
 import { toast } from 'sonner';
+import { calculateMonthlyISR } from '../data/mockData';
 
 function SidebarTab({ active, label, icon: IconComponent, onClick }) {
   const activeBg = useColorModeValue('white', 'rgba(30, 41, 59, 0.8)');
@@ -575,8 +576,8 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
                   {/* DESCUENTOS */}
                   <Box>
                     <SectionTitle title="Descuentos" />
-                    <Field label="IGSS laboral (4.83% automático)" type="number" val={form.igss_laboral || calcIgssLaboral(form.sueldo_ordinario)} onChange={v => handleChange('igss_laboral', v)} />
-                    <Box mt={4}><Field label="ISR" type="number" val={form.isr ?? 0} onChange={v => handleChange('isr', v)} /></Box>
+                    <Field label="IGSS laboral (4.83% automático)" type="number" val={(!form.igss_laboral || Number(form.igss_laboral) === 0) ? calcIgssLaboral(form.sueldo_ordinario) : form.igss_laboral} onChange={v => handleChange('igss_laboral', v)} />
+                    <Box mt={4}><Field label="ISR (Automático 5%-7%)" type="number" val={(!form.isr || Number(form.isr) === 0) ? calculateMonthlyISR(Number(form.sueldo_ordinario || 0), Number(form.bon_incentivo || 250)).toFixed(2) : form.isr} onChange={v => handleChange('isr', v)} /></Box>
                     <Box mt={4}><Field label="Anticipo Quincenal" type="number" val={form.anticipo_quincenal ?? 0} onChange={v => handleChange('anticipo_quincenal', v)} /></Box>
                     <Box mt={4}><Field label="Bantrab" type="number" val={form.bantrab ?? 0} onChange={v => handleChange('bantrab', v)} /></Box>
                     <Box mt={4}><Field label="Boleto de ornato" type="number" val={form.boleto_de_ornato ?? 0} onChange={v => handleChange('boleto_de_ornato', v)} /></Box>
@@ -595,9 +596,9 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
                   <SectionTitle title="Detalle IGSS Patronal" />
                   <Box p={5} borderRadius="xl" bg={distBoxBg} border="1px solid" borderColor={distBoxBorder}>
                     <SimpleGrid columns={{ base: 1, sm: 2 }} spacing={6}>
-                      <Field label="IGSS Patronal (10.67% auto)" type="number" val={form.igss_patronal || calcIgssPatronal(form.sueldo_ordinario)} onChange={v => handleChange('igss_patronal', v)} />
-                      <Field label="Irtra (Q 20.00 fijo por ley)" type="number" val={form.irtra || '20.00'} onChange={v => handleChange('irtra', v)} />
-                      <Field label="Intecap (Q 20.00 fijo por ley)" type="number" val={form.intecap || '20.00'} onChange={v => handleChange('intecap', v)} />
+                      <Field label="IGSS Patronal (10.67% auto)" type="number" val={(!form.igss_patronal || Number(form.igss_patronal) === 0) ? calcIgssPatronal(form.sueldo_ordinario) : form.igss_patronal} onChange={v => handleChange('igss_patronal', v)} />
+                      <Field label="Irtra (Q 20.00 fijo por ley)" type="number" val={(!form.irtra || Number(form.irtra) === 0) ? '20.00' : form.irtra} onChange={v => handleChange('irtra', v)} />
+                      <Field label="Intecap (Q 20.00 fijo por ley)" type="number" val={(!form.intecap || Number(form.intecap) === 0) ? '20.00' : form.intecap} onChange={v => handleChange('intecap', v)} />
                       <Box>
                         <Text fontSize="11px" mb={1} fontWeight="600" textTransform="uppercase" color={subtitleColor} letterSpacing="wide">
                           Total IGSS Patronal
