@@ -52,6 +52,14 @@ export default function ImportData({ onClose }) {
           return;
         }
 
+        const headerRow = data[headerRowIndex] || [];
+        let isrColIndex = -1;
+        headerRow.forEach((cell, idx) => {
+          if (cell && cell.toString().trim().toUpperCase() === 'ISR') {
+            isrColIndex = idx; // Get the last ISR column
+          }
+        });
+
         // Procesar empleados
         const newEmployees = [];
         let currentId = Date.now();
@@ -84,6 +92,7 @@ export default function ImportData({ onClose }) {
 
           const base = parseCurrency(row[4]);
           const bonus = parseCurrency(row[5]);
+          const parsedIsr = isrColIndex !== -1 ? parseCurrency(row[isrColIndex]) : 0;
 
           newEmployees.push({
             id: currentId++,
@@ -95,7 +104,7 @@ export default function ImportData({ onClose }) {
             bonus,
             status: 'ACTIVO',
             dist: { [companyId]: 100 },
-            deductions: { isr: 0, bank: 0, cell: 0, cafe: 0, product: 0, insurance: 0, other: 0, shoes: 0, uniform: 0 },
+            deductions: { isr: parsedIsr, bank: 0, cell: 0, cafe: 0, product: 0, insurance: 0, other: 0, shoes: 0, uniform: 0 },
             extras: { simplesQty: 0, simplesVal: 0, doblesQty: 0, doblesVal: 0, comisiones: 0, otrosIngresos: 0 }
           });
         }

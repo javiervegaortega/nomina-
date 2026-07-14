@@ -16,6 +16,7 @@ const PayrollDraftEmployee = require('./PayrollDraftEmployee')(sequelize);
 const Commission = require('./Commission')(sequelize);
 const EmployeeIncidence = require('./EmployeeIncidence')(sequelize);
 const OperationLog = require('./OperationLog')(sequelize);
+const OperationBatch = require('./OperationBatch')(sequelize);
 const Dimension5 = require('./Dimension5')(sequelize);
 const BillingRule = require('./BillingRule')(sequelize);
 const BillingDistribution = require('./BillingDistribution')(sequelize);
@@ -45,6 +46,12 @@ OperationLog.belongsTo(Employee, { foreignKey: 'employeeId' });
 Company.hasMany(OperationLog, { foreignKey: 'companyId' });
 OperationLog.belongsTo(Company, { foreignKey: 'companyId', as: 'companyData' });
 
+OperationBatch.hasMany(OperationLog, { foreignKey: 'batchId', as: 'logs' });
+OperationLog.belongsTo(OperationBatch, { foreignKey: 'batchId', as: 'batch' });
+
+OperationBatch.belongsTo(User, { foreignKey: 'userId', as: 'user' });
+User.hasMany(OperationBatch, { foreignKey: 'userId' });
+
 PayrollDraft.hasMany(PayrollDraftEmployee, { foreignKey: 'draftId', as: 'draftEmployees', onDelete: 'CASCADE' });
 PayrollDraftEmployee.belongsTo(PayrollDraft, { foreignKey: 'draftId' });
 
@@ -66,6 +73,7 @@ module.exports = {
   Commission,
   EmployeeIncidence,
   OperationLog,
+  OperationBatch,
   Dimension5,
   BillingRule,
   BillingDistribution

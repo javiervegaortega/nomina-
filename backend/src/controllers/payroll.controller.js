@@ -323,11 +323,105 @@ const reactivateViaGet = async (req, res) => {
   }
 };
 
+const auditorApprove = async (req, res) => {
+  const t = await sequelize.transaction();
+  try {
+    const historyRecord = await PayrollHistory.findByPk(req.params.id, { transaction: t });
+    if (!historyRecord) {
+      await t.rollback();
+      return res.status(404).json({ error: 'Nómina no encontrada' });
+    }
+
+    const data = typeof historyRecord.data === 'string' ? JSON.parse(historyRecord.data) : historyRecord.data;
+
+    const draftId = `draft_${Date.now()}_${Math.floor(Math.random()*1000)}`;
+    await PayrollDraft.create({
+      id: draftId,
+      title: historyRecord.title,
+      periodType: historyRecord.periodType,
+      companies: historyRecord.companies,
+      employeesCount: data ? data.length : 0,
+      notes: historyRecord.notes,
+      isApproved: true,
+      createdAt: new Date()
+    }, { transaction: t });
+
+    if (data && data.length > 0) {
+      const employeeRecords = data.map(emp => ({ draftId, employeeId: emp.id, data: emp }));
+      await PayrollDraftEmployee.bulkCreate(employeeRecords, { transaction: t });
+    }
+
+    await historyRecord.destroy({ transaction: t });
+    await t.commit();
+    res.json({ message: 'Nómina devuelta a borradores como aprobada.' });
+  } catch (err) {
+    await t.rollback();
+    res.status(500).json({ error: err.message });
+  }
+};
+
+const auditorReject = async (req, res) => {
+  const t = await sequelize.transaction();
+  try {
+    const { note } = req.body;
+    const historyRecord = await PayrollHistory.findByPk(req.params.id, { transaction: t });
+    if (!historyRecord) {
+      await t.rollback();
+      return res.status(404).json({ error: 'Nómina no encontrada' });
+    }
+
+    const data = typeof historyRecord.data === 'string' ? JSON.parse(historyRecord.data) : historyRecord.data;
+
+    const draftId = `draft_${Date.now()}_${Math.floor(Math.random()*1000)}`;
+    await PayrollDraft.create({
+      id: draftId,
+      title: historyRecord.title,
+      periodType: historyRecord.periodType,
+      companies: historyRecord.companies,
+      employeesCount: data ? data.length : 0,
+      notes: historyRecord.notes,
+      isApproved: false,
+      correctionNote: note || 'Requiere correcciones',
+      createdAt: new Date()
+    }, { transaction: t });
+
+    if (data && data.length > 0) {
+      const employeeRecords = data.map(emp => ({ draftId, employeeId: emp.id, data: emp }));
+      await PayrollDraftEmployee.bulkCreate(employeeRecords, { transaction: t });
+    }
+
+    await historyRecord.destroy({ transaction: t });
+    await t.commit();
+    res.json({ message: 'Nómina rebotada a borradores para corrección.' });
+  } catch (err) {
+    await t.rollback();
+    res.status(500).json({ error: err.message });
+  }
+};
+
+const updateStatus = async (req, res) => {
+  try {
+    const { status } = req.body;
+    const payroll = await PayrollHistory.findByPk(req.params.id);
+    if (!payroll) return res.status(404).json({ error: 'No encontrado' });
+    
+    payroll.status = status;
+    await payroll.save();
+    
+    res.json(payroll);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+};
+
 module.exports = {
   getPayrolls,
+  updateStatus,
   createPayroll,
   deletePayroll,
   requestReactivation,
   reactivate,
-  reactivateViaGet
+  reactivateViaGet,
+  auditorApprove,
+  auditorReject
 };

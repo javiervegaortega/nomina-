@@ -18,6 +18,7 @@ const payrollDraftRoutes = require('./src/routes/payrollDraft.routes');
 const commissionRoutes = require('./src/routes/commissions.routes');
 const incidenceRoutes = require('./src/routes/incidence.routes');
 const operationLogRoutes = require('./src/routes/operationLog.routes');
+const operationBatchRoutes = require('./src/routes/operationBatch.routes');
 const { nestedRouter: empRecordsNested, flatRouter: empRecordsFlat } = require('./src/routes/employeeRecord.routes');
 
 const app = express();
@@ -44,6 +45,7 @@ app.use('/api/payroll-drafts', payrollDraftRoutes);
 app.use('/api/commissions', commissionRoutes);
 app.use('/api/incidences', incidenceRoutes);
 app.use('/api/operation-logs', operationLogRoutes);
+app.use('/api/operation-batches', operationBatchRoutes);
 
 const userRoutes = require('./src/routes/user.routes');
 const sapRoutes = require('./src/routes/sap.routes');

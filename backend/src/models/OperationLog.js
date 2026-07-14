@@ -18,7 +18,8 @@ module.exports = (sequelize) => {
       defaultValue: 'PENDING_MANAGER' 
     },
     periodAssigned: { type: DataTypes.STRING, allowNull: true }, // To mark which payroll processed it
-    companyId: { type: DataTypes.INTEGER, allowNull: true }
+    companyId: { type: DataTypes.INTEGER, allowNull: true },
+    batchId: { type: DataTypes.INTEGER, allowNull: true }
   }, {
     tableName: 'operation_logs',
     timestamps: true

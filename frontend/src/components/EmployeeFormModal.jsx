@@ -233,7 +233,24 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
   const handleSave = () => {
     if (distTotal !== 100) return;
     if (duplicateDpi || duplicateIgss) return;
-    onSave(form);
+    const finalForm = { ...form };
+    // Persist auto-calculated ISR if not manually set
+    if (!finalForm.isr || Number(finalForm.isr) === 0) {
+      const autoISR = calculateMonthlyISR(
+        Number(finalForm.sueldo_ordinario || 0),
+        Number(finalForm.bon_dec_37_2001) || 0
+      );
+      finalForm.isr = Number(autoISR.toFixed(2));
+    }
+    // Persist auto-calculated IGSS laboral if not manually set
+    if (!finalForm.igss_laboral || Number(finalForm.igss_laboral) === 0) {
+      finalForm.igss_laboral = Number(calcIgssLaboral(finalForm.sueldo_ordinario));
+    }
+    // Persist auto-calculated IGSS patronal if not manually set
+    if (!finalForm.igss_patronal || Number(finalForm.igss_patronal) === 0) {
+      finalForm.igss_patronal = Number(calcIgssPatronal(finalForm.sueldo_ordinario));
+    }
+    onSave(finalForm);
   };
 
   let parsedDistValues = [];
@@ -467,7 +484,20 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
                 <SimpleGrid columns={{ base: 1, sm: 2 }} spacing={5} mb={5}>
                   <FormControl isRequired>
                     <FormLabel fontSize="11px" mb={1} color={subtitleColor} fontWeight="600" textTransform="uppercase">Fecha de Nacimiento (Obligatorio)</FormLabel>
-                    <Input size="sm" type="date" value={form.fecha_nacimiento?.split('T')[0] || ''} onChange={e => handleChange('fecha_nacimiento', e.target.value)} />
+                    <Input size="sm" type="date" value={form.fecha_nacimiento?.split('T')[0] || ''} onChange={e => {
+                      const dateVal = e.target.value;
+                      handleChange('fecha_nacimiento', dateVal);
+                      if (dateVal) {
+                        const today = new Date();
+                        const birthDate = new Date(dateVal);
+                        let age = today.getFullYear() - birthDate.getFullYear();
+                        const m = today.getMonth() - birthDate.getMonth();
+                        if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
+                          age--;
+                        }
+                        handleChange('edad', age);
+                      }
+                    }} />
                   </FormControl>
                   <Field label="Edad (Obligatorio)" val={form.edad} onChange={v => handleChange('edad', v)} type="number" required />
                   <SelectField label="Estado Civil (Obligatorio)" val={form.estado_civil} onChange={v => handleChange('estado_civil', v)} options={['Casado/a', 'Soltero/a', 'Divorciado/a', 'Viudo/a', 'Unido/a']} required />
@@ -565,9 +595,16 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
                   {/* DEVENGADOS */}
                   <Box>
                     <SectionTitle title="Devengados" />
-                    <Field label="Sueldo Ordinario (Obligatorio)" type="number" val={form.sueldo_ordinario} onChange={v => handleChange('sueldo_ordinario', v)} required />
-                    <Box mt={4}><Field label="Bonificación Decreto 37-2001 (Obligatorio)" type="number" val={form.bon_dec_37_2001 ?? 250} onChange={v => handleChange('bon_dec_37_2001', v)} required /></Box>
-                    <Box mt={4}><Field label="Bonificación Incentivo" type="number" val={form.bon_incentivo ?? 0} onChange={v => handleChange('bon_incentivo', v)} /></Box>
+                    <Field label="Sueldo Ordinario (Obligatorio)" type="number" val={form.sueldo_ordinario} onChange={v => {
+                      handleChange('sueldo_ordinario', v);
+                      handleChange('igss_laboral', calcIgssLaboral(v));
+                      handleChange('igss_patronal', calcIgssPatronal(v));
+                      handleChange('isr', calculateMonthlyISR(Number(v || 0), Number(form.bon_dec_37_2001) || 0).toFixed(2));
+                    }} required />
+                    <Box mt={4}><Field label="Bono Decreto / Incentivo (Oblig.)" type="number" val={form.bon_dec_37_2001 ?? 250} onChange={v => {
+                      handleChange('bon_dec_37_2001', v);
+                      handleChange('isr', calculateMonthlyISR(Number(form.sueldo_ordinario || 0), Number(v) || 0).toFixed(2));
+                    }} required /></Box>
                     <Box mt={4}><Field label="Otros Ingresos" type="number" val={form.otro_ingresos ?? 0} onChange={v => handleChange('otro_ingresos', v)} /></Box>
                     <Box mt={4}><Field label="Vacaciones" type="number" val={form.vacaciones ?? 0} onChange={v => handleChange('vacaciones', v)} /></Box>
                     <Box mt={4}><Field label="Ventas Económicas" type="number" val={form.ventas_economicas ?? 0} onChange={v => handleChange('ventas_economicas', v)} /></Box>
@@ -577,7 +614,7 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
                   <Box>
                     <SectionTitle title="Descuentos" />
                     <Field label="IGSS laboral (4.83% automático)" type="number" val={(!form.igss_laboral || Number(form.igss_laboral) === 0) ? calcIgssLaboral(form.sueldo_ordinario) : form.igss_laboral} onChange={v => handleChange('igss_laboral', v)} />
-                    <Box mt={4}><Field label="ISR (Automático 5%-7%)" type="number" val={(!form.isr || Number(form.isr) === 0) ? calculateMonthlyISR(Number(form.sueldo_ordinario || 0), Number(form.bon_incentivo || 250)).toFixed(2) : form.isr} onChange={v => handleChange('isr', v)} /></Box>
+                    <Box mt={4}><Field label="ISR (Automático 5%-7%)" type="number" val={(!form.isr || Number(form.isr) === 0) ? calculateMonthlyISR(Number(form.sueldo_ordinario || 0), Number(form.bon_dec_37_2001) || 0).toFixed(2) : form.isr} onChange={v => handleChange('isr', v)} /></Box>
                     <Box mt={4}><Field label="Anticipo Quincenal" type="number" val={form.anticipo_quincenal ?? 0} onChange={v => handleChange('anticipo_quincenal', v)} /></Box>
                     <Box mt={4}><Field label="Bantrab" type="number" val={form.bantrab ?? 0} onChange={v => handleChange('bantrab', v)} /></Box>
                     <Box mt={4}><Field label="Boleto de ornato" type="number" val={form.boleto_de_ornato ?? 0} onChange={v => handleChange('boleto_de_ornato', v)} /></Box>

@@ -203,9 +203,15 @@ function PayrollHub({ onSelectDraft }) {
                 </Center>
                 <Box minW="0">
                   <Heading size="sm" fontWeight={700} isTruncated title={draft.title}>{draft.title}</Heading>
-                  <Badge colorScheme={draft.periodType === '2da' ? 'purple' : 'teal'} mt={1} mb={1}>
+                  <Badge colorScheme={draft.periodType === '2da' ? 'purple' : 'teal'} mt={1} mb={1} mr={1}>
                     {draft.periodType === '2da' ? '2da Quincena' : '1ra Quincena'}
                   </Badge>
+                  {draft.isApproved && (
+                    <Badge colorScheme="green" mt={1} mb={1} mr={1}>Visto Bueno</Badge>
+                  )}
+                  {draft.correctionNote && (
+                    <Badge colorScheme="red" mt={1} mb={1}>Con Errores</Badge>
+                  )}
                   <Text fontSize="xs" color="gray.500">
                     Creada: {new Date(draft.createdAt).toLocaleDateString()}
                   </Text>
@@ -652,27 +658,36 @@ function PayrollEditor({ draftId, onBack }) {
             <Flex align="center" gap={{ base: 2, md: 3 }} flexWrap="wrap">
               <Heading size={{ base: 'sm', md: 'md' }} fontWeight={800}>{draft.title}</Heading>
               <Badge colorScheme="orange" variant="subtle" fontWeight={700}>Borrador</Badge>
+              {draft.isApproved && <Badge colorScheme="green" variant="subtle" fontWeight={700}>Visto Bueno Auditoría</Badge>}
             </Flex>
             <Text fontSize="sm" color="gray.500">
-              {data.length} empleados en esta nómina
+              {employees.length} empleados en esta nómina
             </Text>
             <DraftNotesEditor draft={draft} updateDraftMetadata={updateDraftMetadata} />
           </Box>
         </Flex>
+
         <Flex gap={2}>
           {!isReadOnly && (
             <Button 
-              bg="red.500"
+              bg={draft.isApproved ? "green.500" : "red.500"}
               color="white"
-              leftIcon={<Check size={16} />} 
+              leftIcon={<CheckCircle2 size={16} />} 
               onClick={onAlertOpen}
-              _hover={{ bg: 'red.600', animation: 'none', transform: 'none' }}
+              _hover={{ bg: draft.isApproved ? 'green.600' : 'red.600', animation: 'none', transform: 'none' }}
             >
-              Cerrar Nómina
+              {draft.isApproved ? 'Cerrar Definitivamente' : 'Enviar a Auditoría'}
             </Button>
           )}
         </Flex>
       </Flex>
+
+        {draft.correctionNote && (
+          <Box mb={6} p={4} bg="red.50" border="1px solid" borderColor="red.200" borderRadius="md">
+            <Text color="red.700" fontWeight="bold" mb={2}>⚠️ Auditoría solicita correcciones:</Text>
+            <Text color="red.600" whiteSpace="pre-wrap">{draft.correctionNote}</Text>
+          </Box>
+        )}
 
       {/* Summary strip */}
       <Flex 
@@ -760,28 +775,25 @@ function PayrollEditor({ draftId, onBack }) {
         />
       </Box>
 
-      <AlertDialog
-        isOpen={isAlertOpen}
-        leastDestructiveRef={cancelRef}
-        onClose={onAlertClose}
-        isCentered
-      >
+      <AlertDialog isOpen={isAlertOpen} leastDestructiveRef={cancelRef} onClose={onAlertClose}>
         <AlertDialogOverlay>
           <AlertDialogContent borderRadius="xl">
-            <AlertDialogHeader fontSize="lg" fontWeight="800" color="red.500">
-              Cerrar Nómina
+            <AlertDialogHeader fontSize="lg" fontWeight="800" color={draft.isApproved ? "green.500" : "red.500"}>
+              {draft.isApproved ? 'Cerrar Nómina Definitivamente' : 'Enviar a Auditoría'}
             </AlertDialogHeader>
 
             <AlertDialogBody color="gray.600">
-              ¿Estás seguro de cerrar esta nómina? Se moverá al <strong>Historial</strong> y ya no podrá ser editada. Esta acción es irreversible.
+              {draft.isApproved 
+                ? '¿Estás seguro de cerrar definitivamente esta nómina? Ya tiene el visto bueno de auditoría. Se guardará en el historial final.'
+                : '¿Estás seguro de enviar esta nómina a Auditoría? Desaparecerá de tus borradores y pasará al Historial en estado de revisión.'}
             </AlertDialogBody>
 
             <AlertDialogFooter>
-              <Button ref={cancelRef} onClick={onAlertClose} variant="ghost" borderRadius="md">
+              <Button ref={cancelRef} onClick={onAlertClose} variant="ghost">
                 Cancelar
               </Button>
-              <Button colorScheme="red" onClick={confirmClose} ml={3} borderRadius="md">
-                Sí, Cerrar Nómina
+              <Button colorScheme={draft.isApproved ? "green" : "red"} onClick={confirmClose} ml={3} borderRadius="md">
+                {draft.isApproved ? 'Sí, Cerrar Nómina' : 'Sí, Enviar a Auditoría'}
               </Button>
             </AlertDialogFooter>
           </AlertDialogContent>

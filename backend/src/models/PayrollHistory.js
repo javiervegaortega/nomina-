@@ -14,6 +14,10 @@ module.exports = (sequelize) => {
       type: DataTypes.STRING,
       defaultValue: '1ra'
     },
+    status: {
+      type: DataTypes.STRING,
+      defaultValue: 'cerrada'
+    },
     closedAt: {
       type: DataTypes.STRING
     },

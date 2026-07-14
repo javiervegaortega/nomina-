@@ -127,7 +127,7 @@ export default function Employees() {
   const filteredEmployees = useMemo(() => {
     const searchNorm = normalize(debouncedSearch);
     return employees.filter(e => {
-      if (filterDept !== 'ALL' && e.departamento_laboral !== filterDept) return false;
+      if (filterDept !== 'ALL' && getEmployeeDepartment(e) !== filterDept) return false;
       if (filterArea !== 'ALL' && String(e.areaId) !== filterArea) return false;
       if (filterDiv !== 'ALL' && String(e.divisionId) !== filterDiv) return false;
       if (filterSubdiv !== 'ALL' && String(e.subdivisionId) !== filterSubdiv) return false;
@@ -211,6 +211,12 @@ export default function Employees() {
   const getEmployeeCompany = (emp) => {
     const companyId = emp?.empresa_principal || emp?.companyId;
     return companies.find(c => String(c.id) === String(companyId)) || null;
+  };
+
+  const getEmployeeDepartment = (emp) => {
+    const deptId = emp?.departmentId || emp?.departamento_laboral;
+    const found = departments.find(d => String(d.id) === String(deptId) || d.nombre_dimension === deptId);
+    return found ? found.nombre_dimension : (emp?.departamento_laboral || 'N/A');
   };
 
   const handlePrintFiniquito = async () => {
@@ -655,7 +661,7 @@ export default function Employees() {
       'No. IGSS': e.no_igss || '',
       'Empresa': comp?.nombre_comercial || '',
       'Puesto': e.puesto || '',
-      'Departamento': e.departamento_laboral || '',
+      'Departamento': getEmployeeDepartment(e) || '',
       'Estado': e.estado || 'Activo',
       'Fecha Inicio': e.fecha_inicio ? new Date(e.fecha_inicio).toLocaleDateString('es-GT') : '',
       'Fecha Baja': e.fecha_baja ? new Date(e.fecha_baja).toLocaleDateString('es-GT') : '',
@@ -1074,6 +1080,7 @@ export default function Employees() {
                     handleGenerateFiniquito={handleGenerateFiniquito}
                     handleDelete={handleDelete}
                     isReadOnly={isReadOnly}
+                    getEmployeeDepartment={getEmployeeDepartment}
                   />
                 ))
               )}
@@ -1593,7 +1600,7 @@ export default function Employees() {
                         <Td fontSize="sm" fontWeight={500} color={brandColor}>{getFullName(e)}</Td>
                         <Td fontSize="sm">{getEmployeeCompany(e)?.nombre_comercial || 'Sin Empresa'}</Td>
                         <Td fontSize="sm">
-                          <Badge variant="outline" colorScheme="gray">{e.departamento_laboral || 'N/A'}</Badge>
+                          <Badge variant="outline" colorScheme="gray">{getEmployeeDepartment(e)}</Badge>
                         </Td>
                         <Td fontSize="sm" color={textSecondary}>{e.puesto || 'N/A'}</Td>
                         <Td textAlign="center">
@@ -1650,7 +1657,8 @@ const EmployeeRow = React.memo(({
   setDisciplinariaState,
   handleGenerateFiniquito,
   handleDelete,
-  isReadOnly
+  isReadOnly,
+  getEmployeeDepartment
 }) => {
   const fullName = getFullName(emp);
   const companyName = companies.find(c => c.id === emp.empresa_principal)?.nombre_comercial || 'SIN ASIGNAR';
@@ -1697,7 +1705,7 @@ const EmployeeRow = React.memo(({
             borderRadius="md"
             px={2}
           >
-            {emp.departamento_laboral || 'N/A'}
+            {getEmployeeDepartment(emp)}
           </Badge>
           <Badge
             variant="subtle"

@@ -1,10 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import {
   Modal, ModalOverlay, ModalContent, ModalHeader, ModalBody, ModalFooter, ModalCloseButton,
-  Button, Box, Table, Thead, Tbody, Tr, Th, Td, Heading, Text, Flex, useColorModeValue, Badge, Spinner, Center,
-  Menu, MenuButton, MenuList, MenuItem, MenuItemOption, MenuOptionGroup, Tooltip, Switch, FormControl, FormLabel
+  Button, Box, Table, Thead, Tbody, Tr, Th, Td, Heading, Text, Flex, useColorModeValue, Badge, Spinner, Center
 } from '@chakra-ui/react';
-import { Download, FileText, Printer, Settings, LayoutGrid, ChevronDown } from 'lucide-react';
+import { Download, FileText, Printer } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -29,7 +28,7 @@ const REPORT_TITLES = {
   industrial:   'Plantilla Banco Industrial',
 };
 
-export default function ReportPreviewModal({ isOpen, onClose, reportType, group, data, companies, areas }) {
+export default function ReportPreviewModal({ isOpen, onClose, reportType, group, data, companies }) {
   // ── All hooks at top level ────────────────────────────────────
   const tdBg             = useColorModeValue('white', 'gray.800');
   const theadBg          = useColorModeValue('gray.100', 'gray.900');
@@ -41,98 +40,6 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
 
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState(null);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
-
-  const [groupByArea, setGroupByArea] = useState(false);
-  const [colsNomina, setColsNomina] = useState(() => {
-    const saved = localStorage.getItem('nomina_cols');
-    if (saved) return JSON.parse(saved);
-    return ['no','nombre','empresa','puesto','dias','ordinario','bon_decreto','total_dev','total_egr','liquido'];
-  });
-  const [colsIgss, setColsIgss] = useState(() => {
-    const saved = localStorage.getItem('igss_cols');
-    if (saved) return JSON.parse(saved);
-    return ['no','nombre','cuenta','puesto','dias','ordinario','bonos','total_dev','igss','isr','total_egr','liquido','quinc1','quinc2','no_igss'];
-  });
-
-  useEffect(() => { localStorage.setItem('nomina_cols', JSON.stringify(colsNomina)); }, [colsNomina]);
-  useEffect(() => { localStorage.setItem('igss_cols', JSON.stringify(colsIgss)); }, [colsIgss]);
-
-  const ALL_COLUMNS_DEF = [
-    { id: 'no', label: 'No.', align: 'left' },
-    { id: 'nombre', label: 'Nombre', align: 'left' },
-    { id: 'empresa', label: 'Empresa', align: 'left' },
-    { id: 'puesto', label: 'Puesto', align: 'left' },
-    { id: 'cuenta', label: 'No. Cuenta', align: 'left' },
-    { id: 'dias', label: 'Días', align: 'left' },
-    { id: 'ordinario', label: 'S. Ordinario', align: 'right' },
-    { id: 'bon_incentivo', label: 'Bon. Incentivo', align: 'right' },
-    { id: 'bon_decreto', label: 'Bono Dec. 37-2001', align: 'right' },
-    { id: 'bonos', label: 'Bonos', align: 'right' },
-    { id: 'total_dev', label: 'T. Devengado', align: 'right' },
-    { id: 'hrs_simples', label: 'Hrs Simples', align: 'right' },
-    { id: 'val_hrs_simples', label: 'Val Hrs Simp', align: 'right' },
-    { id: 'hrs_dobles', label: 'Hrs Dobles', align: 'right' },
-    { id: 'val_hrs_dobles', label: 'Val Hrs Dobl', align: 'right' },
-    { id: 'otros_ingresos', label: 'Otros Ingr.', align: 'right' },
-    { id: 'salario_total', label: 'Salario Total', align: 'right' },
-    { id: 'igss', label: 'IGSS', align: 'right' },
-    { id: 'isr', label: 'ISR', align: 'right' },
-    { id: 'cafeteria', label: 'Cafetería', align: 'right' },
-    { id: 'celular', label: 'Celular', align: 'right' },
-    { id: 'uniforme', label: 'Uniforme', align: 'right' },
-    { id: 'calzado', label: 'Calzado', align: 'right' },
-    { id: 'equipo', label: 'Equipo', align: 'right' },
-    { id: 'producto', label: 'Producto', align: 'right' },
-    { id: 'bancos', label: 'Bancos', align: 'right' },
-    { id: 'otros', label: 'Otros', align: 'right' },
-    { id: 'judiciales', label: 'Judiciales', align: 'right' },
-    { id: 'seguro', label: 'Seguro', align: 'right' },
-    { id: 'parqueo', label: 'Parqueo', align: 'right' },
-    { id: 'ornato', label: 'Bol. Ornato', align: 'right' },
-    { id: 'otros_egr', label: 'Otros Egr.', align: 'right' },
-    { id: 'total_egr', label: 'Total Egresos', align: 'right' },
-    { id: 'liquido', label: 'Líquido', align: 'right' },
-    { id: 'quinc1', label: '1ra Quincena', align: 'right' },
-    { id: 'quinc2', label: '2da Quincena', align: 'right' },
-    { id: 'no_igss', label: 'No. IGSS', align: 'left' }
-  ];
-
-  const renderConfigControls = () => {
-    if (reportType !== 'nomina' && reportType !== 'igss') return null;
-    const isNomina = reportType === 'nomina';
-    const defs = ALL_COLUMNS_DEF;
-    const vals = isNomina ? colsNomina : colsIgss;
-    const setVals = isNomina ? setColsNomina : setColsIgss;
-
-    return (
-      <Flex gap={4} align="center">
-        <Menu closeOnSelect={false}>
-          <MenuButton as={Button} size="sm" variant="outline" rightIcon={<ChevronDown size={14}/>} leftIcon={<Settings size={14}/>}>
-            Columnas
-          </MenuButton>
-          <MenuList maxH="300px" overflowY="auto" zIndex={100} boxShadow="xl">
-            <MenuItem onClick={() => setVals(defs.map(d => d.id))} fontWeight="bold" color="blue.600">
-              ✓ TODAS
-            </MenuItem>
-            <MenuOptionGroup type="checkbox" value={vals} onChange={setVals}>
-              {defs.map(d => (
-                <MenuItemOption key={d.id} value={d.id} fontSize="sm">{d.label}</MenuItemOption>
-              ))}
-            </MenuOptionGroup>
-          </MenuList>
-        </Menu>
-        <Tooltip label="Agrupar el reporte por áreas">
-          <FormControl display="flex" alignItems="center" w="auto">
-            <Switch id="group-area" size="sm" colorScheme="blue" isChecked={groupByArea} onChange={e => setGroupByArea(e.target.checked)} />
-            <FormLabel htmlFor="group-area" mb="0" ml={2} fontSize="sm" fontWeight="semibold" cursor="pointer">
-              Por Área
-            </FormLabel>
-          </FormControl>
-        </Tooltip>
-      </Flex>
-    );
-  };
-
 
   // Helper to generate Libro Doc
   const generateLibroDoc = () => {
@@ -327,56 +234,7 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
   };
 
   // ── PDF exports ──────────────────────────────────────────────
-  const handleDownloadPDF = (action = 'download') => {
-
-  const processPdfTable = (doc, reportType, headRow, dataMapFn, colStyles) => {
-    let currentY = 100;
-    if (groupByArea) {
-      const grouped = {};
-      data.forEach(e => {
-        const areaId = e.areaId || e.area;
-        const areaName = areas?.find(a => String(a.id) === String(areaId))?.nombre || 'Sin Área';
-        if (!grouped[areaName]) grouped[areaName] = [];
-        grouped[areaName].push(e);
-      });
-      Object.keys(grouped).forEach(area => {
-        if (currentY > 500) { doc.addPage(); currentY = 100; }
-        doc.setFontSize(10);
-        doc.setFont('helvetica', 'bold');
-        doc.setTextColor(41, 128, 185);
-        doc.text(`Área: ${area}`, 36, currentY);
-        currentY += 10;
-        
-        const body = grouped[area].map(dataMapFn);
-        autoTable(doc, { 
-          startY: currentY, 
-          head: [headRow], 
-          body, 
-          theme: 'grid', 
-          headStyles: { fillColor: [41, 128, 185], textColor: 255, fontStyle: 'bold' }, 
-          styles: { fontSize: 7, cellPadding: 3 },
-          columnStyles: colStyles,
-          horizontalPageBreak: true,
-          horizontalPageBreakRepeat: 0
-        });
-        currentY = doc.lastAutoTable.finalY + 25;
-      });
-    } else {
-      const body = data.map(dataMapFn);
-      autoTable(doc, { 
-        startY: currentY, 
-        head: [headRow], 
-        body, 
-        theme: 'grid', 
-        headStyles: { fillColor: [41, 128, 185], textColor: 255, fontStyle: 'bold' }, 
-        styles: { fontSize: 7, cellPadding: 3 },
-        columnStyles: colStyles,
-        horizontalPageBreak: true,
-        horizontalPageBreakRepeat: 0
-      });
-    }
-  };
-
+  const handleDownloadPDF = () => {
     const title  = REPORT_TITLES[reportType] || reportType;
     const safe   = group.title.replace(/[^a-z0-9]/gi, '_');
 
@@ -419,12 +277,7 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
       body.push([{ content: `Nota: Transferencia programada para ${fechaPago} INMEDIATO`, colSpan: 6, styles: { fontStyle: 'italic', textColor: [100, 100, 100] } }]);
 
       autoTable(doc, { startY: 100, head: [['Nombre de Colaborador', 'Empresa', 'Soporte', 'Banco de Pago', 'Medio de Pago', 'Monto']], body, theme: 'grid', headStyles: { fillColor: [41, 128, 185], textColor: 255, fontStyle: 'bold' }, styles: { fontSize: 8, cellPadding: 3 }, columnStyles: { 0: { cellWidth: 155 }, 1: { cellWidth: 105 }, 2: { cellWidth: 75 }, 3: { cellWidth: 75 }, 4: { cellWidth: 85 }, 5: { cellWidth: 85, halign: 'right' } } });
-      if (action === 'print') {
-        doc.autoPrint();
-        window.open(doc.output('bloburl'), '_blank');
-      } else {
-        doc.save(`Verificador_Pago_${safe}.pdf`);
-      }
+      doc.save(`Verificador_Pago_${safe}.pdf`);
     }
 
     // ── Solicitud de Cheques ─────────────────────────────────
@@ -441,51 +294,40 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
       });
       body.push(['', '', '', '', { content: 'TOTAL', styles: { fontStyle: 'bold', halign: 'right' } }, { content: fmtQ(total), styles: { halign: 'right', fontStyle: 'bold', textColor: [0, 120, 0] } }]);
       autoTable(doc, { startY: 100, head: [['Nombre de Colaborador', 'Empresa', 'Tipo Personal', 'Banco de Pago', 'Medio Pago', 'Monto Total']], body, theme: 'grid', headStyles: { fillColor: [41, 128, 185], textColor: 255, fontStyle: 'bold' }, styles: { fontSize: 8, cellPadding: 3 } });
-      if (action === 'print') {
-        doc.autoPrint();
-        window.open(doc.output('bloburl'), '_blank');
-      } else {
-        doc.save(`Solicitud_Cheques_${safe}.pdf`);
-      }
+      doc.save(`Solicitud_Cheques_${safe}.pdf`);
     }
-
-    
 
     // ── Nómina General ───────────────────────────────────────
     else if (reportType === 'nomina') {
       const doc = new jsPDF('landscape', 'pt', 'letter');
       addHeader(doc, 'Nómina General');
-      
-      const cols = ALL_COLUMNS_DEF.filter(c => colsNomina.includes(c.id));
-      const headRow = cols.map(c => c.label);
-      const colStyles = {};
-      cols.forEach((c, idx) => { if (c.align === 'right') colStyles[idx] = { halign: 'right' }; });
+      const body = data.map((e, i) => [
+        i + 1, getEmpName(e), e.company || 'N/A', e.puesto || 'N/A', e.days || 30,
+        fmtQ(e.calculated.baseSalary), fmtQ(e.calculated.bonusLey), fmtQ(e.calculated.bonusDec),
+        fmtQ(e.calculated.gross), fmtQ(e.calculated.ded), { content: fmtQ(e.calculated.net), styles: { fontStyle: 'bold', textColor: [0, 120, 0] } }
+      ]);
+      autoTable(doc, { startY: 100, head: [['No.', 'Nombre', 'Empresa', 'Puesto', 'Días', 'S. Ordinario', 'Bon. Incentivo', 'Bon. Decreto', 'Total Dev.', 'Total Egr.', 'Líquido']], body, theme: 'grid', headStyles: { fillColor: [41, 128, 185], textColor: 255, fontStyle: 'bold' }, styles: { fontSize: 7, cellPadding: 3 }, columnStyles: { 5: { halign: 'right' }, 6: { halign: 'right' }, 7: { halign: 'right' }, 8: { halign: 'right' }, 9: { halign: 'right' }, 10: { halign: 'right' } } });
+      doc.save(`Nomina_General_${safe}.pdf`);
+    }
 
-      const dataMapFn = (e, i) => {
-        return cols.map(c => {
-          const val = getColValue(e, i, c.id, true);
-          if (c.id === 'liquido') return { content: val, styles: { fontStyle: 'bold', textColor: [0, 120, 0] } };
-          return val;
-        });
-      };
-      processPdfTable(doc, 'igss', headRow, dataMapFn, colStyles);
-      if (action === 'print') {
-        doc.autoPrint();
-        window.open(doc.output('bloburl'), '_blank');
-      } else {
-        doc.save(`Recibo_IGSS_${safe}.pdf`);
-      }
+    // ── Recibo e IGSS ────────────────────────────────────────
+    else if (reportType === 'igss') {
+      const doc = new jsPDF('landscape', 'pt', 'letter');
+      addHeader(doc, 'Recibo e IGSS');
+      const body = data.map((e, i) => {
+        const net = e.calculated.net;
+        const q1 = group.periodType === '2da' ? (e.anticipo1ra || 0) : net;
+        const q2 = group.periodType === '2da' ? net - (e.anticipo1ra || 0) : 0;
+        return [i + 1, getEmpName(e), e.no_cuenta || '', e.puesto || 'N/A', e.days || 30, fmtQ(e.calculated.baseSalary), fmtQ(e.calculated.bonusLey + e.calculated.bonusDec + e.calculated.bonos), fmtQ(e.calculated.gross), fmtQ(e.deductions?.igss || 0), fmtQ(e.deductions?.isr || 0), fmtQ(e.calculated.ded), { content: fmtQ(net), styles: { fontStyle: 'bold', textColor: [0, 120, 0] } }, fmtQ(q1), fmtQ(q2), e.no_igss || ''];
+      });
+      autoTable(doc, { startY: 100, head: [['No.', 'Nombre', 'No. Cuenta', 'Puesto', 'Días', 'S. Ordinario', 'Bonos', 'Total Dev.', 'IGSS', 'ISR', 'Total Egr.', 'Líquido', '1ra Quinc.', '2da Quinc.', 'No. IGSS']], body, theme: 'grid', headStyles: { fillColor: [41, 128, 185], textColor: 255, fontStyle: 'bold' }, styles: { fontSize: 6.5, cellPadding: 2.5 }, columnStyles: { 5: { halign: 'right' }, 6: { halign: 'right' }, 7: { halign: 'right' }, 8: { halign: 'right' }, 9: { halign: 'right' }, 10: { halign: 'right' }, 11: { halign: 'right' }, 12: { halign: 'right' }, 13: { halign: 'right' } } });
+      doc.save(`Recibo_IGSS_${safe}.pdf`);
     }
 
     // ── Libro de Salarios ────────────────────────────────────
     else if (reportType === 'libro') {
       const doc = generateLibroDoc();
-      if (action === 'print') {
-        doc.autoPrint();
-        window.open(doc.output('bloburl'), '_blank');
-      } else {
-        doc.save(`Libro_Salarios_${safe}.pdf`);
-      }
+      doc.save(`Libro_Salarios_${safe}.pdf`);
     }
 
     // ── Plantilla Promerica ──────────────────────────────────
@@ -511,12 +353,7 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
       });
 
       autoTable(doc, { startY: 100, head: [['No. Cuenta', 'Nombre de Colaborador', 'Monto', 'Concepto']], body, theme: 'grid', headStyles: { fillColor: [41, 128, 185], textColor: 255, fontStyle: 'bold' }, styles: { fontSize: 8, cellPadding: 3 }, columnStyles: { 0: { cellWidth: 90 }, 1: { cellWidth: 200 }, 2: { cellWidth: 80, halign: 'right' }, 3: { cellWidth: 150 } } });
-      if (action === 'print') {
-        doc.autoPrint();
-        window.open(doc.output('bloburl'), '_blank');
-      } else {
-        doc.save(`Plantilla_Promerica_${safe}.pdf`);
-      }
+      doc.save(`Plantilla_Promerica_${safe}.pdf`);
     }
 
     // ── Plantilla Industrial ─────────────────────────────────
@@ -542,119 +379,23 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
       });
 
       autoTable(doc, { startY: 100, head: [['Tipo', 'No. Cuenta', 'Corr.', 'Nombre', 'Monto', 'Concepto']], body, theme: 'grid', headStyles: { fillColor: [41, 128, 185], textColor: 255, fontStyle: 'bold' }, styles: { fontSize: 8, cellPadding: 3 }, columnStyles: { 0: { cellWidth: 35 }, 1: { cellWidth: 90 }, 2: { cellWidth: 35 }, 3: { cellWidth: 185 }, 4: { cellWidth: 75, halign: 'right' }, 5: { cellWidth: 100 } } });
-      if (action === 'print') {
-        doc.autoPrint();
-        window.open(doc.output('bloburl'), '_blank');
-      } else {
-        doc.save(`Plantilla_Industrial_${safe}.pdf`);
-      }
+      doc.save(`Plantilla_Industrial_${safe}.pdf`);
     }
-  };
-
-  
-  const getColValue = (e, i, colId, format = false) => {
-    let val = '';
-    let isMoney = false;
-    const net = e.calculated?.net || 0;
-    
-    switch(colId) {
-      case 'no': val = i + 1; break;
-      case 'nombre': val = getEmpName(e); break;
-      case 'empresa': val = e.company || 'N/A'; break;
-      case 'puesto': val = e.puesto || 'N/A'; break;
-      case 'cuenta': val = e.no_cuenta || ''; break;
-      case 'dias': val = e.days || 30; break;
-      case 'ordinario': val = e.calculated?.baseSalary || 0; isMoney = true; break;
-      case 'bon_incentivo': val = e.calculated?.bonusLey || 0; isMoney = true; break;
-      case 'bon_decreto': val = e.calculated?.bonusDec || 0; isMoney = true; break;
-      case 'bonos': val = e.calculated?.bonos || 0; isMoney = true; break;
-      case 'total_dev': val = e.calculated?.gross || 0; isMoney = true; break;
-      case 'hrs_simples': val = e.hours?.simple || 0; break;
-      case 'val_hrs_simples': val = e.calculated?.simpleExtras || 0; isMoney = true; break;
-      case 'hrs_dobles': val = e.hours?.double || 0; break;
-      case 'val_hrs_dobles': val = e.calculated?.doubleExtras || 0; isMoney = true; break;
-      case 'otros_ingresos': val = e.calculated?.otrosIngresos || 0; isMoney = true; break;
-      case 'salario_total': val = (e.calculated?.gross || 0) + (e.calculated?.simpleExtras || 0) + (e.calculated?.doubleExtras || 0) + (e.calculated?.otrosIngresos || 0); isMoney = true; break;
-      case 'igss': val = e.deductions?.igss || 0; isMoney = true; break;
-      case 'isr': val = e.deductions?.isr || 0; isMoney = true; break;
-      case 'cafeteria': val = e.deductions?.cafeteria || 0; isMoney = true; break;
-      case 'celular': val = e.deductions?.celular || 0; isMoney = true; break;
-      case 'uniforme': val = e.deductions?.uniforme || 0; isMoney = true; break;
-      case 'calzado': val = e.deductions?.calzado || 0; isMoney = true; break;
-      case 'equipo': val = e.deductions?.equipo || 0; isMoney = true; break;
-      case 'producto': val = e.deductions?.producto || 0; isMoney = true; break;
-      case 'bancos': val = e.deductions?.bancos || 0; isMoney = true; break;
-      case 'otros': val = e.deductions?.otros || 0; isMoney = true; break;
-      case 'judiciales': val = e.deductions?.judiciales || 0; isMoney = true; break;
-      case 'seguro': val = e.deductions?.seguro || 0; isMoney = true; break;
-      case 'parqueo': val = e.deductions?.parqueo || 0; isMoney = true; break;
-      case 'ornato': val = e.deductions?.ornato || 0; isMoney = true; break;
-      case 'otros_egr': val = e.deductions?.otros_egresos || 0; isMoney = true; break;
-      case 'total_egr': val = e.calculated?.ded || 0; isMoney = true; break;
-      case 'liquido': val = net; isMoney = true; break;
-      case 'quinc1': val = group?.periodType === '2da' ? (e.anticipo1ra || 0) : net; isMoney = true; break;
-      case 'quinc2': val = group?.periodType === '2da' ? net - (e.anticipo1ra || 0) : 0; isMoney = true; break;
-      case 'no_igss': val = e.no_igss || ''; break;
-    }
-    
-    return format && isMoney ? fmtQ(val) : val;
   };
 
   const handlePrint = () => {
-    handleDownloadPDF('print');
+    if (reportType === 'libro') {
+      const doc = generateLibroDoc();
+      doc.autoPrint();
+      const blobUrl = doc.output('bloburl');
+      window.open(blobUrl, '_blank');
+    } else {
+      window.print();
+    }
   };
 
   // ── HTML Preview ─────────────────────────────────────────────
   const renderPreview = () => {
-
-    const renderDataRows = (dataArr, defs, vals, mapFn) => {
-      const cols = defs.filter(c => vals.includes(c.id));
-      return dataArr.map((e, i) => (
-        <Tr key={e.id || i} bg={tdBg} _hover={{ bg: previewBg }}>
-          {cols.map(c => mapFn(e, i, c))}
-        </Tr>
-      ));
-    };
-
-    const renderGroupedTable = (defs, vals, mapFn) => {
-      const cols = defs.filter(c => vals.includes(c.id));
-      if (!groupByArea) {
-        return (
-          <Box overflowX="auto">
-            <Table size="sm" variant="simple">
-              <Thead bg={theadBg}><Tr>{cols.map(c => <Th key={c.id} isNumeric={c.align === 'right'}>{c.label}</Th>)}</Tr></Thead>
-              <Tbody>{renderDataRows(data, defs, vals, mapFn)}</Tbody>
-            </Table>
-          </Box>
-        );
-      }
-      
-      const grouped = {};
-      data.forEach(e => {
-        const areaId = e.areaId || e.area;
-        const areaName = areas?.find(a => String(a.id) === String(areaId))?.nombre || 'Sin Área';
-        if (!grouped[areaName]) grouped[areaName] = [];
-        grouped[areaName].push(e);
-      });
-      
-      return (
-        <Box>
-          {Object.keys(grouped).map(area => (
-            <Box key={area} mb={6}>
-              <Heading size="sm" color="blue.500" mb={2}>Área: {area}</Heading>
-              <Box overflowX="auto">
-                <Table size="sm" variant="simple">
-                  <Thead bg={theadBg}><Tr>{cols.map(c => <Th key={c.id} isNumeric={c.align === 'right'}>{c.label}</Th>)}</Tr></Thead>
-                  <Tbody>{renderDataRows(grouped[area], defs, vals, mapFn)}</Tbody>
-                </Table>
-              </Box>
-            </Box>
-          ))}
-        </Box>
-      );
-    };
-
-
     // ── Verificador ──────────────────────────────────────────
     if (reportType === 'verificador') {
       const comps = buildCompGroups();
@@ -711,25 +452,32 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
       );
     }
 
-    // ── Nómina General ───────────────────────────────────────
-
+    // ── Nómina General ─────────────────────────────────────────
     if (reportType === 'nomina') {
-      return renderGroupedTable(ALL_COLUMNS_DEF, colsNomina, (e, i, c) => {
-        const val = getColValue(e, i, c.id, true);
-        return <Td key={c.id} fontSize="xs" isNumeric={c.align === 'right'} fontWeight={c.id === 'liquido' ? 'bold' : 'normal'} color={c.id === 'liquido' ? 'green.600' : 'inherit'}>
-          {val}
-        </Td>;
-      });
+      let tDev = 0, tEgr = 0, tNet = 0;
+      return (
+        <Box border="1px solid" borderColor={borderColor} borderRadius="md" overflowX="auto">
+          <Table size="sm" variant="simple"><Thead bg={theadBg}><Tr><Th>No.</Th><Th>Nombre</Th><Th>Empresa</Th><Th>Puesto</Th><Th>Días</Th><Th isNumeric>S. Ordinario</Th><Th isNumeric>Bon. Inc.</Th><Th isNumeric>Bon. Dec.</Th><Th isNumeric>Total Dev.</Th><Th isNumeric>Total Egr.</Th><Th isNumeric>Líquido</Th></Tr></Thead>
+            <Tbody bg={tdBg}>
+              {data.map((e, i) => { tDev += e.calculated.gross; tEgr += e.calculated.ded; tNet += e.calculated.net; return (<Tr key={i}><Td fontSize="xs">{i+1}</Td><Td fontSize="xs" fontWeight="semibold">{getEmpName(e)}</Td><Td fontSize="xs">{e.company || 'N/A'}</Td><Td fontSize="xs">{e.puesto || 'N/A'}</Td><Td fontSize="xs">{e.days || 30}</Td><Td isNumeric fontFamily="mono" fontSize="xs">{fmtQ(e.calculated.baseSalary)}</Td><Td isNumeric fontFamily="mono" fontSize="xs">{fmtQ(e.calculated.bonusLey)}</Td><Td isNumeric fontFamily="mono" fontSize="xs">{fmtQ(e.calculated.bonusDec)}</Td><Td isNumeric fontFamily="mono" fontSize="xs" fontWeight="bold">{fmtQ(e.calculated.gross)}</Td><Td isNumeric fontFamily="mono" fontSize="xs" color="red.500">{fmtQ(e.calculated.ded)}</Td><Td isNumeric fontFamily="mono" fontSize="xs" fontWeight="bold" color="green.600">{fmtQ(e.calculated.net)}</Td></Tr>); })}
+              <Tr bg={totalRowBg}><Td colSpan={8} textAlign="right" fontWeight="bold" fontSize="xs">TOTALES</Td><Td isNumeric fontFamily="mono" fontSize="xs" fontWeight="bold">{fmtQ(tDev)}</Td><Td isNumeric fontFamily="mono" fontSize="xs" fontWeight="bold" color="red.600">{fmtQ(tEgr)}</Td><Td isNumeric fontFamily="mono" fontSize="xs" fontWeight="black" color="green.700">{fmtQ(tNet)}</Td></Tr>
+            </Tbody>
+          </Table>
+        </Box>
+      );
     }
 
     // ── Recibo e IGSS ─────────────────────────────────────────
     if (reportType === 'igss') {
-      return renderGroupedTable(ALL_COLUMNS_DEF, colsIgss, (e, i, c) => {
-        const val = getColValue(e, i, c.id, true);
-        return <Td key={c.id} fontSize="xs" isNumeric={c.align === 'right'} fontWeight={c.id === 'liquido' ? 'bold' : 'normal'} color={c.id === 'liquido' ? 'green.600' : 'inherit'}>
-          {val}
-        </Td>;
-      });
+      return (
+        <Box border="1px solid" borderColor={borderColor} borderRadius="md" overflowX="auto">
+          <Table size="sm" variant="simple"><Thead bg={theadBg}><Tr><Th>No.</Th><Th>Nombre</Th><Th>No. Cuenta</Th><Th>Puesto</Th><Th isNumeric>Días</Th><Th isNumeric>S. Ordinario</Th><Th isNumeric>Bonos</Th><Th isNumeric>Total Dev.</Th><Th isNumeric>IGSS</Th><Th isNumeric>ISR</Th><Th isNumeric>Total Egr.</Th><Th isNumeric>Líquido</Th><Th>No. IGSS</Th></Tr></Thead>
+            <Tbody bg={tdBg}>
+              {data.map((e, i) => { const net = e.calculated.net; const bonos = e.calculated.bonusLey + e.calculated.bonusDec + e.calculated.bonos; return (<Tr key={i}><Td fontSize="xs">{i+1}</Td><Td fontSize="xs" fontWeight="semibold">{getEmpName(e)}</Td><Td fontSize="xs">{e.no_cuenta || 'N/A'}</Td><Td fontSize="xs">{e.puesto || 'N/A'}</Td><Td isNumeric fontSize="xs">{e.days || 30}</Td><Td isNumeric fontFamily="mono" fontSize="xs">{fmtQ(e.calculated.baseSalary)}</Td><Td isNumeric fontFamily="mono" fontSize="xs">{fmtQ(bonos)}</Td><Td isNumeric fontFamily="mono" fontSize="xs" fontWeight="bold">{fmtQ(e.calculated.gross)}</Td><Td isNumeric fontFamily="mono" fontSize="xs" color="orange.500">{fmtQ(e.deductions?.igss || 0)}</Td><Td isNumeric fontFamily="mono" fontSize="xs" color="red.500">{fmtQ(e.deductions?.isr || 0)}</Td><Td isNumeric fontFamily="mono" fontSize="xs" color="red.500">{fmtQ(e.calculated.ded)}</Td><Td isNumeric fontFamily="mono" fontSize="xs" fontWeight="bold" color="green.600">{fmtQ(net)}</Td><Td fontSize="xs">{e.no_igss || 'N/A'}</Td></Tr>); })}
+            </Tbody>
+          </Table>
+        </Box>
+      );
     }
 
     // ── Libro de Salarios ─────────────────────────────────────
@@ -807,19 +555,16 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
       <ModalOverlay backdropFilter="blur(4px)" />
       <ModalContent borderRadius="xl">
         <ModalHeader borderBottom="1px solid" borderColor={borderColor} bg={theadBg} borderTopRadius="xl">
-          <Flex align="center" justify="space-between" pr={6}>
-            <Flex align="center" gap={3}>
-              <Box p={2} bg="brand.100" _dark={{ bg: 'brand.900' }} borderRadius="md" color="brand.600">
-                <FileText size={20} />
-              </Box>
-              <Box>
-                <Heading size="md" color="brand.700" _dark={{ color: 'brand.200' }}>
-                  Previsualización: {reportTitle}
-                </Heading>
-                <Text fontSize="sm" color="gray.500" fontWeight="normal">Nómina: {safeTitle}</Text>
-              </Box>
-            </Flex>
-            {renderConfigControls()}
+          <Flex align="center" gap={3}>
+            <Box p={2} bg="brand.100" _dark={{ bg: 'brand.900' }} borderRadius="md" color="brand.600">
+              <FileText size={20} />
+            </Box>
+            <Box>
+              <Heading size="md" color="brand.700" _dark={{ color: 'brand.200' }}>
+                Previsualización: {reportTitle}
+              </Heading>
+              <Text fontSize="sm" color="gray.500" fontWeight="normal">Nómina: {safeTitle}</Text>
+            </Box>
           </Flex>
         </ModalHeader>
         <ModalCloseButton mt={2} />

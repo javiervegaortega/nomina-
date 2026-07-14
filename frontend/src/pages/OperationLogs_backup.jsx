@@ -1,5 +1,4 @@
-import React, { useState, useContext, useMemo, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import React, { useState, useContext, useMemo } from 'react';
 import {
   Box, Heading, Table, Thead, Tbody, Tr, Th, Td, IconButton, Button,
   HStack, Select, Input, Badge, useDisclosure, Modal, ModalOverlay,
@@ -9,37 +8,14 @@ import {
   Tabs, TabList, Tab, TabPanels, TabPanel, Skeleton, Flex,
   Menu, MenuButton, MenuList, MenuOptionGroup, MenuItemOption
 } from '@chakra-ui/react';
-import { Plus, Check, X, Trash2, Eye, Edit2, ChevronDown, ArrowLeft, Send } from 'lucide-react';
+import { Plus, Check, X, Trash2, Eye, Edit2, ChevronDown } from 'lucide-react';
 import { toast } from 'sonner';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
 
 export default function OperationLogs() {
-  const { id: batchId } = useParams();
-  const navigate = useNavigate();
-  const { employees, departments, areas, divisions, subdivisions, dimension5s, companies, addOperationLog, updateOperationLogStatus, deleteOperationLog, updateOperationLog, isLoading } = useContext(DataContext);
+  const { employees, departments, areas, divisions, subdivisions, dimension5s, companies, operationLogs, addOperationLog, updateOperationLogStatus, deleteOperationLog, updateOperationLog, isLoading } = useContext(DataContext);
   const { user } = useContext(AuthContext);
-
-  const [batch, setBatch] = useState(null);
-  const [operationLogs, setOperationLogs] = useState([]);
-  
-  const fetchBatch = async () => {
-    try {
-      const token = localStorage.getItem('nomina-token');
-      const res = await fetch(`http://localhost:3000/api/operation-batches/${batchId}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setBatch(data);
-        setOperationLogs(data.logs || []);
-      }
-    } catch(e) {}
-  };
-
-  useEffect(() => {
-    fetchBatch();
-  }, [batchId]);
   const [filterMonth, setFilterMonth] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
   const [filterType, setFilterType] = useState('ALL');
   const [filterStatus, setFilterStatus] = useState('ALL');
@@ -90,8 +66,28 @@ export default function OperationLogs() {
         bonusAmount: editFormData.type === 'BONO' ? Number(editFormData.bonusAmount) : 0,
         taskDescription: editFormData.taskDescription
       });
-      await fetchBatch();
-      toast.success('Registro corregido exitosamente');
+      
+      if (user?.role === 'SOLICITANTE') {
+        try {
+          const token = localStorage.getItem('nomina-token');
+          await fetch('http://localhost:3000/api/operation-logs/notify', {
+            method: 'POST',
+            headers: { 
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}` 
+            },
+            body: JSON.stringify({ count: 1 })
+          });
+        } catch (e) {
+          console.error('Error enviando notificación', e);
+        }
+      }
+
+      if (user?.role === 'SOLICITANTE') {
+        toast.success('Registro corregido y enviado al gerente. Se enviará un correo a su gerente de área.');
+      } else {
+        toast.success('Registro corregido y enviado al gerente');
+      }
       onEditClose();
     } catch(e) {
       toast.error('Error al guardar');
@@ -245,9 +241,16 @@ export default function OperationLogs() {
       if (filterMonth && !log.date.startsWith(filterMonth)) return false;
       if (filterType !== 'ALL' && log.type !== filterType) return false;
       if (filterStatus !== 'ALL' && log.status !== filterStatus) return false;
+      
+      if (tabIndex === 0) {
+        if (log.status !== 'PENDING_MANAGER' && log.status !== 'RETURNED') return false;
+      } else {
+        if (log.status === 'PENDING_MANAGER' || log.status === 'RETURNED') return false;
+      }
+
       return true;
     }).sort((a, b) => new Date(b.date) - new Date(a.date));
-  }, [operationLogs, filterMonth, filterType, filterStatus]);
+  }, [operationLogs, filterMonth, filterType, filterStatus, tabIndex]);
 
   const handleSave = () => {
     if (formData.employeeIds.length === 0 || !formData.date || !formData.taskDescription || !formData.companyId) {
@@ -278,19 +281,36 @@ export default function OperationLogs() {
             hoursQty: formData.type === 'HORA_EXTRA' ? Number(formData.hoursQty) : 0,
             bonusQty: formData.type === 'BONO' ? Number(formData.bonusQty) : 0,
             bonusAmount: formData.type === 'BONO' ? Number(formData.bonusAmount) : 0,
-            batchId: Number(batchId)
           };
           delete payload.employeeIds;
           return addOperationLog(payload);
         });
         await Promise.all(promises);
         
-        await fetchBatch();
+        if (user?.role === 'SOLICITANTE') {
+          try {
+            const token = localStorage.getItem('nomina-token');
+            await fetch('http://localhost:3000/api/operation-logs/notify', {
+              method: 'POST',
+              headers: { 
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}` 
+              },
+              body: JSON.stringify({ count: formData.employeeIds.length })
+            });
+          } catch (e) {
+            console.error('Error enviando notificación', e);
+          }
+        }
         
         onClose();
         setFormData(prev => ({ ...prev, employeeIds: [] }));
         setModalAreaFilter([]);
-        toast.success(`Se agregaron ${formData.employeeIds.length} registros al lote`);
+        if (user?.role === 'SOLICITANTE') {
+          toast.success(`Se agregaron ${formData.employeeIds.length} registros exitosamente. Se enviará un correo a su gerente de área.`);
+        } else {
+          toast.success(`Se agregaron ${formData.employeeIds.length} registros exitosamente`);
+        }
       } else if (action === 'APPROVE') {
         await updateOperationLogStatus(data, 'APPROVED_MANAGER');
         toast.success('Solicitud aprobada');
@@ -309,7 +329,6 @@ export default function OperationLogs() {
         toast.success(`${selectedRowIds.length} solicitudes devueltas`);
       } else if (action === 'DELETE') {
         await deleteOperationLog(data);
-        await fetchBatch();
         toast.success('Registro eliminado');
       }
     } catch (e) {
@@ -386,74 +405,6 @@ export default function OperationLogs() {
     );
   }
 
-  const handleSendToManager = async () => {
-    try {
-      const token = localStorage.getItem('nomina-token');
-      const res = await fetch(`http://localhost:3000/api/operation-batches/${batchId}/status`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ status: 'PENDING_MANAGER' })
-      });
-      if (res.ok) {
-        toast.success('Lote enviado a gerencia exitosamente');
-        navigate('/operations');
-      }
-    } catch (e) {
-      toast.error('Error al enviar');
-    }
-  };
-
-  const handleApproveBatch = async () => {
-    try {
-      const token = localStorage.getItem('nomina-token');
-      const res = await fetch(`http://localhost:3000/api/operation-batches/${batchId}/status`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ status: 'APPROVED_MANAGER' })
-      });
-      if (res.ok) {
-        toast.success('Lote aprobado');
-        navigate('/operations');
-      }
-    } catch (e) {
-      toast.error('Error al aprobar');
-    }
-  };
-
-  const handleRejectBatch = async () => {
-    const note = prompt('Razón del rechazo:');
-    if (!note) return;
-    try {
-      const token = localStorage.getItem('nomina-token');
-      const res = await fetch(`http://localhost:3000/api/operation-batches/${batchId}/status`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ status: 'RETURNED', justification: note })
-      });
-      if (res.ok) {
-        toast.success('Lote rechazado');
-        navigate('/operations');
-      }
-    } catch (e) {
-      toast.error('Error al rechazar');
-    }
-  };
-
-  if (!batch) return null;
-
-  const isSolicitante = user?.role === 'SOLICITANTE';
-  const canEdit = isSolicitante && (batch.status === 'DRAFT' || batch.status === 'RETURNED');
-
-
   return (
     <Box p={{ base: 3, md: 6, lg: 8 }}>
       <Flex
@@ -464,61 +415,38 @@ export default function OperationLogs() {
         flexWrap="wrap"
         gap={4}
       >
-        <Flex align="center" gap={4}>
-          <IconButton aria-label="Back" icon={<ArrowLeft size={24} />} onClick={() => navigate('/operations')} variant="ghost" />
-          <Box>
-            <Flex align="center" gap={3}>
-              <Heading size="lg" fontWeight={800} color={textColor}>
-                {batch.title}
-              </Heading>
-              {getStatusBadge(batch.status)}
-            </Flex>
-            <Text color={mutedTextColor} fontSize="md">
-              {operationLogs.length} operaciones en este lote
-            </Text>
-            {batch.status === 'RETURNED' && batch.justification && (
-              <Text color="red.500" fontSize="sm" mt={1}>
-                <b>Rechazado:</b> {batch.justification}
-              </Text>
-            )}
-          </Box>
-        </Flex>
-
-        <Flex gap={2}>
-          {canEdit && (
-            <>
-              <Button 
-                colorScheme="gray" 
-                leftIcon={<Plus size={16} />} 
-                onClick={() => {
-                  setFormData({
-                    employeeIds: [], companyId: '', date: new Date().toISOString().slice(0, 10), type: 'HORA_EXTRA',
-                    hoursQty: 0, hourType: 'SIMPLE', bonusQty: 1, bonusAmount: 0, taskDescription: ''
-                  });
-                  onOpen();
-                }}
-              >
-                Nuevo Registro
-              </Button>
-              <Button 
-                colorScheme="blue" 
-                leftIcon={<Send size={16} />} 
-                onClick={handleSendToManager}
-              >
-                Enviar a Gerencia
-              </Button>
-            </>
-          )}
-
-          {isManagerOrAdmin && batch.status === 'PENDING_MANAGER' && (
-            <>
-              <Button colorScheme="red" variant="outline" leftIcon={<X size={16} />} onClick={handleRejectBatch}>Rechazar Lote</Button>
-              <Button colorScheme="green" leftIcon={<Check size={16} />} onClick={handleApproveBatch}>Aprobar Lote Completo</Button>
-            </>
-          )}
-        </Flex>
+        <Box>
+          <Heading size="lg" fontWeight={800} mb={1} color={textColor}>
+            Reporte de Operaciones
+          </Heading>
+          <Text color={mutedTextColor} fontSize="md">
+            Registro de bonos y horas extras · {operationLogs.length} operaciones
+          </Text>
+        </Box>
+        <Button 
+          colorScheme="brand" 
+          leftIcon={<Plus size={16} />} 
+          onClick={() => {
+            setFormData({
+              employeeIds: [], companyId: '', date: new Date().toISOString().slice(0, 10), type: 'HORA_EXTRA',
+              hoursQty: 0, hourType: 'SIMPLE', bonusQty: 1, bonusAmount: 0, taskDescription: ''
+            });
+            onOpen();
+          }}
+          borderRadius="lg" 
+          transition="all 0.3s"
+          _hover={{ shadow: 'lg' }}
+        >
+          Nuevo Registro
+        </Button>
       </Flex>
 
+      <Tabs variant="soft-rounded" colorScheme="brand" mb={4} index={tabIndex} onChange={(idx) => { setTabIndex(idx); setFilterStatus('ALL'); }}>
+        <TabList>
+          <Tab>Solicitudes Activas</Tab>
+          <Tab>Historial de Solicitudes</Tab>
+        </TabList>
+      </Tabs>
 
       <HStack mb={4} spacing={4} bg={bg} p={4} borderRadius="lg" shadow="sm">
         <FormControl w="200px">

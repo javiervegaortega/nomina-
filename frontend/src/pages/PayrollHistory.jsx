@@ -40,7 +40,7 @@ import {
 
 
 export default function PayrollHistory() {
-  const { payrollHistory, deletePayroll, bonuses, companies, isLoading } = useContext(DataContext);
+  const { payrollHistory, deletePayroll, approvePayroll, companies, areas, activePayrolls, deleteOperationLog, addOperationLog, isLoading } = useContext(DataContext);
   const { confirmAction, showToast } = useContext(AppContext);
   const { user } = useContext(AuthContext);
   const isReadOnly = user?.role === 'AUDITOR';
@@ -63,6 +63,7 @@ export default function PayrollHistory() {
           date: p.closedAt || new Date().toISOString(), // use most recent date
           periodType: p.periodType || '1ra',
           records: [],
+          status: p.status || 'cerrada',
           employeesCount: 0,
           grossTotal: 0,
           netTotal: 0,
@@ -126,6 +127,13 @@ export default function PayrollHistory() {
   );
 
   const pagination = usePagination(filteredHistory, 10);
+
+  const handleApprovePayroll = (group) => {
+    if (window.confirm('¿Aprobar esta nómina y marcarla como Cerrada?')) {
+      approvePayroll(group.id);
+      toast.success('Nómina aprobada correctamente');
+    }
+  };
 
   const handleDeleteGroup = (title, records) => {
     confirmAction(`¿Seguro que desea eliminar el registro consolidado "${title}"? Se borrarán ${records.length} nómina(s) de las empresas involucradas.`, () => {
@@ -297,8 +305,11 @@ export default function PayrollHistory() {
                     <HStack spacing={{ base: 2, md: 4 }} color="gray.500" fontSize="xs" flexWrap="wrap">
                       <Flex align="center" gap={1}>
                         <Calendar size={14} /> 
-                        Cerrada: {new Date(group.date).toLocaleDateString()}
+                        {new Date(group.date).toLocaleDateString()}
                       </Flex>
+                      <Badge colorScheme={group.status === 'auditoria' ? 'orange' : 'gray'}>
+                        {group.status === 'auditoria' ? 'En Auditoría' : 'Cerrada'}
+                      </Badge>
                       <Flex align="center" gap={1}>
                         <Building2 size={14} /> 
                         {group.companies.size === 0 ? 'Sin empresa' : Array.from(group.companies).join(', ')}
@@ -307,7 +318,12 @@ export default function PayrollHistory() {
                   </Box>
                   <HStack spacing={1}>
                     <IconButton aria-label="Ver Detalle" icon={<Eye size={18} />} onClick={() => setSelectedGroup(group)} variant="ghost" />
-                    {!isReadOnly && (user?.role === 'ADMIN' || user?.role === 'NOMINA' || user?.role === 'GERENTE GENERAL') && (
+                    {!isReadOnly && group.status === 'auditoria' && (user?.role === 'ADMIN' || user?.role === 'GERENTE GENERAL') && (
+                      <Tooltip label="Aprobar Nómina">
+                        <Button size="sm" colorScheme="green" variant="ghost" onClick={() => handleApprovePayroll(group)}>Aprobar</Button>
+                      </Tooltip>
+                    )}
+                    {!isReadOnly && group.periodType === '2da' && (user?.role === 'ADMIN' || user?.role === 'NOMINA' || user?.role === 'GERENTE GENERAL') && (
                       <Tooltip label="Solicitar Reactivación">
                         <IconButton aria-label="Reactivar Nómina" icon={<RotateCcw size={18} />} colorScheme="blue" variant="ghost" onClick={() => handleRequestReactivation(group)} />
                       </Tooltip>
@@ -473,9 +489,16 @@ function calculateGroupTotals(groupData, periodType) {
 }
 
 function PayrollHistoryDetail({ group, onBack }) {
-  const { bonuses, areas, departments, divisions, subdivisions, companies, dimension5s, employees } = useContext(DataContext);
+  const { bonuses, areas, departments, divisions, subdivisions, companies, dimension5s, employees, approvePayroll, auditorApprovePayroll, auditorRejectPayroll } = useContext(DataContext);
   const { showToast } = useContext(AppContext);
+  const { user } = useContext(AuthContext);
+  const isReadOnly = user?.role === 'AUDITOR';
   const [selectedVoucherEmp, setSelectedVoucherEmp] = useState(null);
+
+  // Auditor reject states
+  const [isRejectModalOpen, setIsRejectModalOpen] = useState(false);
+  const [rejectNote, setRejectNote] = useState('');
+  const [isRejecting, setIsRejecting] = useState(false);
 
   // Filter states
   const [filterArea, setFilterArea] = useState([]);
@@ -1211,7 +1234,9 @@ function PayrollHistoryDetail({ group, onBack }) {
           <Box>
             <Flex align="center" gap={{ base: 2, md: 3 }} flexWrap="wrap">
               <Heading size={{ base: 'sm', md: 'md' }} fontWeight={800}>{group.title}</Heading>
-              <Badge colorScheme="green" variant="subtle" fontWeight={700}>Cerrada</Badge>
+              <Badge colorScheme={group.status === 'auditoria' ? 'orange' : 'gray'} variant="subtle" fontWeight={700}>
+                {group.status === 'auditoria' ? 'En Auditoría' : 'Cerrada'}
+              </Badge>
               <Badge colorScheme={group.periodType === '2da' ? 'purple' : 'teal'} variant="subtle" fontWeight={700}>
                 {group.periodType === '2da' ? '2da Quincena' : '1ra Quincena'}
               </Badge>
@@ -1228,6 +1253,26 @@ function PayrollHistoryDetail({ group, onBack }) {
           </Box>
         </Flex>
         <Flex gap={2} wrap="wrap">
+          {!isReadOnly && group.status === 'auditoria' && (user?.role === 'ADMIN' || user?.role === 'GERENTE GENERAL') && (
+            <>
+              <Button colorScheme="green" onClick={async () => {
+                if (window.confirm('¿Aprobar esta nómina y devolverla a borradores para su cierre final?')) {
+                  try {
+                    await auditorApprovePayroll(group.id);
+                    showToast('Nómina aprobada correctamente', 'success');
+                    onBack();
+                  } catch (e) {
+                    showToast('Error al aprobar', 'error');
+                  }
+                }
+              }} size={{ base: 'sm', md: 'md' }}>
+                Aprobar Nómina
+              </Button>
+              <Button colorScheme="red" variant="outline" onClick={() => setIsRejectModalOpen(true)} size={{ base: 'sm', md: 'md' }}>
+                Corregir Nómina
+              </Button>
+            </>
+          )}
           <Menu>
             <MenuButton as={Button} colorScheme="green" leftIcon={<Download size={16} />} rightIcon={<ChevronDown size={16} />} size={{ base: 'sm', md: 'md' }}>
               <Text display={{ base: 'none', sm: 'inline' }}>Exportar Excel</Text>
@@ -1712,22 +1757,22 @@ function PayrollHistoryDetail({ group, onBack }) {
               }}
             >
               {/* Top Half: Employee 1 — 2 identical copies side by side */}
-              <Flex gap="4px" w="100%" flex="1" maxH="49%">
-                <Box flex={1} border="1px solid #ccc" p="4px" overflow="hidden"><BoletaTemplate emp={chunk[0]} group={group} companies={companies} isPrint /></Box>
-                <Box flex={1} border="1px solid #ccc" p="4px" overflow="hidden"><BoletaTemplate emp={chunk[0]} group={group} companies={companies} isPrint /></Box>
+              <Flex gap="10px" w="100%" flex="1" maxH="46%" pt="15px">
+                <Box flex={1} border="1px solid #ccc" p="6px" overflow="hidden"><BoletaTemplate emp={chunk[0]} group={group} companies={companies} isPrint /></Box>
+                <Box flex={1} border="1px solid #ccc" p="6px" overflow="hidden"><BoletaTemplate emp={chunk[0]} group={group} companies={companies} isPrint /></Box>
               </Flex>
 
               {/* Dashed cut line */}
-              <Box sx={{ borderTop: '1px dashed #aaa', mx: 0, my: '2px' }} />
+              <Box sx={{ borderTop: '2px dashed #999', mx: 0, my: '25px', opacity: 0.5 }} />
 
               {/* Bottom Half: Employee 2 (if exists) */}
               {chunk[1] ? (
-                <Flex gap="4px" w="100%" flex="1" maxH="49%">
-                  <Box flex={1} border="1px solid #ccc" p="4px" overflow="hidden"><BoletaTemplate emp={chunk[1]} group={group} companies={companies} isPrint /></Box>
-                  <Box flex={1} border="1px solid #ccc" p="4px" overflow="hidden"><BoletaTemplate emp={chunk[1]} group={group} companies={companies} isPrint /></Box>
+                <Flex gap="10px" w="100%" flex="1" maxH="46%" pb="15px">
+                  <Box flex={1} border="1px solid #ccc" p="6px" overflow="hidden"><BoletaTemplate emp={chunk[1]} group={group} companies={companies} isPrint /></Box>
+                  <Box flex={1} border="1px solid #ccc" p="6px" overflow="hidden"><BoletaTemplate emp={chunk[1]} group={group} companies={companies} isPrint /></Box>
                 </Flex>
               ) : (
-                <Flex gap="4px" w="100%" flex="1" maxH="49%" opacity={0}></Flex>
+                <Flex gap="10px" w="100%" flex="1" maxH="46%" opacity={0}></Flex>
               )}
             </Box>
           ));
@@ -1741,14 +1786,53 @@ function PayrollHistoryDetail({ group, onBack }) {
         group={group}
         data={data}
         companies={companies}
+        areas={areas}
       />
       <EmployeeSummaryModal
         isOpen={!!selectedSummaryEmp}
         onClose={() => setSelectedSummaryEmp(null)}
-        employee={selectedSummaryEmp}
-        companies={companies}
-        periodType={group?.periodType}
+        emp={selectedSummaryEmp}
+        group={group}
       />
+
+      <Modal isOpen={isRejectModalOpen} onClose={() => setIsRejectModalOpen(false)}>
+        <ModalOverlay />
+        <ModalContent>
+          <ModalHeader color="red.500">Enviar a Corrección</ModalHeader>
+          <ModalCloseButton />
+          <ModalBody>
+            <Text mb={4} fontSize="sm" color="gray.600">
+              Por favor, detalla qué es lo que está incorrecto en esta nómina. El operador de nóminas verá esta justificación y podrá editarla.
+            </Text>
+            <Textarea 
+              placeholder="Ej. El bono del empleado X está mal calculado..." 
+              value={rejectNote} 
+              onChange={e => setRejectNote(e.target.value)} 
+              rows={4}
+            />
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="ghost" onClick={() => setIsRejectModalOpen(false)} mr={3}>Cancelar</Button>
+            <Button colorScheme="red" isLoading={isRejecting} onClick={async () => {
+              if (!rejectNote.trim()) return showToast('Debes ingresar una justificación', 'error');
+              setIsRejecting(true);
+              try {
+                await auditorRejectPayroll(group.id, rejectNote);
+                showToast('Nómina rebotada a borradores exitosamente', 'success');
+                setIsRejectModalOpen(false);
+                onBack();
+              } catch (e) {
+                showToast('Error al enviar a corrección', 'error');
+              } finally {
+                setIsRejecting(false);
+              }
+            }}>
+              Confirmar Rechazo
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
     </Box>
   );
 }

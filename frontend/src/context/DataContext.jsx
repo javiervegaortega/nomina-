@@ -1100,6 +1100,7 @@ export function DataProvider({ children }) {
       const historyRecord = {
         id: Date.now().toString(),
         ...draft,
+        status: draft.isApproved ? 'cerrada' : 'auditoria',
         employeesCount: draft.employees.length,
         netTotal: grossTotal - dedTotal,
         closedAt: new Date().toISOString(),
@@ -1157,6 +1158,37 @@ export function DataProvider({ children }) {
     }
   };
 
+  const auditorApprovePayroll = async (id) => {
+    try {
+      const response = await fetch(`http://localhost:3000/api/payrolls/${id}/auditor-approve`, {
+        method: 'POST',
+        headers: getAuthHeader()
+      });
+      if (!response.ok) throw new Error('Error al aprobar nómina');
+      await fetchActivePayrolls();
+      await fetchPayrollHistory();
+    } catch (err) {
+      console.error(err);
+      throw err;
+    }
+  };
+
+  const auditorRejectPayroll = async (id, note) => {
+    try {
+      const response = await fetch(`http://localhost:3000/api/payrolls/${id}/auditor-reject`, {
+        method: 'POST',
+        headers: getAuthHeader(),
+        body: JSON.stringify({ note })
+      });
+      if (!response.ok) throw new Error('Error al rechazar nómina');
+      await fetchActivePayrolls();
+      await fetchPayrollHistory();
+    } catch (err) {
+      console.error(err);
+      throw err;
+    }
+  };
+
   return (
     <DataContext.Provider value={{
       companies, 
@@ -1182,7 +1214,7 @@ export function DataProvider({ children }) {
       addCommission, updateCommission, deleteCommission,
       operationLogs, addOperationLog, updateOperationLogStatus, deleteOperationLog, updateOperationLog,
       activePayrolls, createActivePayroll, updateActivePayroll, updateDraftMetadata, deleteActivePayroll, closePayroll,
-      savePayroll, deletePayroll
+      savePayroll, deletePayroll, auditorApprovePayroll, auditorRejectPayroll
     }}>
       {children}
     </DataContext.Provider>

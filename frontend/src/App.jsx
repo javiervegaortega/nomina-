@@ -22,6 +22,7 @@ import Subdivisions from './pages/Subdivisions';
 import Dimension5 from './pages/Dimension5';
 import Companies from './pages/Companies';
 import Settings from './pages/Settings';
+import OperationBatches from './pages/OperationBatches';
 import OperationLogs from './pages/OperationLogs';
 import Login from './pages/auth/Login';
 import Users from './pages/Users';
@@ -158,7 +159,8 @@ function AppContent() {
 
                   {/* ADMIN, GERENTE GENERAL, GERENTE, SOLICITANTE, NOMINA */}
                   <Route element={<RoleProtectedRoute allowedRoles={['ADMIN', 'GERENTE GENERAL', 'GERENTE', 'SOLICITANTE', 'NOMINA']} />}>
-                    <Route path="/operations" element={<OperationLogs />} />
+                    <Route path="/operations" element={<OperationBatches />} />
+                    <Route path="/operations/:id" element={<OperationLogs />} />
                   </Route>
 
                   {/* ADMIN, GERENTE GENERAL, NOMINA, DIGITADOR */}
