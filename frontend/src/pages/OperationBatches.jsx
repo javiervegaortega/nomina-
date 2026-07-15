@@ -15,6 +15,8 @@ export default function OperationBatches() {
 
   const bg = useColorModeValue('white', 'gray.800');
   const theadBg = useColorModeValue('gray.50', 'gray.900');
+  const borderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
+  const hoverBg = useColorModeValue('gray.50', 'whiteAlpha.50');
 
   const fetchBatches = async () => {
     try {
@@ -76,7 +78,7 @@ export default function OperationBatches() {
     }
   };
 
-  const isSolicitante = user?.role === 'SOLICITANTE';
+  const canCreateBatch = ['ADMIN', 'GERENTE GENERAL', 'SOLICITANTE', 'NOMINA', 'GERENTE'].includes(user?.role);
 
   return (
     <Box p={{ base: 3, md: 6, lg: 8 }}>
@@ -85,14 +87,14 @@ export default function OperationBatches() {
           <Heading size="lg" fontWeight={800}>Lotes de Operaciones</Heading>
           <Text color="gray.500">Agrupación de bonos y horas extras</Text>
         </Box>
-        {isSolicitante && (
+        {canCreateBatch && (
           <Button leftIcon={<Plus size={20} />} colorScheme="blue" onClick={onOpen}>
             Nuevo Lote
           </Button>
         )}
       </Flex>
 
-      <Box bg={bg} borderRadius="xl" shadow="sm" overflow="hidden" border="1px solid" borderColor={useColorModeValue('gray.200', 'whiteAlpha.200')}>
+      <Box bg={bg} borderRadius="xl" shadow="sm" overflow="hidden" border="1px solid" borderColor={borderColor}>
         <Box overflowX="auto">
           <Table variant="simple" size="sm">
             <Thead bg={theadBg}>
@@ -112,7 +114,7 @@ export default function OperationBatches() {
                 </Tr>
               ) : (
                 batches.map(batch => (
-                  <Tr key={batch.id} _hover={{ bg: useColorModeValue('gray.50', 'whiteAlpha.50') }}>
+                  <Tr key={batch.id} _hover={{ bg: hoverBg }}>
                     <Td>{new Date(batch.createdAt).toLocaleDateString()}</Td>
                     <Td fontWeight="bold">{batch.title}</Td>
                     <Td>{batch.user?.name || 'Desconocido'}</Td>

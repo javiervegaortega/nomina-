@@ -450,8 +450,8 @@ export default function OperationLogs() {
 
   if (!batch) return null;
 
-  const isSolicitante = user?.role === 'SOLICITANTE';
-  const canEdit = isSolicitante && (batch.status === 'DRAFT' || batch.status === 'RETURNED');
+  const canCreateBatch = ['ADMIN', 'GERENTE GENERAL', 'SOLICITANTE', 'NOMINA', 'GERENTE'].includes(user?.role);
+  const canEdit = canCreateBatch && (batch.status === 'DRAFT' || batch.status === 'RETURNED');
 
 
   return (
