@@ -6,11 +6,28 @@ import Pagination from '../components/Pagination';
 import { AuthContext } from '../context/AuthContext';
 import { History, Calendar, Trash2, Eye, Download, FileText, CheckCircle2, ArrowLeft, Building2, X, Search, ChevronDown, LayoutGrid, RotateCcw } from 'lucide-react';
 import { formatQ, CUOTA_LABORAL_RATE, CUOTA_PATRONAL_RATE } from '../data/mockData';
-import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
-import * as XLSX from 'xlsx';
+import { getNetPayable } from '../utils/payrollPeriod';
+import { exportPayrollReportExcel } from '../utils/payrollReports';
 import ReportPreviewModal from '../components/ReportPreviewModal';
 import EmployeeSummaryModal from '../components/EmployeeSummaryModal';
+import {
+  Box, Flex, Heading, Text, Button, Input, Select, Textarea, FormControl, FormLabel,
+  Table, Thead, Tbody, Tr, Th, Td, TableContainer,
+  IconButton, Badge, Avatar, HStack, VStack,
+  InputGroup, InputLeftElement, useColorModeValue,
+  Modal, ModalOverlay, ModalContent, ModalHeader, ModalBody,
+  ModalFooter, ModalCloseButton, Divider, SimpleGrid, Center,
+  Menu, MenuButton, MenuList, MenuItem, MenuItemOption, MenuOptionGroup,
+  Skeleton, SkeletonText, ButtonGroup, Tooltip
+} from '@chakra-ui/react';
+
+const getHtml2Canvas = () => import('html2canvas').then(m => m.default);
+const getJsPDF = () => import('jspdf').then(m => m.default);
+const getXLSX = () => import('xlsx');
+
+
+
+
 
 export const getEmployeeFullName = (e) => {
   if (!e) return '';
@@ -26,18 +43,6 @@ export const getEmployeeFullName = (e) => {
   if (parts.length > 0) return parts.join(' ');
   return `${e.nombres || ''} ${e.apellidos || ''}`.trim() || 'Empleado';
 };
-
-import {
-  Box, Flex, Heading, Text, Button, Input, Select, Textarea, FormControl, FormLabel,
-  Table, Thead, Tbody, Tr, Th, Td, TableContainer,
-  IconButton, Badge, Avatar, HStack, VStack,
-  InputGroup, InputLeftElement, useColorModeValue,
-  Modal, ModalOverlay, ModalContent, ModalHeader, ModalBody,
-  ModalFooter, ModalCloseButton, Divider, SimpleGrid, Center,
-  Menu, MenuButton, MenuList, MenuItem, MenuItemOption, MenuOptionGroup,
-  Skeleton, SkeletonText, ButtonGroup, Tooltip
-} from '@chakra-ui/react';
-
 
 export default function PayrollHistory() {
   const { payrollHistory, deletePayroll, approvePayroll, companies, areas, activePayrolls, deleteOperationLog, addOperationLog, isLoading } = useContext(DataContext);
@@ -415,7 +420,8 @@ function calculateGroupTotals(groupData, periodType) {
     const baseSalary = sueldoOrd * baseFactor;
     const bonusLey = bonInc * baseFactor;
     const bonusDec = bonDec * baseFactor;
-    const bonos = Number(e.extras?.bonos) || 0;
+    const bonos = (Number(e.extras?.bonos) || 0) + Object.values(e.appliedBonuses || {}).reduce((s, v) => s + (Number(v) || 0), 0);
+    const comisiones = Number(e.extras?.comisiones) || 0;
     const devengado = baseSalary + bonusLey + bonusDec + bonos;
 
     const simplesQty = Number(e.extras?.simplesQty) || 0;
@@ -423,10 +429,12 @@ function calculateGroupTotals(groupData, periodType) {
     const doblesQty = Number(e.extras?.doblesQty) || 0;
     const doblesVal = Number(e.extras?.doblesVal) || 0;
     const otrosIngresos = Number(e.extras?.otrosIngresos) || 0;
-    const salarioTotal = devengado + simplesVal + doblesVal + otrosIngresos;
+    const salarioTotal = e.calculated?.gross != null
+      ? Number(e.calculated.gross)
+      : (devengado + simplesVal + doblesVal + otrosIngresos + comisiones);
 
-    const igss = Number(e.deductions?.igss) || 0;
-    const isr = Number(e.deductions?.isr) || 0;
+    const igss = Number(e.calculated?.proratedDeductions?.igss ?? e.deductions?.igss) || 0;
+    const isr = Number(e.calculated?.proratedDeductions?.isr ?? e.deductions?.isr) || 0;
     const cafe = Number(e.deductions?.cafe) || 0;
     const cell = Number(e.deductions?.cell) || 0;
     const uniform = Number(e.deductions?.uniform) || 0;
@@ -442,10 +450,13 @@ function calculateGroupTotals(groupData, periodType) {
     const otros_egresos = Number(e.deductions?.otros_egresos) || 0;
     const anticipo = Number(e.anticipo1ra) || 0;
     
-    const totalEgresos = igss + isr + cafe + cell + uniform + shoes + equipo + product + bancos + otros + judiciales + seguro + parqueo + boleto_de_ornato + otros_egresos;
-    const liquido = salarioTotal - totalEgresos;
+    const totalEgresos = e.calculated?.ded != null
+      ? Number(e.calculated.ded)
+      : (igss + isr + cafe + cell + uniform + shoes + equipo + product + bancos + otros + judiciales + seguro + parqueo + boleto_de_ornato + otros_egresos);
+    const liquido = e.calculated?.net != null ? Number(e.calculated.net) : (salarioTotal - totalEgresos);
     const q1 = periodType === '2da' ? anticipo : liquido;
     const q2 = periodType === '2da' ? liquido - anticipo : 0;
+    const liquidoPagar = getNetPayable(e, periodType);
 
     totSalarioOrd += baseSalary;
     totBonInc += bonusLey;
@@ -475,7 +486,7 @@ function calculateGroupTotals(groupData, periodType) {
     totBoleta += boleto_de_ornato;
     totOtrosEgresos += otros_egresos;
     totTotalEgresos += totalEgresos;
-    totLiquido += liquido;
+    totLiquido += liquidoPagar;
     totQuincena1 += q1;
     totQuincena2 += q2;
   });
@@ -648,7 +659,8 @@ function PayrollHistoryDetail({ group, onBack }) {
     }));
   }, [data, filterDept, filterArea, filterDiv, filterSubdiv, divisions, areas, subdivisions]);
 
-  const exportExcel = () => {
+  const exportExcel = async () => {
+    const XLSX = await getXLSX();
     showToast('Generando Excel...', 'success');
     
     const rows = data.map((e, idx) => {
@@ -685,9 +697,10 @@ function PayrollHistoryDetail({ group, onBack }) {
         'Boleta de Ornato': e.deductions?.boleto_de_ornato || 0,
         'Otros Egresos': e.deductions?.otros_egresos || 0,
         'Total Egresos': e.calculated.ded,
-        'Líquido a Recibir': e.calculated.net,
-        '1ra Quincena': group.periodType === '2da' ? (e.anticipo1ra || 0) : e.calculated.net,
-        '2da Quincena': group.periodType === '2da' ? (e.calculated.net - (e.anticipo1ra || 0)) : 0,
+        'Líquido a Recibir': getNetPayable(e, group.periodType),
+        '1ra Quincena': group.periodType === '2da' ? (e.anticipo1ra || 0) : getNetPayable(e, group.periodType),
+        '2da Quincena': group.periodType === '2da' ? getNetPayable(e, group.periodType) : 0,
+        'Detalle Bonos': (e.operationLogs || []).filter(l => l.type === 'BONO').map(l => `Q${Number(l.bonusAmount||0).toFixed(2)}`).join('; '),
         'Banco Deposito': e.banco || 'N/A',
         'Cuenta Bancaria': e.no_cuenta || 'N/A',
       };
@@ -700,7 +713,8 @@ function PayrollHistoryDetail({ group, onBack }) {
     XLSX.writeFile(wb, `Nomina_${group.title.replace(/[^a-z0-9]/gi, '_')}.xlsx`);
   };
 
-  const exportExcelCheques = () => {
+  const exportExcelCheques = async () => {
+    const XLSX = await getXLSX();
     showToast('Generando Solicitud de Cheques...', 'success');
     const chequesData = data.filter(e => String(e.tipo_de_pago).toLowerCase() === 'cheque');
     if (chequesData.length === 0) {
@@ -797,7 +811,8 @@ function PayrollHistoryDetail({ group, onBack }) {
     XLSX.writeFile(wb, `Sol_Cheques_${group.title.replace(/[^a-z0-9]/gi, '_')}.xlsx`);
   };
 
-  const exportExcelVerificador = () => {
+  const exportExcelVerificador = async () => {
+    const XLSX = await getXLSX();
     showToast('Generando Verificador de Pago...', 'success');
     
     // Group ALL employees by company, separating cheques vs transfers
@@ -922,7 +937,8 @@ function PayrollHistoryDetail({ group, onBack }) {
     XLSX.writeFile(wb, `Verificador_Pagos_${group.title.replace(/[^a-z0-9]/gi, '_')}.xlsx`);
   };
 
-  const exportExcelIgss = () => {
+  const exportExcelIgss = async () => {
+    const XLSX = await getXLSX();
     showToast('Generando Recibo e IGSS...', 'success');
     
     const comps = {};
@@ -983,7 +999,8 @@ function PayrollHistoryDetail({ group, onBack }) {
     XLSX.writeFile(wb, `Recibo_IGSS_${group.title.replace(/[^a-z0-9]/gi, '_')}.xlsx`);
   };
 
-  const exportExcelLibroSalarios = () => {
+  const exportExcelLibroSalarios = async () => {
+    const XLSX = await getXLSX();
     showToast('Generando Libro de Salarios...', 'success');
     
     // Agrupar por empresa para hojas separadas (opcional, o todo junto)
@@ -1063,7 +1080,8 @@ function PayrollHistoryDetail({ group, onBack }) {
   const cleanName = (name) => name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/,/g, "").toUpperCase();
   const getConcept = () => `pago salario de ${group.periodType === '2da' ? '2DA' : '1RA'} quincena ${group.title.replace(/[^a-zA-Z0-9 ]/g, '')}`;
 
-  const exportPlantillaPromerica = () => {
+  const exportPlantillaPromerica = async () => {
+    const XLSX = await getXLSX();
     showToast('Generando Plantilla Promerica...', 'success');
     const comps = {};
     data.forEach(e => {
@@ -1127,7 +1145,8 @@ function PayrollHistoryDetail({ group, onBack }) {
     XLSX.writeFile(wb, `Plantilla_Promerica_${group.title.replace(/[^a-z0-9]/gi, '_')}.xlsx`);
   };
 
-  const exportPlantillaIndustrial = () => {
+  const exportPlantillaIndustrial = async () => {
+    const XLSX = await getXLSX();
     showToast('Generando Plantilla Industrial...', 'success');
     const comps = {};
     data.forEach(e => {
@@ -1203,9 +1222,9 @@ function PayrollHistoryDetail({ group, onBack }) {
     if (!element) return;
     
     try {
-      const canvas = await html2canvas(element, { scale: 2 });
+      const canvas = await (await getHtml2Canvas())(element, { scale: 2 });
       const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pdf = new (await getJsPDF())('p', 'mm', 'a4');
       const pdfWidth = pdf.internal.pageSize.getWidth();
       const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
       

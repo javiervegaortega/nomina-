@@ -5405,10 +5405,13 @@ export const EMPLOYEES = [
   }
 ];
 
-export const CUOTA_PATRONAL_RATE = 0.1267;
+/** Alineado con payrollCalculator.service.js (fuente de verdad en backend) */
+export const CUOTA_PATRONAL_RATE = 0.1067;
 export const CUOTA_LABORAL_RATE = 0.0483;
+export const IVA_RATE = 0.12;
 
 // Cálculo de ISR Mensual (Régimen de Asalariados - Guatemala)
+// Misma fórmula que backend/src/services/isr.service.js
 export const calculateMonthlyISR = (baseMonthly, bonusMonthly = 250) => {
   const annualIncome = (baseMonthly + bonusMonthly) * 12;
   const annualIgss = baseMonthly * CUOTA_LABORAL_RATE * 12;
@@ -5424,7 +5427,7 @@ export const calculateMonthlyISR = (baseMonthly, bonusMonthly = 250) => {
     annualIsr = 15000 + ((taxableIncome - 300000) * 0.07);
   }
 
-  return annualIsr / 12;
+  return Math.round((annualIsr / 12) * 100) / 100;
 };
 
 export function calcTotal(emp) {

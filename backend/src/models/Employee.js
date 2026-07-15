@@ -107,6 +107,7 @@ module.exports = (sequelize) => {
     jubilacion: { type: DataTypes.BOOLEAN, defaultValue: false },
     discapacidad: { type: DataTypes.STRING },
     motivo_baja: { type: DataTypes.STRING },
+    observaciones: { type: DataTypes.TEXT },
     dist: { type: DataTypes.JSON }
   }, {
     tableName: 'employee',

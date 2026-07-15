@@ -9,10 +9,12 @@ import {
   Tabs, TabList, Tab, TabPanels, TabPanel, Skeleton, Flex,
   Menu, MenuButton, MenuList, MenuOptionGroup, MenuItemOption
 } from '@chakra-ui/react';
-import { Plus, Check, X, Trash2, Eye, Edit2, ChevronDown, ArrowLeft, Send } from 'lucide-react';
+import { Plus, Check, X, Trash2, Eye, Edit2, ChevronDown, ArrowLeft, Send, Mail } from 'lucide-react';
 import { toast } from 'sonner';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
+import usePagination from '../hooks/usePagination';
+import Pagination from '../components/Pagination';
 
 export default function OperationLogs() {
   const { id: batchId } = useParams();
@@ -50,6 +52,9 @@ export default function OperationLogs() {
   const [selectedRowIds, setSelectedRowIds] = useState([]);
 
   const { isOpen: isEditOpen, onOpen: onEditOpen, onClose: onEditClose } = useDisclosure();
+  const { isOpen: isEmailOpen, onOpen: onEmailOpen, onClose: onEmailClose } = useDisclosure();
+  const [emailPreview, setEmailPreview] = useState({ subject: '', html: '' });
+  const [emailLoading, setEmailLoading] = useState(false);
   const [editFormData, setEditFormData] = useState(null);
   const [editModalAreaFilter, setEditModalAreaFilter] = useState([]);
   const [editModalFilterArea, setEditModalFilterArea] = useState([]);
@@ -102,6 +107,7 @@ export default function OperationLogs() {
   const cancelRef = React.useRef();
 
   const isManagerOrAdmin = ['gerente', 'nomina', 'admin'].includes(user?.role?.toLowerCase());
+  const isNominaRole = ['admin', 'nomina', 'auditor'].includes(user?.role?.toLowerCase());
   const isGlobalRole = ['admin', 'nomina', 'gerente general'].includes(user?.role?.toLowerCase());
   const isReadOnly = user?.role === 'AUDITOR';
 
@@ -259,10 +265,12 @@ export default function OperationLogs() {
 
   const handleApprove = (id) => setConfirmState({ isOpen: true, action: 'APPROVE', data: id });
   const handleReject = (id) => setConfirmState({ isOpen: true, action: 'REJECT', data: id });
+  const handleRejectToManager = (id) => setConfirmState({ isOpen: true, action: 'REJECT_TO_MANAGER', data: id });
   const handleDelete = (id) => setConfirmState({ isOpen: true, action: 'DELETE', data: id });
 
   const handleBulkApprove = () => setConfirmState({ isOpen: true, action: 'BULK_APPROVE', data: null });
   const handleBulkReject = () => setConfirmState({ isOpen: true, action: 'BULK_REJECT', data: null });
+  const handleBulkRejectToManager = () => setConfirmState({ isOpen: true, action: 'BULK_REJECT_TO_MANAGER', data: null });
 
   const executeConfirm = async () => {
     const { action, data, justification } = confirmState;
@@ -293,20 +301,34 @@ export default function OperationLogs() {
         toast.success(`Se agregaron ${formData.employeeIds.length} registros al lote`);
       } else if (action === 'APPROVE') {
         await updateOperationLogStatus(data, 'APPROVED_MANAGER');
+        await fetchBatch();
         toast.success('Solicitud aprobada');
       } else if (action === 'REJECT') {
         await updateOperationLogStatus(data, 'RETURNED', null, justification);
+        await fetchBatch();
         toast.success('Solicitud devuelta al solicitante');
+      } else if (action === 'REJECT_TO_MANAGER') {
+        await updateOperationLogStatus(data, 'PENDING_MANAGER', null, justification, true);
+        await fetchBatch();
+        toast.success('Solicitud devuelta al gerente');
       } else if (action === 'BULK_APPROVE') {
         const promises = selectedRowIds.map(id => updateOperationLogStatus(id, 'APPROVED_MANAGER'));
         await Promise.all(promises);
+        await fetchBatch();
         setSelectedRowIds([]);
         toast.success(`${selectedRowIds.length} solicitudes aprobadas`);
       } else if (action === 'BULK_REJECT') {
         const promises = selectedRowIds.map(id => updateOperationLogStatus(id, 'RETURNED', null, justification));
         await Promise.all(promises);
+        await fetchBatch();
         setSelectedRowIds([]);
         toast.success(`${selectedRowIds.length} solicitudes devueltas`);
+      } else if (action === 'BULK_REJECT_TO_MANAGER') {
+        const promises = selectedRowIds.map(id => updateOperationLogStatus(id, 'PENDING_MANAGER', null, justification, true));
+        await Promise.all(promises);
+        await fetchBatch();
+        setSelectedRowIds([]);
+        toast.success(`${selectedRowIds.length} solicitudes devueltas al gerente`);
       } else if (action === 'DELETE') {
         await deleteOperationLog(data);
         await fetchBatch();
@@ -329,7 +351,21 @@ export default function OperationLogs() {
     }
   };
 
-  const pendingVisibleLogs = filteredLogs.filter(l => l.status === 'PENDING_MANAGER');
+  const pendingVisibleLogs = useMemo(
+    () => filteredLogs.filter(l => l.status === 'PENDING_MANAGER'),
+    [filteredLogs]
+  );
+
+  const {
+    paginatedData: paginatedLogs,
+    currentPage,
+    totalPages,
+    totalItems,
+    limit,
+    goToNextPage,
+    goToPreviousPage,
+    changeLimit
+  } = usePagination(filteredLogs, 25);
   
   const handleSelectAllRows = () => {
     if (selectedRowIds.length === pendingVisibleLogs.length && pendingVisibleLogs.length > 0) {
@@ -449,6 +485,70 @@ export default function OperationLogs() {
     }
   };
 
+  const handleRejectBatchToManager = async () => {
+    const note = prompt('Justificación del rechazo al gerente:');
+    if (!note) return;
+    try {
+      const token = localStorage.getItem('nomina-token');
+      const res = await fetch(`http://localhost:3000/api/operation-batches/${batchId}/status`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ status: 'PENDING_MANAGER', justification: note, rejectionFromNomina: true })
+      });
+      if (res.ok) {
+        toast.success('Lote devuelto al gerente');
+        await fetchBatch();
+      } else {
+        toast.error('Error al rechazar');
+      }
+    } catch (e) {
+      toast.error('Error al rechazar');
+    }
+  };
+
+  const handleViewEmail = async () => {
+    setEmailLoading(true);
+    try {
+      const token = localStorage.getItem('nomina-token');
+      const res = await fetch(`http://localhost:3000/api/operation-batches/${batchId}/email-preview`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setEmailPreview(data);
+        onEmailOpen();
+      } else {
+        toast.error('No se pudo cargar la vista previa del correo');
+      }
+    } catch (e) {
+      toast.error('Error al cargar vista previa');
+    }
+    setEmailLoading(false);
+  };
+
+  const handleResendEmail = async () => {
+    setEmailLoading(true);
+    try {
+      const token = localStorage.getItem('nomina-token');
+      const res = await fetch(`http://localhost:3000/api/operation-batches/${batchId}/notify`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        toast.success('Correo reenviado al gerente');
+      } else {
+        const err = await res.json();
+        toast.error(err.error || 'Error al reenviar');
+      }
+    } catch (e) {
+      toast.error('Error al reenviar correo');
+    }
+    setEmailLoading(false);
+  };
+
   if (!batch) return null;
 
   const canCreateBatch = ['ADMIN', 'GERENTE GENERAL', 'SOLICITANTE', 'NOMINA', 'GERENTE'].includes(user?.role);
@@ -482,10 +582,25 @@ export default function OperationLogs() {
                 <b>Rechazado:</b> {batch.justification}
               </Text>
             )}
+            {batch.status === 'PENDING_MANAGER' && batch.justification && (
+              <Text color="orange.500" fontSize="sm" mt={1}>
+                <b>Devuelto por Nómina:</b> {batch.justification}
+              </Text>
+            )}
           </Box>
         </Flex>
 
-        <Flex gap={2}>
+        <Flex gap={2} flexWrap="wrap">
+          <Button
+            variant="outline"
+            leftIcon={<Mail size={16} />}
+            onClick={handleViewEmail}
+            isLoading={emailLoading}
+            borderRadius="lg"
+          >
+            Ver correo
+          </Button>
+
           {canEdit && (
             <>
               <Button 
@@ -520,9 +635,15 @@ export default function OperationLogs() {
 
           {isManagerOrAdmin && batch.status === 'PENDING_MANAGER' && (
             <>
-              <Button colorScheme="red" variant="outline" leftIcon={<X size={16} />} onClick={handleRejectBatch} borderRadius="lg" transition="all 0.3s" _hover={{ shadow: 'lg' }}>Rechazar Lote</Button>
+              <Button colorScheme="red" variant="outline" leftIcon={<X size={16} />} onClick={handleRejectBatch} borderRadius="lg" transition="all 0.3s" _hover={{ shadow: 'lg' }}>Devolver a Solicitante</Button>
               <Button colorScheme="green" leftIcon={<Check size={16} />} onClick={handleApproveBatch} borderRadius="lg" transition="all 0.3s" _hover={{ shadow: 'lg' }}>Aprobar Lote Completo</Button>
             </>
+          )}
+
+          {isNominaRole && batch.status === 'APPROVED_MANAGER' && (
+            <Button colorScheme="orange" variant="outline" leftIcon={<X size={16} />} onClick={handleRejectBatchToManager} borderRadius="lg" transition="all 0.3s" _hover={{ shadow: 'lg' }}>
+              Rechazar a Gerente
+            </Button>
           )}
         </Flex>
       </Flex>
@@ -582,7 +703,7 @@ export default function OperationLogs() {
             </Tr>
           </Thead>
           <Tbody>
-            {filteredLogs.map(log => (
+            {paginatedLogs.map(log => (
               <Tr key={log.id}>
                 {isManagerOrAdmin && (
                   <Td>
@@ -627,10 +748,15 @@ export default function OperationLogs() {
                         <Tooltip label="Aprobar" hasArrow>
                           <IconButton aria-label="Aprobar" size={{ base: 'xs', md: 'sm' }} icon={<Check size={16} />} variant="ghost" colorScheme="blue" onClick={() => handleApprove(log.id)} transition="all 0.3s" />
                         </Tooltip>
-                        <Tooltip label="Devolver" hasArrow>
+                        <Tooltip label="Devolver a Solicitante" hasArrow>
                           <IconButton aria-label="Devolver" size={{ base: 'xs', md: 'sm' }} icon={<X size={16} />} variant="ghost" colorScheme="orange" onClick={() => handleReject(log.id)} transition="all 0.3s" />
                         </Tooltip>
                       </>
+                    )}
+                    {isNominaRole && log.status === 'APPROVED_MANAGER' && (
+                      <Tooltip label="Rechazar a Gerente" hasArrow>
+                        <IconButton aria-label="Rechazar a Gerente" size={{ base: 'xs', md: 'sm' }} icon={<X size={16} />} variant="ghost" colorScheme="orange" onClick={() => handleRejectToManager(log.id)} transition="all 0.3s" />
+                      </Tooltip>
                     )}
                     {!isReadOnly && log.status !== 'PROCESSED_PAYROLL' && (
                       <Tooltip label="Eliminar" hasArrow>
@@ -646,6 +772,19 @@ export default function OperationLogs() {
             )}
           </Tbody>
         </Table>
+        {filteredLogs.length > 0 && (
+          <Box px={2} py={3}>
+            <Pagination
+              currentPage={currentPage}
+              totalPages={totalPages}
+              totalItems={totalItems}
+              limit={limit}
+              goToNextPage={goToNextPage}
+              goToPreviousPage={goToPreviousPage}
+              changeLimit={changeLimit}
+            />
+          </Box>
+        )}
       </Box>
 
       {/* Modal Agregar Registro */}
@@ -1000,6 +1139,19 @@ export default function OperationLogs() {
                   </FormControl>
                 </VStack>
               )}
+              {confirmState.action === 'REJECT_TO_MANAGER' && (
+                <VStack align="stretch" spacing={3}>
+                  <Text>¿Deseas devolver esta solicitud al gerente para su revisión?</Text>
+                  <FormControl isRequired>
+                    <FormLabel fontSize="sm">Justificación del rechazo</FormLabel>
+                    <Input 
+                      placeholder="Indica qué debe revisar o corregir el gerente..." 
+                      value={confirmState.justification}
+                      onChange={(e) => setConfirmState({...confirmState, justification: e.target.value})}
+                    />
+                  </FormControl>
+                </VStack>
+              )}
               {confirmState.action === 'BULK_APPROVE' && `¿Deseas aprobar las ${selectedRowIds.length} solicitudes seleccionadas?`}
               {confirmState.action === 'BULK_REJECT' && (
                 <VStack align="stretch" spacing={3}>
@@ -1019,9 +1171,10 @@ export default function OperationLogs() {
             <AlertDialogFooter>
               <Button ref={cancelRef} onClick={() => setConfirmState({ isOpen: false, action: null, data: null })} variant="ghost">Cancelar</Button>
               <Button 
-                colorScheme={['DELETE', 'REJECT', 'BULK_REJECT'].includes(confirmState.action) ? 'red' : 'blue'} 
+                colorScheme={['DELETE', 'REJECT', 'BULK_REJECT', 'REJECT_TO_MANAGER', 'BULK_REJECT_TO_MANAGER'].includes(confirmState.action) ? 'red' : 'blue'} 
                 onClick={executeConfirm} 
                 ml={3}
+                isDisabled={['REJECT', 'BULK_REJECT', 'REJECT_TO_MANAGER', 'BULK_REJECT_TO_MANAGER'].includes(confirmState.action) && !confirmState.justification?.trim()}
               >
                 {confirmState.action === 'SAVE' ? 'Guardar' : confirmState.action === 'DELETE' ? 'Eliminar' : 'Confirmar'}
               </Button>
@@ -1219,6 +1372,40 @@ export default function OperationLogs() {
             )}
             <Button variant="ghost" mr={3} onClick={onEditClose}>Cancelar</Button>
             <Button colorScheme="blue" onClick={handleEditSave}>Guardar y Reenviar</Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* Modal Vista Previa Correo */}
+      <Modal isOpen={isEmailOpen} onClose={onEmailClose} size="3xl" isCentered scrollBehavior="inside">
+        <ModalOverlay backdropFilter="blur(4px)" />
+        <ModalContent bg={bg} color={textColor} maxH="90vh">
+          <ModalHeader>Vista Previa del Correo</ModalHeader>
+          <ModalBody>
+            <Text fontSize="sm" color={mutedTextColor} mb={2}>Asunto:</Text>
+            <Text fontWeight="bold" mb={4}>{emailPreview.subject}</Text>
+            <Box
+              border="1px solid"
+              borderColor={detailBg}
+              borderRadius="md"
+              overflow="hidden"
+              bg="white"
+              dangerouslySetInnerHTML={{ __html: emailPreview.html }}
+            />
+          </ModalBody>
+          <ModalFooter>
+            {batch.status === 'PENDING_MANAGER' && (
+              <Button
+                colorScheme="teal"
+                leftIcon={<Send size={16} />}
+                onClick={handleResendEmail}
+                isLoading={emailLoading}
+                mr={3}
+              >
+                Reenviar
+              </Button>
+            )}
+            <Button colorScheme="brand" onClick={onEmailClose}>Cerrar</Button>
           </ModalFooter>
         </ModalContent>
       </Modal>

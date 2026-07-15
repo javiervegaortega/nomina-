@@ -11,7 +11,6 @@ const transporter = nodemailer.createTransport({
 const sendReactivationEmail = async (gerenteName, recipientEmail, token, details) => {
   const approvalLink = `http://localhost:3000/api/payrolls/reactivate-via-get?token=${token}`;
   
-  // Format current date and time
   const now = new Date();
   const dateStr = now.toLocaleDateString('es-GT', { day: '2-digit', month: '2-digit', year: 'numeric' });
   const timeStr = now.toLocaleTimeString('es-GT', { hour: '2-digit', minute: '2-digit' });
@@ -123,48 +122,88 @@ const sendReactivationEmail = async (gerenteName, recipientEmail, token, details
   }
 };
 
-const sendOperationLogEmail = async (gerenteName, recipientEmail, solicitanteName, count) => {
+const buildOperationEmailHtml = (details) => {
   const approvalLink = `http://localhost:5173/operations`;
-  
   const now = new Date();
   const dateStr = now.toLocaleDateString('es-GT', { day: '2-digit', month: '2-digit', year: 'numeric' });
   const timeStr = now.toLocaleTimeString('es-GT', { hour: '2-digit', minute: '2-digit' });
-  
-  const mailOptions = {
-    from: `"Sistema Nómina" <${process.env.GMAIL_USER || 'notificacioneseconsa@gmail.com'}>`,
-    to: recipientEmail,
-    subject: `Aprobación Requerida: Reporte Operativo (${count} registros)`,
-    html: `
-      <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f3f4f6; padding: 20px;">
-        <div style="max-width: 600px; margin: 0 auto; background-color: white; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
-          <div style="padding: 15px 20px; font-weight: bold; color: #1e3a8a; font-size: 14px; letter-spacing: 0.5px;">
-            GRUPO ECONSA
+
+  const {
+    gerenteName = 'Gerente',
+    solicitanteName = 'Solicitante',
+    count = 0,
+    justification,
+    isRejection = false,
+    batchTitle,
+    rejectedBy
+  } = details;
+
+  const headerColor = isRejection ? '#dc2626' : '#0d9488';
+  const headerTitle = isRejection ? 'Corrección Requerida — Reporte Operativo' : 'Reporte Operativo (Bonos / Horas Extra)';
+  const introText = isRejection
+    ? `El área de <strong>${rejectedBy || 'Nómina'}</strong> ha devuelto el lote <strong>${batchTitle || 'de operaciones'}</strong> para su revisión. Se requiere su atención sobre <strong>${count}</strong> registro(s).`
+    : `El usuario <strong>${solicitanteName}</strong> ha registrado <strong>${count}</strong> nueva(s) solicitud(es) de bonos/horas extra que requiere(n) su revisión y autorización.`;
+
+  const alertText = isRejection
+    ? 'Por favor revise la justificación indicada, corrija lo necesario y vuelva a aprobar el lote.'
+    : 'Estas solicitudes requieren su aprobación para ser procesadas en la nómina.';
+
+  const justificationBlock = isRejection && justification ? `
+    <div style="font-size: 11px; font-weight: bold; color: #a0aec0; letter-spacing: 1px; margin-bottom: 10px;">JUSTIFICACIÓN DEL RECHAZO</div>
+    <div style="background-color: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 15px; margin-bottom: 20px; font-size: 13px; color: #991b1b;">
+      ${justification}
+    </div>
+  ` : '';
+
+  return `
+    <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f3f4f6; padding: 20px;">
+      <div style="max-width: 600px; margin: 0 auto; background-color: white; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+        <div style="padding: 15px 20px; font-weight: bold; color: #1e3a8a; font-size: 14px; letter-spacing: 0.5px;">
+          GRUPO ECONSA
+        </div>
+        <div style="background-color: ${headerColor}; padding: 15px 20px; display: flex; justify-content: center; align-items: center; color: white;">
+          <h2 style="margin: 0; font-size: 18px; font-weight: 600;">${headerTitle}</h2>
+        </div>
+        <div style="padding: 20px;">
+          <div style="color: #a0aec0; font-size: 12px; margin-bottom: 15px;">
+            ${dateStr} a las ${timeStr}
           </div>
-          <div style="background-color: #0d9488; padding: 15px 20px; display: flex; justify-content: center; align-items: center; color: white;">
-            <h2 style="margin: 0; font-size: 18px; font-weight: 600;">Reporte Operativo (Bonos / Horas Extra)</h2>
+          <p style="color: #4a5568; font-size: 14px; margin-bottom: 15px;">
+            Estimado(a) <strong>${gerenteName}</strong>,
+          </p>
+          <p style="color: #4a5568; font-size: 14px; margin-bottom: 20px;">
+            ${introText}
+          </p>
+          ${justificationBlock}
+          <div style="text-align: center; margin-bottom: 20px;">
+            <a href="${approvalLink}" style="display: inline-block; background-color: ${headerColor}; color: white; text-decoration: none; padding: 10px 25px; border-radius: 6px; font-weight: 600; font-size: 14px; box-shadow: 0 4px 6px rgba(13, 148, 136, 0.2);">
+              Revisar en el Sistema
+            </a>
           </div>
-          <div style="padding: 20px;">
-            <div style="color: #a0aec0; font-size: 12px; margin-bottom: 15px;">
-              ${dateStr} a las ${timeStr}
-            </div>
-            <p style="color: #4a5568; font-size: 14px; margin-bottom: 15px;">
-              Estimado(a) <strong>${gerenteName}</strong>,
-            </p>
-            <p style="color: #4a5568; font-size: 14px; margin-bottom: 20px;">
-              El usuario <strong>${solicitanteName}</strong> ha registrado <strong>${count}</strong> nueva(s) solicitud(es) de bonos/horas extra que requiere(n) su revisión y autorización.
-            </p>
-            <div style="text-align: center; margin-bottom: 20px;">
-              <a href="${approvalLink}" style="display: inline-block; background-color: #0d9488; color: white; text-decoration: none; padding: 10px 25px; border-radius: 6px; font-weight: 600; font-size: 14px; box-shadow: 0 4px 6px rgba(13, 148, 136, 0.2);">
-                Revisar en el Sistema
-              </a>
-            </div>
-            <div style="background-color: #fffbeb; border-left: 4px solid #d97706; padding: 10px 15px; font-size: 12px; color: #92400e;">
-              Estas solicitudes requieren su aprobación para ser procesadas en la nómina.
-            </div>
+          <div style="background-color: #fffbeb; border-left: 4px solid #d97706; padding: 10px 15px; font-size: 12px; color: #92400e;">
+            ${alertText}
           </div>
         </div>
       </div>
-    `
+    </div>
+  `;
+};
+
+const getOperationEmailSubject = (details) => {
+  const { count = 0, isRejection = false, batchTitle } = details;
+  if (isRejection) {
+    return `Corrección Requerida: Reporte Operativo${batchTitle ? ` — ${batchTitle}` : ''}`;
+  }
+  return `Aprobación Requerida: Reporte Operativo (${count} registros)`;
+};
+
+const sendOperationLogEmail = async (gerenteName, recipientEmail, solicitanteName, count) => {
+  const details = { gerenteName, solicitanteName, count };
+  const mailOptions = {
+    from: `"Sistema Nómina" <${process.env.GMAIL_USER || 'notificacioneseconsa@gmail.com'}>`,
+    to: recipientEmail,
+    subject: getOperationEmailSubject(details),
+    html: buildOperationEmailHtml(details)
   };
 
   try {
@@ -176,7 +215,28 @@ const sendOperationLogEmail = async (gerenteName, recipientEmail, solicitanteNam
   }
 };
 
+const sendOperationRejectToManagerEmail = async (gerenteName, recipientEmail, details) => {
+  const emailDetails = { ...details, gerenteName, isRejection: true };
+  const mailOptions = {
+    from: `"Sistema Nómina" <${process.env.GMAIL_USER || 'notificacioneseconsa@gmail.com'}>`,
+    to: recipientEmail,
+    subject: getOperationEmailSubject(emailDetails),
+    html: buildOperationEmailHtml(emailDetails)
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`Email de rechazo enviado a ${recipientEmail} para reporte operativo`);
+  } catch (error) {
+    console.error('Error enviando el correo de rechazo a gerente:', error);
+    throw new Error('No se pudo enviar el correo de rechazo al gerente.');
+  }
+};
+
 module.exports = {
   sendReactivationEmail,
-  sendOperationLogEmail
+  buildOperationEmailHtml,
+  getOperationEmailSubject,
+  sendOperationLogEmail,
+  sendOperationRejectToManagerEmail
 };

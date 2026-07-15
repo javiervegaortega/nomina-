@@ -1,4 +1,5 @@
 const { calculatePayrollBatch } = require('../services/payrollCalculator.service');
+const { calculateMonthlyISR } = require('../services/isr.service');
 
 /**
  * Recibe un array de empleados con sus variables actuales y devuelve el mismo array 
@@ -21,6 +22,23 @@ const previewCalculation = (req, res) => {
   }
 };
 
+/**
+ * Preview ISR mensual (régimen asalariados GT).
+ * Body: { baseMonthly, bonusMonthly? }
+ */
+const previewIsr = (req, res) => {
+  try {
+    const baseMonthly = Number(req.body.baseMonthly) || 0;
+    const bonusMonthly = req.body.bonusMonthly !== undefined ? Number(req.body.bonusMonthly) : 250;
+    const monthly = calculateMonthlyISR(baseMonthly, bonusMonthly);
+    res.json({ monthlyIsr: monthly, baseMonthly, bonusMonthly });
+  } catch (err) {
+    console.error('Error in previewIsr:', err);
+    res.status(500).json({ error: 'Error al calcular ISR: ' + err.message });
+  }
+};
+
 module.exports = {
-  previewCalculation
+  previewCalculation,
+  previewIsr
 };

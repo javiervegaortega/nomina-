@@ -1,10 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useContext } from 'react';
 import {
   Box, VStack, HStack, FormControl, FormLabel, Select, Input, Textarea, Button, Table, Thead, Tbody, Tr, Th, Td, IconButton, Text, Badge, Checkbox
 } from '@chakra-ui/react';
 import { Trash2, Plus } from 'lucide-react';
 import { AppContext } from '../App';
-import { useContext } from 'react';
+import { calcSuspensionDays } from '../utils/payrollPeriod';
 
 const INCIDENCE_TYPES = [
   'Falta justificada',
@@ -21,7 +21,10 @@ const getFormLayout = (type) => {
   return 'RANGE_QUINCENA';
 };
 
-export default function EmployeeIncidences({ employee, onSave, onDelete }) {
+/**
+ * @param {{ employee: object, onSave: Function, onDelete: Function, draftDateStr?: string, periodType?: string }} props
+ */
+export default function EmployeeIncidences({ employee, onSave, onDelete, draftDateStr, periodType }) {
   const { showToast } = useContext(AppContext);
   const [type, setType] = useState('');
   const [daysQuincena, setDaysQuincena] = useState('');
@@ -31,6 +34,22 @@ export default function EmployeeIncidences({ employee, onSave, onDelete }) {
   const [observations, setObservations] = useState('');
   const [remove7thDay, setRemove7thDay] = useState(false);
 
+  // Auto-calcular días al cambiar fechas / 7º día / tipo suspensión
+  useEffect(() => {
+    const layout = getFormLayout(type);
+    if (layout !== 'RANGE_QUINCENA') return;
+    if (!startDate || !endDate) return;
+    const { daysTotal: dt, daysQuincena: dq } = calcSuspensionDays({
+      startDate,
+      endDate,
+      draftDateStr,
+      periodType,
+      remove7thDay
+    });
+    setDaysTotal(String(dt));
+    setDaysQuincena(String(dq));
+  }, [startDate, endDate, remove7thDay, type, draftDateStr, periodType]);
+
   const handleSave = () => {
     if (!type) {
       showToast('Debe seleccionar un tipo de incidencia', 'warning');
@@ -39,13 +58,28 @@ export default function EmployeeIncidences({ employee, onSave, onDelete }) {
 
     const layout = getFormLayout(type);
     let dQ = layout === 'RANGE_QUINCENA' ? Number(daysQuincena) : Number(daysTotal);
-    
-    // If remove 7th day is checked, maybe they expect the system to deduct an extra day. 
-    // We'll trust whatever number they put in "Dias Total", but we save the flag just in case.
+
+    if (layout === 'SINGLE_DATE' || layout === 'SINGLE_DATE_WITH_7TH') {
+      if (!startDate) {
+        showToast('Indique la fecha', 'warning');
+        return;
+      }
+      // Un día (más 7º si aplica)
+      dQ = remove7thDay && layout === 'SINGLE_DATE_WITH_7TH' ? 2 : 1;
+      if (!daysTotal) {
+        // keep dQ
+      } else {
+        dQ = Number(daysTotal) || dQ;
+      }
+    }
+
     if (isNaN(dQ) || dQ <= 0) {
       showToast('Los días a descontar deben ser mayores a 0', 'warning');
       return;
     }
+
+    const dailySalary = (Number(employee.sueldo_ordinario) || 0) / 30;
+    const amountDeducted = Number((dailySalary * dQ).toFixed(2));
 
     const newIncidence = {
       id: Date.now().toString(),
@@ -54,14 +88,14 @@ export default function EmployeeIncidences({ employee, onSave, onDelete }) {
       daysTotal: Number(daysTotal) || dQ,
       startDate,
       endDate: layout === 'RANGE_QUINCENA' ? endDate : null,
-      remove7thDay: layout === 'SINGLE_DATE_WITH_7TH' ? remove7thDay : false,
+      remove7thDay: layout === 'SINGLE_DATE_WITH_7TH' || layout === 'RANGE_QUINCENA' ? remove7thDay : false,
       observations,
+      amountDeducted,
       createdAt: new Date().toISOString()
     };
 
     onSave(employee.id, newIncidence, dQ);
-    
-    // Reset form
+
     setType('');
     setDaysQuincena('');
     setDaysTotal('');
@@ -78,7 +112,7 @@ export default function EmployeeIncidences({ employee, onSave, onDelete }) {
     <Box>
       <VStack spacing={4} align="stretch" bg="gray.50" p={4} borderRadius="md" mb={6} borderWidth="1px" _dark={{ bg: 'gray.800', borderColor: 'gray.700' }}>
         <Text fontWeight="bold" fontSize="sm">Registrar Nueva Incidencia</Text>
-        
+
         <HStack spacing={3} align="flex-end">
           <FormControl flex={2}>
             <FormLabel fontSize="xs" mb={1} color="gray.500">Incidencia</FormLabel>
@@ -87,7 +121,7 @@ export default function EmployeeIncidences({ employee, onSave, onDelete }) {
               {INCIDENCE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
             </Select>
           </FormControl>
-          
+
           {type && layout === 'RANGE_QUINCENA' && (
             <FormControl flex={1}>
               <FormLabel fontSize="xs" mb={1} color="gray.500">Días Quincena</FormLabel>
@@ -104,16 +138,27 @@ export default function EmployeeIncidences({ employee, onSave, onDelete }) {
         </HStack>
 
         {type && layout === 'RANGE_QUINCENA' && (
-          <HStack spacing={3}>
-            <FormControl>
-              <FormLabel fontSize="xs" mb={1} color="gray.500">Fecha Inicio</FormLabel>
-              <Input size="sm" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} borderRadius="md" />
-            </FormControl>
-            <FormControl>
-              <FormLabel fontSize="xs" mb={1} color="gray.500">Fecha Final</FormLabel>
-              <Input size="sm" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} borderRadius="md" />
-            </FormControl>
-          </HStack>
+          <>
+            <HStack spacing={3}>
+              <FormControl>
+                <FormLabel fontSize="xs" mb={1} color="gray.500">Fecha Inicio</FormLabel>
+                <Input size="sm" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} borderRadius="md" />
+              </FormControl>
+              <FormControl>
+                <FormLabel fontSize="xs" mb={1} color="gray.500">Fecha Final</FormLabel>
+                <Input size="sm" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} borderRadius="md" />
+              </FormControl>
+            </HStack>
+            <Checkbox size="sm" colorScheme="brand" isChecked={remove7thDay} onChange={(e) => setRemove7thDay(e.target.checked)}>
+              Descontar séptimo día (domingos)
+            </Checkbox>
+            {daysQuincena !== '' && (
+              <Text fontSize="xs" color="gray.600">
+                Auto: {daysQuincena} días en quincena · {daysTotal} días totales
+                {employee?.sueldo_ordinario ? ` · Descuento estimado Q${((Number(employee.sueldo_ordinario) / 30) * Number(daysQuincena || 0)).toFixed(2)}` : ''}
+              </Text>
+            )}
+          </>
         )}
 
         {type && (layout === 'SINGLE_DATE' || layout === 'SINGLE_DATE_WITH_7TH') && (
@@ -154,6 +199,7 @@ export default function EmployeeIncidences({ employee, onSave, onDelete }) {
               <Tr>
                 <Th>Tipo</Th>
                 <Th isNumeric>Días</Th>
+                <Th isNumeric>Monto est.</Th>
                 <Th>Acción</Th>
               </Tr>
             </Thead>
@@ -170,12 +216,15 @@ export default function EmployeeIncidences({ employee, onSave, onDelete }) {
                   <Td isNumeric>
                     <Badge colorScheme="red">-{inc.daysQuincena}</Badge>
                   </Td>
+                  <Td isNumeric fontSize="xs">
+                    {inc.amountDeducted != null ? `Q${Number(inc.amountDeducted).toFixed(2)}` : '—'}
+                  </Td>
                   <Td>
-                    <IconButton 
-                      icon={<Trash2 size={14} />} 
-                      size="xs" 
-                      colorScheme="red" 
-                      variant="ghost" 
+                    <IconButton
+                      icon={<Trash2 size={14} />}
+                      size="xs"
+                      colorScheme="red"
+                      variant="ghost"
                       aria-label="Eliminar"
                       onClick={() => onDelete(employee.id, inc.id, inc.daysQuincena)}
                     />

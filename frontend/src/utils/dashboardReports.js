@@ -1,6 +1,3 @@
-import * as XLSX from 'xlsx';
-import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
 import { formatQ, CUOTA_PATRONAL_RATE } from '../data/mockData';
 
 export const PERIOD_MODES = {
@@ -271,7 +268,8 @@ export const buildDashboardMetrics = ({
   };
 };
 
-export const exportDashboardExcel = (metrics, periodLabel) => {
+export const exportDashboardExcel = async (metrics, periodLabel) => {
+  const XLSX = await import('xlsx');
   const wb = XLSX.utils.book_new();
 
   const resumen = [
@@ -393,6 +391,10 @@ export const buildReportHtml = (metrics, periodLabel) => {
 };
 
 export const exportDashboardPdf = async (metrics, periodLabel) => {
+  const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
+    import('html2canvas'),
+    import('jspdf'),
+  ]);
   const container = document.createElement('div');
   container.style.position = 'fixed';
   container.style.left = '-9999px';

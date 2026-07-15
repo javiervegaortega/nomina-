@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useContext, useMemo } from 'react';
-import { X, Check, User, Building2, FileSignature, Landmark, MapPin, GraduationCap, Briefcase, FileWarning, Plus, Trash2, Edit3, Baby, Car, Heart } from 'lucide-react';
+import { X, Check, User, Building2, FileSignature, Landmark, MapPin, GraduationCap, Briefcase, FileWarning, Plus, Trash2, Edit3, Baby, Car, Heart, FileText } from 'lucide-react';
 import {
   Modal, ModalOverlay, ModalContent,
   Box, Flex, Text, Button, Input, Select, Textarea,
@@ -242,13 +242,17 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
       );
       finalForm.isr = Number(autoISR.toFixed(2));
     }
-    // Persist auto-calculated IGSS laboral if not manually set
-    if (!finalForm.igss_laboral || Number(finalForm.igss_laboral) === 0) {
-      finalForm.igss_laboral = Number(calcIgssLaboral(finalForm.sueldo_ordinario));
-    }
-    // Persist auto-calculated IGSS patronal if not manually set
-    if (!finalForm.igss_patronal || Number(finalForm.igss_patronal) === 0) {
-      finalForm.igss_patronal = Number(calcIgssPatronal(finalForm.sueldo_ordinario));
+    // Persist auto-calculated IGSS (0 si jubilado)
+    if (finalForm.jubilacion) {
+      finalForm.igss_laboral = 0;
+      finalForm.igss_patronal = 0;
+    } else {
+      if (!finalForm.igss_laboral || Number(finalForm.igss_laboral) === 0) {
+        finalForm.igss_laboral = Number(calcIgssLaboral(finalForm.sueldo_ordinario, false));
+      }
+      if (!finalForm.igss_patronal || Number(finalForm.igss_patronal) === 0) {
+        finalForm.igss_patronal = Number(calcIgssPatronal(finalForm.sueldo_ordinario, false));
+      }
     }
     onSave(finalForm);
   };
@@ -274,11 +278,17 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
   const distBoxBg = useColorModeValue('white', 'whiteAlpha.50');
   const distBoxBorder = useColorModeValue('gray.200', 'whiteAlpha.100');
 
-  // IGSS Auto calculations
-  const calcIgssPatronal = (sueldo) => ((Number(sueldo) || 0) * 0.1067).toFixed(2);
+  // IGSS Auto calculations (jubilados: 0)
+  const calcIgssPatronal = (sueldo, jubilado = form.jubilacion) => {
+    if (jubilado) return '0.00';
+    return ((Number(sueldo) || 0) * 0.1067).toFixed(2);
+  };
   const calcIrtra = () => '20.00';
   const calcIntecap = () => '20.00';
-  const calcIgssLaboral = (sueldo) => ((Number(sueldo) || 0) * 0.0483).toFixed(2);
+  const calcIgssLaboral = (sueldo, jubilado = form.jubilacion) => {
+    if (jubilado) return '0.00';
+    return ((Number(sueldo) || 0) * 0.0483).toFixed(2);
+  };
 
   const igssPatronal = Number(form.igss_patronal) || Number(calcIgssPatronal(form.sueldo_ordinario));
   const irtra = Number(form.irtra) || 20;
@@ -347,6 +357,7 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
     planilla: 'Planilla',
     origen: 'Originario',
     archivero: 'Sección Archivero',
+    observaciones: 'Observaciones',
   };
 
   return (
@@ -391,6 +402,7 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
             <SidebarTab active={tab === 'planilla'} label="Planilla" icon={Landmark} onClick={() => setTab('planilla')} />
             <SidebarTab active={tab === 'origen'} label="Originario" icon={MapPin} onClick={() => setTab('origen')} />
             <SidebarTab active={tab === 'archivero'} label="Sección Archivero" icon={FileWarning} onClick={() => setTab('archivero')} />
+            <SidebarTab active={tab === 'observaciones'} label="Observaciones" icon={FileText} onClick={() => setTab('observaciones')} />
           </Flex>
         </Box>
 
@@ -580,7 +592,12 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
                     </Checkbox>
                   </FormControl>
                   <FormControl display="flex" alignItems="center" h="100%">
-                    <Checkbox isChecked={form.jubilacion} onChange={e => handleChange('jubilacion', e.target.checked)}>
+                    <Checkbox isChecked={form.jubilacion} onChange={e => {
+                      const checked = e.target.checked;
+                      handleChange('jubilacion', checked);
+                      handleChange('igss_laboral', calcIgssLaboral(form.sueldo_ordinario, checked));
+                      handleChange('igss_patronal', calcIgssPatronal(form.sueldo_ordinario, checked));
+                    }}>
                       <Text fontSize="sm" fontWeight={600} ml={2}>Jubilación</Text>
                     </Checkbox>
                   </FormControl>
@@ -817,6 +834,25 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
                   onDelete={handleRecordDelete}
                   onEdit={r => { setEditingRecord(r); setShowRecordForm('evento'); }}
                 />
+              </Box>
+            )}
+
+            {tab === 'observaciones' && (
+              <Box>
+                <SectionTitle title="Observaciones del empleado" />
+                <FormControl>
+                  <FormLabel fontSize="11px" mb={1} color={subtitleColor} fontWeight="600" textTransform="uppercase">
+                    Notas / Observaciones
+                  </FormLabel>
+                  <Textarea
+                    value={form.observaciones || ''}
+                    onChange={e => handleChange('observaciones', e.target.value)}
+                    placeholder="Observaciones generales del expediente..."
+                    rows={10}
+                    isReadOnly={isReadOnly}
+                    borderRadius="md"
+                  />
+                </FormControl>
               </Box>
             )}
 

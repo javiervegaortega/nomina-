@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useContext, useEffect } from 'react';
 import {
-  Save, Download, FileText, Check, X, Edit3,
+  Save, Download, FileText, Check, X, Edit3, CheckCircle2,
   ChevronRight, ChevronDown, ChevronUp, AlertCircle, DollarSign, Clock,
   Calculator, Building2, Plus, ArrowLeft, Trash2, Calendar, Search, LayoutGrid, List, User, Edit2, Eye
 } from 'lucide-react';
@@ -8,6 +8,7 @@ import { AppContext } from '../App';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
 import { CUOTA_PATRONAL_RATE, CUOTA_LABORAL_RATE, formatQ } from '../data/mockData';
+import { getNetPayable } from '../utils/payrollPeriod';
 import EmployeeIncidences from '../components/EmployeeIncidences';
 import EmployeeDeductions from '../components/EmployeeDeductions';
 import EmployeeSummaryModal from '../components/EmployeeSummaryModal';
@@ -20,12 +21,14 @@ import {
   Badge, Divider, useColorModeValue, Center, Tag, HStack, VStack, Checkbox, ButtonGroup, Card, CardHeader, CardBody, CardFooter, Stat, StatLabel, StatNumber, StatGroup, Skeleton, SkeletonText,
   AlertDialog, AlertDialogOverlay, AlertDialogContent, AlertDialogHeader, AlertDialogBody, AlertDialogFooter, useDisclosure,
   Drawer, DrawerBody, DrawerFooter, DrawerHeader, DrawerOverlay, DrawerContent, DrawerCloseButton, TabPanels, TabPanel, InputRightAddon,
-  Menu, MenuButton, MenuList, MenuItemOption, MenuOptionGroup, Tooltip
+  Menu, MenuButton, MenuList, MenuItem, MenuItemOption, MenuOptionGroup, Tooltip
 } from '@chakra-ui/react';
+import { exportPayrollReportExcel } from '../utils/payrollReports';
 
 const TABS = [
   { id: 'payments', label: 'Listado Pagos', icon: FileText },
   { id: 'distribution', label: 'Distribución de Costos', icon: Building2 },
+  { id: 'observations', label: 'Observaciones', icon: Edit3 },
 ];
 
 export default function PayrollProcessing() {
@@ -462,15 +465,15 @@ function PayrollEditor({ draftId, onBack }) {
         }
       }
 
-      // 2. Recalculate igss based on salary and days worked
+      // 2. Recalculate igss based on salary and days worked (0 si jubilado)
       const currentDays = (section === 'root' && field === 'days') ? Number(value) || 0 : e.days || 30;
       const baseFactor = currentDays / 30;
       const sueldoOrd = Number(e.sueldo_ordinario) || 0;
       const baseSalary = sueldoOrd * baseFactor;
+      const igssExempt = !!(e.jubilacion === true || e.jubilacion === 1);
       
-      // Update IGSS automatically (can still be overwritten manually since igss is in deductions)
       if (section === 'root' && field === 'days') {
-        updated.deductions.igss = Number((baseSalary * 0.0483).toFixed(2)) || 0;
+        updated.deductions.igss = igssExempt ? 0 : Number((baseSalary * CUOTA_LABORAL_RATE).toFixed(2)) || 0;
       }
 
       return updated;
@@ -489,11 +492,12 @@ function PayrollEditor({ draftId, onBack }) {
           days: Math.max(0, currentDays - dQ),
           incidences: [...(emp.incidences || []), newIncidence]
         };
-        // Recalculate igss based on new days
+        // Recalculate igss based on new days (0 si jubilado)
         const baseFactor = updated.days / 30;
         const sueldoOrd = Number(emp.sueldo_ordinario) || 0;
         const baseSalary = sueldoOrd * baseFactor;
-        updated.deductions = { ...updated.deductions, igss: Number((baseSalary * 0.0483).toFixed(2)) || 0 };
+        const igssExempt = !!(emp.jubilacion === true || emp.jubilacion === 1);
+        updated.deductions = { ...updated.deductions, igss: igssExempt ? 0 : Number((baseSalary * CUOTA_LABORAL_RATE).toFixed(2)) || 0 };
         
         return updated;
       }
@@ -512,11 +516,12 @@ function PayrollEditor({ draftId, onBack }) {
           days: (emp.days || 30) + daysToRestore,
           incidences: filtered
         };
-        // Recalculate igss based on new days
+        // Recalculate igss based on new days (0 si jubilado)
         const baseFactor = updated.days / 30;
         const sueldoOrd = Number(emp.sueldo_ordinario) || 0;
         const baseSalary = sueldoOrd * baseFactor;
-        updated.deductions = { ...updated.deductions, igss: Number((baseSalary * 0.0483).toFixed(2)) || 0 };
+        const igssExempt = !!(emp.jubilacion === true || emp.jubilacion === 1);
+        updated.deductions = { ...updated.deductions, igss: igssExempt ? 0 : Number((baseSalary * CUOTA_LABORAL_RATE).toFixed(2)) || 0 };
 
         return updated;
       }
@@ -582,11 +587,14 @@ function PayrollEditor({ draftId, onBack }) {
   // Filter employees
   const filteredEmployees = useMemo(() => {
     const normalize = (str) => str ? str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase() : '';
+    const employeesByDpi = new Map((employees || []).map(emp => [emp.dpi, emp]));
+    const areasById = new Map((areas || []).map(area => [String(area.id), area]));
+
     const filtered = data.filter(e => {
       const fullName = [e.primer_nombre, e.segundo_nombre, e.otro_nombre, e.primer_apellido, e.segundo_apellido, e.apellido_casada].filter(Boolean).join(' ');
       const matchSearch = normalize(fullName).includes(normalize(searchQuery)) || normalize(e.puesto).includes(normalize(searchQuery));
       
-      const liveEmp = employees?.find(emp => emp.dpi === e.dpi) || e;
+      const liveEmp = employeesByDpi.get(e.dpi) || e;
       const dept = liveEmp.departamento_laboral || e.departamento_laboral || liveEmp.departmentId;
       const area = liveEmp.areaId || e.areaId;
       const div = liveEmp.divisionId || e.divisionId;
@@ -610,11 +618,11 @@ function PayrollEditor({ draftId, onBack }) {
     });
 
     return filtered.sort((a, b) => {
-      const liveEmpA = employees?.find(emp => emp.dpi === a.dpi) || a;
-      const liveEmpB = employees?.find(emp => emp.dpi === b.dpi) || b;
+      const liveEmpA = employeesByDpi.get(a.dpi) || a;
+      const liveEmpB = employeesByDpi.get(b.dpi) || b;
       
-      const areaA = areas?.find(area => String(area.id) === String(liveEmpA.areaId || a.areaId))?.nombre || '';
-      const areaB = areas?.find(area => String(area.id) === String(liveEmpB.areaId || b.areaId))?.nombre || '';
+      const areaA = areasById.get(String(liveEmpA.areaId || a.areaId))?.nombre || '';
+      const areaB = areasById.get(String(liveEmpB.areaId || b.areaId))?.nombre || '';
       
       const compArea = areaA.localeCompare(areaB);
       if (compArea !== 0) return compArea;
@@ -627,23 +635,22 @@ function PayrollEditor({ draftId, onBack }) {
 
   // General totals calculation
   const totals = useMemo(() => {
-    let grossTotal = 0, dedTotal = 0, patronalTotal = 0;
+    let grossTotal = 0, dedTotal = 0, patronalTotal = 0, netTotal = 0;
+    const periodType = draft?.periodType || '1ra';
     data.forEach(e => {
-      // Use backend calculated values if available, else 0
       if (e.calculated) {
         grossTotal += e.calculated.gross || 0;
         dedTotal += e.calculated.ded || 0;
         patronalTotal += e.calculated.patronal || 0;
       } else {
-        // Fallback (shouldn't happen with the new engine)
         const baseFactor = (e.days || 30) / 30;
         const sueldoOrd = Number(e.sueldo_ordinario) || 0;
-        const baseSalary = sueldoOrd * baseFactor;
-        grossTotal += baseSalary;
+        grossTotal += sueldoOrd * baseFactor;
       }
+      netTotal += getNetPayable(e, periodType);
     });
-    return { grossTotal, dedTotal, patronalTotal, netTotal: grossTotal - dedTotal };
-  }, [data]);
+    return { grossTotal, dedTotal, patronalTotal, netTotal };
+  }, [data, draft?.periodType]);
 
   const borderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
 
@@ -681,6 +688,16 @@ function PayrollEditor({ draftId, onBack }) {
           )}
         </Flex>
       </Flex>
+
+        {draft.missingAnticipoWarning && draft.periodType === '2da' && (
+          <Box mb={6} p={4} bg="orange.50" border="1px solid" borderColor="orange.200" borderRadius="md" _dark={{ bg: 'orange.900', borderColor: 'orange.600' }}>
+            <Text color="orange.800" fontWeight="bold" mb={1} _dark={{ color: 'orange.100' }}>Sin anticipo de 1ª quincena</Text>
+            <Text color="orange.700" fontSize="sm" _dark={{ color: 'orange.200' }}>
+              No se encontró una nómina de 1ª quincena cerrada del mismo mes/empresas.
+              El anticipo quedó en Q0; revise antes de cerrar.
+            </Text>
+          </Box>
+        )}
 
         {draft.correctionNote && (
           <Box mb={6} p={4} bg="red.50" border="1px solid" borderColor="red.200" borderRadius="md">
@@ -763,15 +780,54 @@ function PayrollEditor({ draftId, onBack }) {
             handleDeleteDeduction={handleDeleteDeduction}
             handleOpenSummary={setSummaryEmp}
             isReadOnly={isReadOnly}
+            draftDateStr={draft?.createdAt}
+            draftTitle={draft?.title}
+            companies={companies}
           />
         )}
         {tab === 'distribution' && <DistributionTab data={data} />}
+        {tab === 'observations' && (
+          <Box p={6} bg={useColorModeValue('white', 'gray.800')} borderRadius="xl" borderWidth="1px" borderColor={borderColor}>
+            <Heading size="sm" mb={4}>Observaciones del periodo</Heading>
+            <DraftNotesEditor draft={draft} updateDraftMetadata={updateDraftMetadata} />
+            <Text fontSize="sm" color="gray.500" mt={4} mb={6}>
+              Estas notas se conservan al enviar a auditoría o cerrar la nómina.
+            </Text>
+            <Divider mb={4} />
+            <Heading size="sm" mb={3}>Observaciones por empleado</Heading>
+            {data.filter(e => (e.observaciones || '').trim()).length === 0 ? (
+              <Text fontSize="sm" color="gray.500">Ningún empleado en este borrador tiene observaciones en su expediente.</Text>
+            ) : (
+              <TableContainer>
+                <Table size="sm" variant="simple">
+                  <Thead>
+                    <Tr>
+                      <Th>Empleado</Th>
+                      <Th>Observaciones</Th>
+                    </Tr>
+                  </Thead>
+                  <Tbody>
+                    {data.filter(e => (e.observaciones || '').trim()).map(e => (
+                      <Tr key={e.id}>
+                        <Td fontWeight="semibold" whiteSpace="nowrap">
+                          {[e.primer_nombre, e.primer_apellido].filter(Boolean).join(' ')}
+                        </Td>
+                        <Td whiteSpace="pre-wrap">{e.observaciones}</Td>
+                      </Tr>
+                    ))}
+                  </Tbody>
+                </Table>
+              </TableContainer>
+            )}
+          </Box>
+        )}
         
         <EmployeeSummaryModal
           isOpen={!!summaryEmp}
           onClose={() => setSummaryEmp(null)}
           employee={summaryEmp}
           companies={companies}
+          periodType={draft?.periodType || '1ra'}
         />
       </Box>
 
@@ -783,9 +839,26 @@ function PayrollEditor({ draftId, onBack }) {
             </AlertDialogHeader>
 
             <AlertDialogBody color="gray.600">
-              {draft.isApproved 
-                ? '¿Estás seguro de cerrar definitivamente esta nómina? Ya tiene el visto bueno de auditoría. Se guardará en el historial final.'
-                : '¿Estás seguro de enviar esta nómina a Auditoría? Desaparecerá de tus borradores y pasará al Historial en estado de revisión.'}
+              {draft.isApproved ? (
+                <>
+                  <Text mb={3}>
+                    ¿Cerrar definitivamente esta nómina? Ya tiene el visto bueno de auditoría.
+                    No se podrá editar sin reactivación (solo 2ª quincena / fin de mes).
+                  </Text>
+                  <Text fontSize="sm" fontWeight="600">
+                    Empleados: {data.length} · Periodo: {draft.periodType === '2da' ? '2da Quincena' : '1ra Quincena'} · Neto estimado: {formatQ(totals.netTotal)}
+                  </Text>
+                </>
+              ) : (
+                <>
+                  <Text mb={3}>
+                    ¿Enviar esta nómina a Auditoría? Saldrá de borradores y pasará al Historial en revisión.
+                  </Text>
+                  <Text fontSize="sm" fontWeight="600">
+                    Empleados: {data.length} · Periodo: {draft.periodType === '2da' ? '2da Quincena' : '1ra Quincena'} · Neto estimado: {formatQ(totals.netTotal)}
+                  </Text>
+                </>
+              )}
             </AlertDialogBody>
 
             <AlertDialogFooter>
@@ -820,7 +893,8 @@ function calculateGroupTotals(groupData, periodType) {
     const baseSalary = sueldoOrd * baseFactor;
     const bonusLey = bonInc * baseFactor;
     const bonusDec = bonDec * baseFactor;
-    const bonos = Number(e.extras?.bonos) || 0;
+    const bonos = (Number(e.extras?.bonos) || 0) + Object.values(e.appliedBonuses || {}).reduce((s, v) => s + (Number(v) || 0), 0);
+    const comisiones = Number(e.extras?.comisiones) || 0;
     const devengado = baseSalary + bonusLey + bonusDec + bonos;
 
     const simplesQty = Number(e.extras?.simplesQty) || 0;
@@ -828,7 +902,9 @@ function calculateGroupTotals(groupData, periodType) {
     const doblesQty = Number(e.extras?.doblesQty) || 0;
     const doblesVal = Number(e.extras?.doblesVal) || 0;
     const otrosIngresos = Number(e.extras?.otrosIngresos) || 0;
-    const salarioTotal = devengado + simplesVal + doblesVal + otrosIngresos;
+    const salarioTotal = e.calculated?.gross != null
+      ? Number(e.calculated.gross)
+      : (devengado + simplesVal + doblesVal + otrosIngresos + comisiones);
 
     const proDed = e.calculated?.proratedDeductions || e.deductions || {};
     const igss = Number(proDed.igss) || 0;
@@ -848,10 +924,13 @@ function calculateGroupTotals(groupData, periodType) {
     const otros_egresos = Number(proDed.otros_egresos) || 0;
     const anticipo = Number(e.anticipo1ra) || 0;
     
-    const totalEgresos = igss + isr + cafe + cell + uniform + shoes + equipo + product + bancos + otros + judiciales + seguro + parqueo + boleto_de_ornato + otros_egresos;
-    const liquido = salarioTotal - totalEgresos; // For 2da, this is the FULL month's net
+    const totalEgresos = e.calculated?.ded != null
+      ? Number(e.calculated.ded)
+      : (igss + isr + cafe + cell + uniform + shoes + equipo + product + bancos + otros + judiciales + seguro + parqueo + boleto_de_ornato + otros_egresos);
+    const liquido = e.calculated?.net != null ? Number(e.calculated.net) : (salarioTotal - totalEgresos);
     const q1 = periodType === '2da' ? anticipo : liquido;
-    const q2 = periodType === '2da' ? liquido - anticipo : 0;
+    const q2 = periodType === '2da' ? (liquido - anticipo) : 0;
+    const liquidoPagar = periodType === '2da' ? q2 : liquido;
 
     totSalarioOrd += baseSalary;
     totBonInc += bonusLey;
@@ -881,7 +960,7 @@ function calculateGroupTotals(groupData, periodType) {
     totBoleta += boleto_de_ornato;
     totOtrosEgresos += otros_egresos;
     totTotalEgresos += totalEgresos;
-    totLiquido += liquido;
+    totLiquido += liquidoPagar;
     totQuincena1 += q1;
     totQuincena2 += q2;
   });
@@ -906,7 +985,7 @@ function ListadoPagosTab({
   searchQuery, setSearchQuery,
   handleClose, handleSaveIncidence, handleDeleteIncidence,
   handleSaveDeduction, handleDeleteDeduction, handleOpenSummary,
-  isReadOnly
+  isReadOnly, draftDateStr, draftTitle, companies: companiesProp
 }) {
   const { companies } = useContext(DataContext);
   const [viewMode, setViewMode] = useState('summary');
@@ -1131,6 +1210,43 @@ function ListadoPagosTab({
               Por Área
             </Button>
           </Tooltip>
+          <Menu>
+            <MenuButton as={Button} size="sm" variant="outline" leftIcon={<Download size={14} />} borderRadius="md">
+              Reportería (preliminar)
+            </MenuButton>
+            <MenuList zIndex={100} boxShadow="lg">
+              <MenuItem fontSize="sm" onClick={() => {
+                const missing = exportPayrollReportExcel({
+                  type: 'verificador',
+                  employees: data,
+                  periodType,
+                  title: draftTitle,
+                  companies,
+                  isDraft: true
+                });
+                if (missing.length) {
+                  showToast(`${missing.length} empleado(s) con campos incompletos para reportería`, 'warning');
+                } else {
+                  showToast('Verificador preliminar exportado', 'success');
+                }
+              }}>Verificador de Pagos</MenuItem>
+              <MenuItem fontSize="sm" onClick={() => {
+                const missing = exportPayrollReportExcel({
+                  type: 'libro',
+                  employees: data,
+                  periodType,
+                  title: draftTitle,
+                  companies,
+                  isDraft: true
+                });
+                if (missing.length) {
+                  showToast(`${missing.length} empleado(s) con campos incompletos para reportería`, 'warning');
+                } else {
+                  showToast('Libro de Salarios preliminar exportado', 'success');
+                }
+              }}>Libro de Salarios</MenuItem>
+            </MenuList>
+          </Menu>
         </HStack>
 
         <HStack maxW={{ base: '100%', lg: '600px' }} spacing={{ base: 2, md: 3 }} w={{ base: '100%', md: 'auto' }} flexWrap={{ base: 'wrap', lg: 'nowrap' }}>
@@ -1255,6 +1371,7 @@ function ListadoPagosTab({
                     const liquido = e.calculated?.net || 0;
                     const q1 = periodType === '2da' ? anticipo : liquido;
                     const q2 = periodType === '2da' ? liquido - anticipo : 0;
+                    const liquidoPagar = getNetPayable(e, periodType);
 
                     const isHighlighted = highlightedRows.has(e.id);
                     const rowBg = isHighlighted ? highlightColor : 'transparent';
@@ -1309,11 +1426,11 @@ function ListadoPagosTab({
                         <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="red.500">{formatQ(totalEgresos)}</Td>
                         
                         <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500" bg={liquidoBg}>
-                          {periodType === '2da' ? formatQ(liquido) : formatQ(liquido)}
+                          {formatQ(liquidoPagar)}
                         </Td>
                         {periodType === '2da' && (
                           <>
-                            <Td fontFamily="mono" fontSize="xs" color="gray.500">{formatQ(q1)}</Td>
+                            <Td fontFamily="mono" fontSize="xs" color="gray.500" title="Anticipo 1ra quincena">{formatQ(q1)}</Td>
                             <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="green.500">{formatQ(q2)}</Td>
                           </>
                         )}
@@ -1439,6 +1556,7 @@ function ListadoPagosTab({
                     const anticipo = Number(e.anticipo1ra) || 0;
                     const q1 = periodType === '2da' ? anticipo : liquido;
                     const q2 = periodType === '2da' ? liquido - anticipo : 0;
+                    const liquidoPagar = getNetPayable(e, periodType);
 
                     const isHighlighted = highlightedRows.has(e.id);
                     const rowBg = isHighlighted ? highlightColor : 'transparent';
@@ -1464,11 +1582,11 @@ function ListadoPagosTab({
                         <Td fontFamily="mono" fontSize="xs">{formatQ(bonusLey + bonusDec)}</Td>
                         <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="gold.500">{formatQ(totalExtras)}</Td>
                         <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="red.500">{formatQ(totalEgresos)}</Td>
-                        <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500" bg={liquidoBg}>{formatQ(liquido)}</Td>
+                        <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500" bg={liquidoBg}>{formatQ(liquidoPagar)}</Td>
                         
                         {periodType === '2da' && (
                           <>
-                            <Td fontFamily="mono" fontSize="xs" color="gray.500">{formatQ(q1)}</Td>
+                            <Td fontFamily="mono" fontSize="xs" color="gray.500" title="Anticipo 1ra quincena">{formatQ(q1)}</Td>
                             <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="green.500">{formatQ(q2)}</Td>
                           </>
                         )}
@@ -1574,7 +1692,9 @@ function ListadoPagosTab({
                     <EmployeeIncidences 
                       employee={selectedEmp} 
                       onSave={handleSaveIncidence} 
-                      onDelete={handleDeleteIncidence} 
+                      onDelete={handleDeleteIncidence}
+                      draftDateStr={draftDateStr}
+                      periodType={periodType}
                     />
                   </TabPanel>
 

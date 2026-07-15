@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Users, Calculator, History,
   Building2, Gift, Sun, Moon, LogOut, Hexagon,
   ChevronLeft, ChevronRight, Network, Map, Briefcase, Split, Clock,
-  Menu as MenuIcon, Shield, Settings, User, ChevronDown
+  Menu as MenuIcon, Shield, Settings, User, ChevronDown, Ban
 } from 'lucide-react';
 import { AppContext } from '../App';
 import { AuthContext } from '../context/AuthContext';
@@ -53,6 +53,7 @@ export default function Sidebar() {
     { to: '/employees', label: 'Empleados', icon: Users },
     { to: '/payroll', label: 'Nómina', icon: Calculator },
     { to: '/history', label: 'Historial', icon: History },
+    { to: '/suspensions', label: 'Suspensiones', icon: Ban },
     { to: '/users', label: 'Usuarios', icon: Shield },
     { 
       id: 'dimensiones',
@@ -74,7 +75,8 @@ export default function Sidebar() {
       icon: Calculator,
       subItems: [
         { to: '/billing', label: 'Distribución' },
-        { to: '/billing/rules', label: 'Reglas de Fact.' }
+        { to: '/billing/rules', label: 'Reglas de Fact.' },
+        { to: '/billing/history', label: 'Historial' }
       ]
     },
   ];
@@ -86,7 +88,7 @@ export default function Sidebar() {
     if (role === 'ADMIN' || role === 'GERENTE GENERAL') return true;
     if (role === 'NOMINA') return true;
     if (role === 'AUDITOR') return item.to !== '/operations' && item.to !== '/users' && item.id !== 'facturacion';
-    if (role === 'DIGITADOR') return item.to === '/employees' || item.to === '/users';
+    if (role === 'DIGITADOR') return item.to === '/employees' || item.to === '/users' || item.to === '/suspensions';
     if (role === 'GERENTE' || role === 'SOLICITANTE') return item.to === '/operations';
     return false;
   });

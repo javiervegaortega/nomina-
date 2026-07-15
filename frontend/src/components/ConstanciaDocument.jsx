@@ -28,7 +28,8 @@ const ConstanciaDocument = React.forwardRef(({ emp, desde, al, hastaLaFecha, rep
   const fechaAlStr = hastaLaFecha ? 'hasta la fecha' : formatDate(al);
 
   const ordinario = Number(emp.sueldo_ordinario || 0);
-  const bonificacion = Number(emp.bon_incentivo || 0);
+  // Bonificación de ley: incentivo + decreto 37-2001
+  const bonificacion = Number(emp.bon_incentivo || 0) + Number(emp.bon_dec_37_2001 || 0);
   const total = ordinario + bonificacion;
 
   const content = (

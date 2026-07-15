@@ -20,6 +20,8 @@ const OperationBatch = require('./OperationBatch')(sequelize);
 const Dimension5 = require('./Dimension5')(sequelize);
 const BillingRule = require('./BillingRule')(sequelize);
 const BillingDistribution = require('./BillingDistribution')(sequelize);
+const BillingRun = require('./BillingRun')(sequelize);
+const BillingRunLine = require('./BillingRunLine')(sequelize);
 
 // Definir asociaciones
 Company.hasMany(Employee, { foreignKey: 'companyId' });
@@ -55,6 +57,16 @@ User.hasMany(OperationBatch, { foreignKey: 'userId' });
 PayrollDraft.hasMany(PayrollDraftEmployee, { foreignKey: 'draftId', as: 'draftEmployees', onDelete: 'CASCADE' });
 PayrollDraftEmployee.belongsTo(PayrollDraft, { foreignKey: 'draftId' });
 
+BillingRule.belongsTo(Company, { foreignKey: 'fromCompanyId', as: 'fromCompanyData' });
+BillingRule.belongsTo(Company, { foreignKey: 'toCompanyId', as: 'toCompanyData' });
+
+BillingRun.hasMany(BillingRunLine, { foreignKey: 'runId', as: 'lines', onDelete: 'CASCADE' });
+BillingRunLine.belongsTo(BillingRun, { foreignKey: 'runId', as: 'run' });
+
+BillingRunLine.belongsTo(Company, { foreignKey: 'fromCompanyId', as: 'fromCompanyData' });
+BillingRunLine.belongsTo(Company, { foreignKey: 'toCompanyId', as: 'toCompanyData' });
+BillingRunLine.belongsTo(Area, { foreignKey: 'areaId', as: 'areaData' });
+
 // Exportar modelos y conexión
 module.exports = {
   sequelize,
@@ -76,5 +88,7 @@ module.exports = {
   OperationBatch,
   Dimension5,
   BillingRule,
-  BillingDistribution
+  BillingDistribution,
+  BillingRun,
+  BillingRunLine
 };

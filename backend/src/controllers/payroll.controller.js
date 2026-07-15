@@ -1,15 +1,21 @@
 const { PayrollHistory, User, PayrollDraft, PayrollDraftEmployee, sequelize } = require('../models');
 const jwt = require('jsonwebtoken');
 const { sendReactivationEmail } = require('../services/email.service');
+const BillingService = require('../services/billing.service');
 
 const getPayrolls = async (req, res) => {
   try {
-    const payrolls = await PayrollHistory.findAll();
+    const payrolls = await PayrollHistory.findAll({
+      order: [['closedAt', 'DESC'], ['createdAt', 'DESC']]
+    });
     
     const formattedPayrolls = payrolls.map(p => {
       const payrollObj = p.toJSON();
       let emps = typeof payrollObj.data === 'string' ? JSON.parse(payrollObj.data) : payrollObj.data;
-      emps = calculatePayrollBatch(emps, payrollObj.periodType);
+      // Solo recalcular si faltan snapshots calculados (nóminas antiguas)
+      if (Array.isArray(emps) && emps.length > 0 && !emps.every(e => e && e.calculated)) {
+        emps = calculatePayrollBatch(emps, payrollObj.periodType);
+      }
       payrollObj.data = emps;
       return payrollObj;
     });
@@ -44,6 +50,7 @@ const deletePayroll = async (req, res) => {
   try {
     const payroll = await PayrollHistory.findByPk(req.params.id);
     if (!payroll) return res.status(404).json({ error: 'No encontrado' });
+    await BillingService.markRunsStaleForPayroll(payroll.id);
     await payroll.destroy();
     res.json({ message: 'Eliminado' });
   } catch (err) {
@@ -65,16 +72,31 @@ const requestReactivation = async (req, res) => {
     let periodType = "N/A";
     let companies = new Set();
 
-    const firstPayroll = await PayrollHistory.findByPk(payrollIds[0]);
-    if (firstPayroll) {
-      payrollTitle = firstPayroll.title;
-      periodType = firstPayroll.periodType;
+    const payrolls = await PayrollHistory.findAll({ where: { id: payrollIds } });
+    if (payrolls.length === 0) {
+      return res.status(404).json({ error: 'Nómina(s) no encontrada(s)' });
     }
 
-    for (const id of payrollIds) {
-      const payroll = await PayrollHistory.findByPk(id);
-      if (!payroll) continue;
-      
+    // Solo se puede reactivar nómina de fin de mes (2da quincena) ya cerrada
+    for (const p of payrolls) {
+      if (p.periodType !== '2da') {
+        return res.status(400).json({
+          error: 'Solo se puede reactivar la nómina de 2ª quincena (fin de mes).'
+        });
+      }
+      if (p.status !== 'cerrada') {
+        return res.status(400).json({
+          error: `La nómina "${p.title}" no está cerrada; solo se reactivan nóminas con estado cerrada.`
+        });
+      }
+    }
+
+    if (payrolls.length > 0) {
+      payrollTitle = payrolls[0].title;
+      periodType = payrolls[0].periodType;
+    }
+
+    for (const payroll of payrolls) {
       const emps = typeof payroll.data === 'string' ? JSON.parse(payroll.data) : (payroll.data || []);
       totalEmployees += emps.length;
       
@@ -115,16 +137,37 @@ const requestReactivation = async (req, res) => {
       return res.status(400).json({ error: 'No hay usuarios con el rol GERENTE GENERAL para aprobar la solicitud.' });
     }
 
-    // Send email to all GERENTE GENERAL users
-    for (const gerente of gerentes) {
-      await sendReactivationEmail(gerente.name, gerente.email, token, details);
-    }
+    // Send email to all GERENTE GENERAL users in parallel
+    await Promise.all(
+      gerentes
+        .filter(g => g.email)
+        .map(gerente => sendReactivationEmail(gerente.name, gerente.email, token, details))
+    );
 
     res.json({ message: 'Solicitud de reactivación enviada por correo a los Gerentes Generales.' });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });
   }
+};
+
+const assertReactivatablePayrolls = async (payrollIds, transaction) => {
+  const payrolls = await PayrollHistory.findAll({
+    where: { id: payrollIds },
+    transaction
+  });
+  if (payrolls.length === 0) {
+    throw new Error('Nómina(s) no encontrada(s)');
+  }
+  for (const p of payrolls) {
+    if (p.periodType !== '2da') {
+      throw new Error('Solo se puede reactivar la nómina de 2ª quincena (fin de mes).');
+    }
+    if (p.status !== 'cerrada') {
+      throw new Error(`La nómina "${p.title}" no está cerrada; solo se reactivan nóminas con estado cerrada.`);
+    }
+  }
+  return payrolls;
 };
 
 const reactivate = async (req, res) => {
@@ -141,6 +184,8 @@ const reactivate = async (req, res) => {
       await t.rollback();
       return res.status(400).json({ error: 'Token inválido: no contiene IDs de nómina' });
     }
+
+    await assertReactivatablePayrolls(payrollIds, t);
 
     for (const payrollId of payrollIds) {
       // Check if it exists in history
@@ -171,6 +216,7 @@ const reactivate = async (req, res) => {
       }
 
       // Delete from history
+      await BillingService.markRunsStaleForPayroll(payrollId);
       await historyRecord.destroy({ transaction: t });
     }
 
@@ -195,6 +241,13 @@ const reactivateViaGet = async (req, res) => {
     if (!Array.isArray(payrollIds)) {
       await t.rollback();
       return res.status(400).send('<h1>Error: Token inválido</h1>');
+    }
+
+    try {
+      await assertReactivatablePayrolls(payrollIds, t);
+    } catch (validationErr) {
+      await t.rollback();
+      return res.status(400).send(`<h1>Error: ${validationErr.message}</h1>`);
     }
 
     let reactivated = false;
@@ -225,6 +278,7 @@ const reactivateViaGet = async (req, res) => {
         await PayrollDraftEmployee.bulkCreate(employeeRecords, { transaction: t });
       }
 
+      await BillingService.markRunsStaleForPayroll(payrollId);
       await historyRecord.destroy({ transaction: t });
       reactivated = true;
     }
@@ -351,6 +405,7 @@ const auditorApprove = async (req, res) => {
       await PayrollDraftEmployee.bulkCreate(employeeRecords, { transaction: t });
     }
 
+    await BillingService.markRunsStaleForPayroll(historyRecord.id);
     await historyRecord.destroy({ transaction: t });
     await t.commit();
     res.json({ message: 'Nómina devuelta a borradores como aprobada.' });
@@ -390,6 +445,7 @@ const auditorReject = async (req, res) => {
       await PayrollDraftEmployee.bulkCreate(employeeRecords, { transaction: t });
     }
 
+    await BillingService.markRunsStaleForPayroll(historyRecord.id);
     await historyRecord.destroy({ transaction: t });
     await t.commit();
     res.json({ message: 'Nómina rebotada a borradores para corrección.' });

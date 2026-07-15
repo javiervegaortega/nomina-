@@ -74,6 +74,14 @@ const startServer = async () => {
     // Evita ALTER automatico para no generar indices duplicados en MySQL.
     await sequelize.sync();
     console.log('Base de datos sincronizada correctamente.');
+
+    const { ensureBillingSchema } = require('./src/config/ensureBillingSchema');
+    await ensureBillingSchema(sequelize);
+    const { ensureEmployeeColumns } = require('./src/config/ensureEmployeeSchema');
+    await ensureEmployeeColumns(sequelize);
+
+    const { ensurePerformanceIndexes } = require('./src/config/ensureIndexes');
+    await ensurePerformanceIndexes(sequelize);
     
     app.listen(PORT, () => {
       console.log(`Servidor Node.js corriendo en http://localhost:${PORT}`);

@@ -7,13 +7,23 @@ module.exports = (sequelize) => {
       primaryKey: true,
       autoIncrement: true
     },
+    fromCompanyId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: { model: 'empresa', key: 'id' }
+    },
+    toCompanyId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: { model: 'empresa', key: 'id' }
+    },
     fromCompany: {
       type: DataTypes.STRING,
-      allowNull: false
+      allowNull: true
     },
     toCompany: {
       type: DataTypes.STRING,
-      allowNull: false
+      allowNull: true
     },
     concept: {
       type: DataTypes.STRING,
@@ -28,6 +38,11 @@ module.exports = (sequelize) => {
       type: DataTypes.BOOLEAN,
       allowNull: false,
       defaultValue: true
+    },
+    ivaRate: {
+      type: DataTypes.DECIMAL(5, 4),
+      allowNull: false,
+      defaultValue: 0.12
     },
     isActive: {
       type: DataTypes.BOOLEAN,

@@ -5,13 +5,19 @@ const authenticateToken = require('../middlewares/auth.middleware');
 
 router.use(authenticateToken);
 
-// Configuración de reglas
+// Reglas de facturación
 router.get('/rules', BillingController.getRules);
 router.post('/rules', BillingController.createRule);
 router.put('/rules/:id', BillingController.updateRule);
 router.delete('/rules/:id', BillingController.deleteRule);
 
-// Distribución / Cálculos
+// Vista previa y ejecuciones
+router.post('/preview', BillingController.preview);
+router.post('/runs', BillingController.confirmRun);
+router.get('/runs', BillingController.getRuns);
+router.get('/runs/:id', BillingController.getRunById);
+
+// Endpoints legacy (alias)
 router.get('/calculate/:payrollId', BillingController.calculate);
 router.post('/save', BillingController.saveDistribution);
 router.get('/history', BillingController.getHistory);

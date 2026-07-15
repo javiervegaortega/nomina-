@@ -4,8 +4,9 @@ import {
   Button, Select, Flex, Box, Text, Table, Thead, Tbody, Tr, Th, Td, Badge, Icon, HStack, VStack, Avatar, useColorModeValue
 } from '@chakra-ui/react';
 import { Download, Cake, CalendarDays, Gift, Image as ImageIcon } from 'lucide-react';
-import * as XLSX from 'xlsx';
-import html2canvas from 'html2canvas';
+
+const getXLSX = () => import('xlsx');
+const getHtml2Canvas = () => import('html2canvas').then(m => m.default);
 
 const MESES = [
   { val: 1, label: 'Enero' }, { val: 2, label: 'Febrero' }, { val: 3, label: 'Marzo' },
@@ -71,10 +72,11 @@ const CumpleanerosModal = ({ isOpen, onClose, employees = [], areas = [] }) => {
       .sort((a, b) => a.bDay - b.bDay);
   }, [employees, selectedMonth, selectedYear, areas]);
 
-  const handleExportExcel = () => {
+  const handleExportExcel = async () => {
     if (birthdays.length === 0) return;
     setIsExporting(true);
     try {
+      const XLSX = await getXLSX();
       const exportData = birthdays.map(b => ({
         'Nombre': b.nombreCompleto,
         'Area': b.area,
@@ -106,6 +108,7 @@ const CumpleanerosModal = ({ isOpen, onClose, employees = [], areas = [] }) => {
     if (!printRef.current || birthdays.length === 0) return;
     setIsExporting(true);
     try {
+      const html2canvas = await getHtml2Canvas();
       const canvas = await html2canvas(printRef.current, { 
         scale: 2, 
         useCORS: true, 

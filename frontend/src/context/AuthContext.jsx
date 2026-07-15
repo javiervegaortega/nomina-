@@ -1,4 +1,4 @@
-import React, { createContext, useState, useEffect } from 'react';
+import React, { createContext, useState, useEffect, useMemo, useCallback } from 'react';
 
 export const AuthContext = createContext();
 
@@ -15,13 +15,16 @@ export function AuthProvider({ children }) {
         const storedUser = JSON.parse(localStorage.getItem('nomina-user'));
         if (storedUser) setUser(storedUser);
       } catch (err) {
-        logout();
+        setToken(null);
+        setUser(null);
+        localStorage.removeItem('nomina-token');
+        localStorage.removeItem('nomina-user');
       }
     }
     setLoading(false);
   }, [token]);
 
-  const login = async (email, password) => {
+  const login = useCallback(async (email, password) => {
     try {
       const res = await fetch('http://localhost:3000/api/auth/login', {
         method: 'POST',
@@ -41,19 +44,22 @@ export function AuthProvider({ children }) {
     } catch (err) {
       return { success: false, error: err.message };
     }
-  };
+  }, []);
 
-
-
-  const logout = () => {
+  const logout = useCallback(() => {
     setToken(null);
     setUser(null);
     localStorage.removeItem('nomina-token');
     localStorage.removeItem('nomina-user');
-  };
+  }, []);
+
+  const value = useMemo(
+    () => ({ user, token, loading, login, logout }),
+    [user, token, loading, login, logout]
+  );
 
   return (
-    <AuthContext.Provider value={{ user, token, loading, login, logout }}>
+    <AuthContext.Provider value={value}>
       {!loading && children}
     </AuthContext.Provider>
   );

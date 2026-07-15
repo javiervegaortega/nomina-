@@ -4,9 +4,6 @@ import {
   UserPlus, Filter, Download, Check, FileText, UserMinus, Cake
 } from 'lucide-react';
 import { toast } from 'sonner';
-import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
-import * as XLSX from 'xlsx';
 import { AppContext } from '../App';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
@@ -34,6 +31,11 @@ import {
   Menu, MenuButton, MenuList, MenuItem,
   Skeleton, SkeletonText, SkeletonCircle
 } from '@chakra-ui/react';
+
+const getHtml2Canvas = () => import('html2canvas').then(m => m.default);
+const getJsPDF = () => import('jspdf').then(m => m.default);
+const getXLSX = () => import('xlsx');
+
 
 export default function Employees() {
   const { confirmAction } = useContext(AppContext);
@@ -233,14 +235,14 @@ export default function Employees() {
 
     const toastId = toast.loading('Generando PDF del finiquito...');
     try {
-      const canvas = await html2canvas(element, {
+      const canvas = await (await getHtml2Canvas())(element, {
         scale: 2,
         backgroundColor: '#ffffff',
         useCORS: true,
         logging: false,
       });
       const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF('p', 'mm', 'letter');
+      const pdf = new (await getJsPDF())('p', 'mm', 'letter');
       const pdfWidth = pdf.internal.pageSize.getWidth();
       const pdfHeight = pdf.internal.pageSize.getHeight();
       const imgHeight = (canvas.height * pdfWidth) / canvas.width;
@@ -283,14 +285,14 @@ export default function Employees() {
 
     const toastId = toast.loading('Generando PDF...');
     try {
-      const canvas = await html2canvas(element, {
+      const canvas = await (await getHtml2Canvas())(element, {
         scale: 2,
         backgroundColor: '#ffffff',
         useCORS: true,
         logging: false,
       });
       const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF('p', 'mm', 'letter');
+      const pdf = new (await getJsPDF())('p', 'mm', 'letter');
       const pdfWidth = pdf.internal.pageSize.getWidth();
       const pdfHeight = pdf.internal.pageSize.getHeight();
       const imgHeight = (canvas.height * pdfWidth) / canvas.width;
@@ -329,9 +331,9 @@ export default function Employees() {
 
     const toastId = toast.loading('Generando PDF...');
     try {
-      const canvas = await html2canvas(element, { scale: 2, backgroundColor: '#ffffff', useCORS: true, logging: false });
+      const canvas = await (await getHtml2Canvas())(element, { scale: 2, backgroundColor: '#ffffff', useCORS: true, logging: false });
       const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF('p', 'mm', 'letter');
+      const pdf = new (await getJsPDF())('p', 'mm', 'letter');
       const pdfWidth = pdf.internal.pageSize.getWidth();
       const pdfHeight = pdf.internal.pageSize.getHeight();
       const imgHeight = (canvas.height * pdfWidth) / canvas.width;
@@ -365,9 +367,9 @@ export default function Employees() {
 
     const toastId = toast.loading('Generando PDF...');
     try {
-      const canvas = await html2canvas(element, { scale: 2, backgroundColor: '#ffffff', useCORS: true, logging: false });
+      const canvas = await (await getHtml2Canvas())(element, { scale: 2, backgroundColor: '#ffffff', useCORS: true, logging: false });
       const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF('p', 'mm', 'letter');
+      const pdf = new (await getJsPDF())('p', 'mm', 'letter');
       const pdfWidth = pdf.internal.pageSize.getWidth();
       const pdfHeight = pdf.internal.pageSize.getHeight();
       const imgHeight = (canvas.height * pdfWidth) / canvas.width;
@@ -401,9 +403,9 @@ export default function Employees() {
 
     const toastId = toast.loading('Generando PDF...');
     try {
-      const canvas = await html2canvas(element, { scale: 2, backgroundColor: '#ffffff', useCORS: true, logging: false });
+      const canvas = await (await getHtml2Canvas())(element, { scale: 2, backgroundColor: '#ffffff', useCORS: true, logging: false });
       const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF('p', 'mm', 'letter');
+      const pdf = new (await getJsPDF())('p', 'mm', 'letter');
       const pdfWidth = pdf.internal.pageSize.getWidth();
       const pdfHeight = pdf.internal.pageSize.getHeight();
       const imgHeight = (canvas.height * pdfWidth) / canvas.width;
@@ -427,7 +429,7 @@ export default function Employees() {
     }
   };
 
-  const handlePrintDisciplinaria = () => {
+  const handlePrintDisciplinaria = async () => {
     if (!disciplinariaState.emp) return;
     const emp = disciplinariaState.emp;
     const fullName = getFullName(emp);
@@ -435,7 +437,7 @@ export default function Employees() {
 
     const toastId = toast.loading('Generando PDF...');
     try {
-      const pdf = new jsPDF('p', 'mm', 'letter');
+      const pdf = new (await getJsPDF())('p', 'mm', 'letter');
       // Letter: 215.9 x 279.4 mm
       const pageW = 215.9;
       const margin = 15;
@@ -715,11 +717,12 @@ export default function Employees() {
     });
   };
 
-  const handleExportReport = () => {
+  const handleExportReport = async () => {
     const { data, fileName, sheetName } = reportModalState;
     if (!data || data.length === 0) return;
 
     toast.success(`Exportando ${data.length} registros a Excel...`);
+    const XLSX = await getXLSX();
     const rows = data.map((e, idx) => buildEmployeeRow(e, idx));
     const ws = XLSX.utils.json_to_sheet(rows);
 

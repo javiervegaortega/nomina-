@@ -4,6 +4,7 @@ import {
   Button, SimpleGrid, Box, Text, Flex, Divider, Badge, VStack, HStack, useColorModeValue
 } from '@chakra-ui/react';
 import { formatQ } from '../data/mockData';
+import { getNetPayable } from '../utils/payrollPeriod';
 
 export default function EmployeeSummaryModal({ isOpen, onClose, employee, companies, periodType }) {
   const bgBox = useColorModeValue('gray.50', 'whiteAlpha.50');
@@ -29,11 +30,11 @@ export default function EmployeeSummaryModal({ isOpen, onClose, employee, compan
   const salarioTotal = devengado;
   const totalEgresos = employee.calculated?.ded || 0;
 
-  const liquido = salarioTotal - totalEgresos;
+  const liquido = getNetPayable(employee, periodType || '1ra');
 
   const anticipo = Number(employee.anticipo1ra) || 0;
   const q1 = periodType === '2da' ? anticipo : liquido;
-  const q2 = periodType === '2da' ? liquido - anticipo : 0;
+  const q2 = periodType === '2da' ? liquido : 0;
 
   const companyName = companies?.find(c => c.id == employee.empresa_principal)?.nombre_comercial || employee.company || 'Sin Empresa';
 

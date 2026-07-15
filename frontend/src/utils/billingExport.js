@@ -1,0 +1,416 @@
+import ExcelJS from 'exceljs';
+
+export const formatCurrency = (val) =>
+  new Intl.NumberFormat('es-GT', { style: 'currency', currency: 'GTQ' }).format(val || 0);
+
+const COLORS = {
+  primary: '1B4F72',
+  primaryDark: '0E2F44',
+  headerBg: '1B4F72',
+  headerFg: 'FFFFFF',
+  titleBg: '0E2F44',
+  altRow: 'F4F7FA',
+  border: 'C5D0DC',
+  money: '1A5276',
+  muted: '5D6D7E',
+  totalBg: 'EAF2F8',
+  white: 'FFFFFF'
+};
+
+const thinBorder = {
+  top: { style: 'thin', color: { argb: COLORS.border } },
+  left: { style: 'thin', color: { argb: COLORS.border } },
+  bottom: { style: 'thin', color: { argb: COLORS.border } },
+  right: { style: 'thin', color: { argb: COLORS.border } }
+};
+
+const moneyFmt = '"Q"#,##0.00';
+const pctFmt = '0.00"%"';
+
+const parseJsonField = (value) => {
+  if (value == null) return null;
+  if (typeof value === 'object') return value;
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  return null;
+};
+
+const styleTitleRow = (row, colCount) => {
+  row.height = 28;
+  for (let c = 1; c <= colCount; c += 1) {
+    const cell = row.getCell(c);
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.titleBg } };
+    cell.font = { bold: true, size: 14, color: { argb: COLORS.white }, name: 'Calibri' };
+    cell.alignment = { vertical: 'middle', horizontal: c === 1 ? 'left' : 'center' };
+  }
+};
+
+const styleMetaRow = (row, colCount) => {
+  row.height = 20;
+  for (let c = 1; c <= colCount; c += 1) {
+    const cell = row.getCell(c);
+    cell.font = { size: 10, color: { argb: COLORS.muted }, name: 'Calibri' };
+    cell.alignment = { vertical: 'middle' };
+  }
+};
+
+const styleHeaderRow = (row, colCount) => {
+  row.height = 22;
+  for (let c = 1; c <= colCount; c += 1) {
+    const cell = row.getCell(c);
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.headerBg } };
+    cell.font = { bold: true, size: 10, color: { argb: COLORS.headerFg }, name: 'Calibri' };
+    cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+    cell.border = thinBorder;
+  }
+};
+
+const styleDataRow = (row, colCount, isAlt) => {
+  row.height = 18;
+  for (let c = 1; c <= colCount; c += 1) {
+    const cell = row.getCell(c);
+    if (isAlt) {
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.altRow } };
+    }
+    cell.font = { size: 10, name: 'Calibri', color: { argb: '1C2833' } };
+    cell.border = thinBorder;
+    cell.alignment = { vertical: 'middle' };
+  }
+};
+
+const applyMoney = (cell) => {
+  cell.numFmt = moneyFmt;
+  cell.alignment = { horizontal: 'right', vertical: 'middle' };
+  cell.font = { ...(cell.font || {}), color: { argb: COLORS.money } };
+};
+
+const applyPct = (cell) => {
+  cell.numFmt = pctFmt;
+  cell.alignment = { horizontal: 'center', vertical: 'middle' };
+};
+
+const setCols = (ws, widths) => {
+  widths.forEach((w, i) => {
+    ws.getColumn(i + 1).width = w;
+  });
+};
+
+const buildFacturasSheet = (wb, { payrollTitle, lines }) => {
+  const ws = wb.addWorksheet('Facturas', { views: [{ state: 'frozen', ySplit: 4 }] });
+  const cols = 8;
+  setCols(ws, [28, 28, 42, 14, 12, 14, 12, 14]);
+
+  const title = ws.addRow(['Facturación Intercompañía — Facturas']);
+  styleTitleRow(title, cols);
+  ws.mergeCells(1, 1, 1, cols);
+
+  const meta = ws.addRow([
+    `Nómina: ${payrollTitle || '—'}`,
+    '',
+    '',
+    '',
+    '',
+    '',
+    `Generado: ${new Date().toLocaleString('es-GT')}`,
+    ''
+  ]);
+  styleMetaRow(meta, cols);
+  ws.mergeCells(2, 1, 2, 5);
+  ws.mergeCells(2, 7, 2, 8);
+
+  ws.addRow([]);
+
+  const header = ws.addRow([
+    'Empresa Emisora',
+    'Empresa Receptora',
+    'Concepto',
+    'Base',
+    'Margen %',
+    'Monto Margen',
+    'IVA',
+    'Total'
+  ]);
+  styleHeaderRow(header, cols);
+
+  let sumBase = 0;
+  let sumMargin = 0;
+  let sumIva = 0;
+  let sumTotal = 0;
+
+  (lines || []).forEach((d, idx) => {
+    const row = ws.addRow([
+      d.fromCompany || '',
+      d.toCompany || '',
+      d.concept || '',
+      Number(d.baseAmount) || 0,
+      Number(d.marginPercentage) || 0,
+      Number(d.marginAmount) || 0,
+      Number(d.ivaAmount) || 0,
+      Number(d.totalAmount) || 0
+    ]);
+    styleDataRow(row, cols, idx % 2 === 1);
+    applyMoney(row.getCell(4));
+    applyPct(row.getCell(5));
+    applyMoney(row.getCell(6));
+    applyMoney(row.getCell(7));
+    applyMoney(row.getCell(8));
+    row.getCell(8).font = { bold: true, size: 10, name: 'Calibri', color: { argb: '196F3D' } };
+
+    sumBase += Number(d.baseAmount) || 0;
+    sumMargin += Number(d.marginAmount) || 0;
+    sumIva += Number(d.ivaAmount) || 0;
+    sumTotal += Number(d.totalAmount) || 0;
+  });
+
+  if ((lines || []).length === 0) {
+    const empty = ws.addRow(['Sin facturas generadas. Verifique reglas y distribución de empleados.']);
+    styleDataRow(empty, cols, false);
+    ws.mergeCells(empty.number, 1, empty.number, cols);
+  } else {
+    const total = ws.addRow(['TOTALES', '', '', sumBase, '', sumMargin, sumIva, sumTotal]);
+    styleDataRow(total, cols, false);
+    for (let c = 1; c <= cols; c += 1) {
+      const cell = total.getCell(c);
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.totalBg } };
+      cell.font = { bold: true, size: 10, name: 'Calibri' };
+    }
+    applyMoney(total.getCell(4));
+    applyMoney(total.getCell(6));
+    applyMoney(total.getCell(7));
+    applyMoney(total.getCell(8));
+  }
+
+  return ws;
+};
+
+const buildMatrizSheet = (wb, { payrollTitle, matrix, companyNames }) => {
+  const fromIds = Object.keys(matrix || {});
+  const toIdsSet = new Set();
+  fromIds.forEach((fid) => Object.keys(matrix[fid] || {}).forEach((tid) => toIdsSet.add(tid)));
+  const toIds = [...toIdsSet];
+  const colCount = Math.max(2, toIds.length + 1);
+
+  const ws = wb.addWorksheet('Matriz', { views: [{ state: 'frozen', xSplit: 1, ySplit: 4 }] });
+  setCols(ws, [28, ...toIds.map(() => 16)]);
+
+  const title = ws.addRow(['Matriz de Costos (Empresa Pagadora \\ Empresa Destino)']);
+  styleTitleRow(title, colCount);
+  ws.mergeCells(1, 1, 1, colCount);
+
+  const meta = ws.addRow([`Nómina: ${payrollTitle || '—'}`]);
+  styleMetaRow(meta, colCount);
+  ws.mergeCells(2, 1, 2, colCount);
+
+  ws.addRow([]);
+
+  const header = ws.addRow(['De \\ A', ...toIds.map((id) => companyNames?.[id] || `Empresa ${id}`)]);
+  styleHeaderRow(header, colCount);
+
+  fromIds.forEach((fid, idx) => {
+    const values = [companyNames?.[fid] || `Empresa ${fid}`, ...toIds.map((tid) => Number(matrix[fid]?.[tid]) || 0)];
+    const row = ws.addRow(values);
+    styleDataRow(row, colCount, idx % 2 === 1);
+    row.getCell(1).font = { bold: true, size: 10, name: 'Calibri' };
+    for (let c = 2; c <= colCount; c += 1) applyMoney(row.getCell(c));
+  });
+
+  if (fromIds.length === 0) {
+    const empty = ws.addRow(['Sin datos en la matriz de costos.']);
+    styleDataRow(empty, colCount, false);
+    ws.mergeCells(empty.number, 1, empty.number, colCount);
+  }
+
+  return ws;
+};
+
+const buildDetalleSheet = (wb, { payrollTitle, details }) => {
+  const cols = 7;
+  const ws = wb.addWorksheet('Detalle', { views: [{ state: 'frozen', ySplit: 4 }] });
+  setCols(ws, [10, 36, 26, 26, 12, 14, 14]);
+
+  const title = ws.addRow(['Detalle por Empleado — Distribución de Costos']);
+  styleTitleRow(title, cols);
+  ws.mergeCells(1, 1, 1, cols);
+
+  const meta = ws.addRow([
+    `Nómina: ${payrollTitle || '—'}`,
+    '',
+    '',
+    `Registros: ${(details || []).length}`,
+    '',
+    `Generado: ${new Date().toLocaleString('es-GT')}`,
+    ''
+  ]);
+  styleMetaRow(meta, cols);
+  ws.mergeCells(2, 1, 2, 3);
+  ws.mergeCells(2, 4, 2, 5);
+  ws.mergeCells(2, 6, 2, 7);
+
+  ws.addRow([]);
+
+  const header = ws.addRow([
+    'ID',
+    'Empleado',
+    'Empresa Pagadora',
+    'Empresa Destino',
+    '% Destino',
+    'Costo Empleado',
+    'Monto Asignado'
+  ]);
+  styleHeaderRow(header, cols);
+
+  let sumAmount = 0;
+  (details || []).forEach((d, idx) => {
+    const pct = Number(d.percentage) || 0;
+    const amount = Number(d.baseAmount) || 0;
+    const employeeCost = Number(d.employeeCost ?? d.totalCost) || (pct > 0 ? amount / (pct / 100) : 0);
+    const row = ws.addRow([
+      d.employeeId ?? '',
+      d.employeeName || '',
+      d.fromCompany || '',
+      d.toCompany || '',
+      pct,
+      Math.round(employeeCost * 100) / 100,
+      amount
+    ]);
+    styleDataRow(row, cols, idx % 2 === 1);
+    applyPct(row.getCell(5));
+    applyMoney(row.getCell(6));
+    applyMoney(row.getCell(7));
+    sumAmount += amount;
+  });
+
+  if ((details || []).length === 0) {
+    const empty = ws.addRow([
+      'Sin detalle por empleado. Si exportó desde historial, regenere la vista previa o confirme de nuevo la facturación.'
+    ]);
+    styleDataRow(empty, cols, false);
+    ws.mergeCells(empty.number, 1, empty.number, cols);
+  } else {
+    const total = ws.addRow(['', 'TOTALES', '', '', '', '', sumAmount]);
+    styleDataRow(total, cols, false);
+    for (let c = 1; c <= cols; c += 1) {
+      const cell = total.getCell(c);
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.totalBg } };
+      cell.font = { bold: true, size: 10, name: 'Calibri' };
+    }
+    applyMoney(total.getCell(7));
+  }
+
+  return ws;
+};
+
+const buildResumenSheet = (wb, data) => {
+  const { payrollTitle, lines = [], matrix = {}, details = [], warnings = [] } = data;
+  const ws = wb.addWorksheet('Resumen', { views: [{ state: 'frozen', ySplit: 1 }] });
+  setCols(ws, [32, 28, 18]);
+
+  const title = ws.addRow(['Resumen de Facturación Intercompañía']);
+  styleTitleRow(title, 3);
+  ws.mergeCells(1, 1, 1, 3);
+
+  const addKv = (label, value) => {
+    const row = ws.addRow([label, value]);
+    row.getCell(1).font = { bold: true, size: 10, name: 'Calibri', color: { argb: COLORS.primary } };
+    row.getCell(2).font = { size: 10, name: 'Calibri' };
+    row.getCell(1).border = thinBorder;
+    row.getCell(2).border = thinBorder;
+    ws.mergeCells(row.number, 2, row.number, 3);
+  };
+
+  ws.addRow([]);
+  addKv('Nómina', payrollTitle || '—');
+  addKv('Fecha de generación', new Date().toLocaleString('es-GT'));
+  addKv('Facturas', (lines || []).length);
+  addKv('Filas de detalle', (details || []).length);
+  addKv('Empresas en matriz (pagadoras)', Object.keys(matrix || {}).length);
+  addKv(
+    'Total facturado',
+    formatCurrency((lines || []).reduce((s, l) => s + (Number(l.totalAmount) || 0), 0))
+  );
+  addKv(
+    'Total base distribuida',
+    formatCurrency((details || []).reduce((s, d) => s + (Number(d.baseAmount) || 0), 0))
+  );
+
+  if ((warnings || []).length > 0) {
+    ws.addRow([]);
+    const wh = ws.addRow(['Advertencias']);
+    styleHeaderRow(wh, 3);
+    ws.mergeCells(wh.number, 1, wh.number, 3);
+    warnings.forEach((w, i) => {
+      const row = ws.addRow([String(w)]);
+      styleDataRow(row, 3, i % 2 === 1);
+      ws.mergeCells(row.number, 1, row.number, 3);
+    });
+  }
+
+  return ws;
+};
+
+export const exportBillingExcel = async (data, filename) => {
+  const payload = {
+    payrollTitle: data?.payrollTitle,
+    lines: data?.lines || [],
+    matrix: data?.matrix || {},
+    companyNames: data?.companyNames || {},
+    details: data?.details || [],
+    warnings: data?.warnings || []
+  };
+
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'Sistema de Nómina';
+  wb.created = new Date();
+  wb.modified = new Date();
+
+  buildResumenSheet(wb, payload);
+  buildFacturasSheet(wb, payload);
+  buildMatrizSheet(wb, payload);
+  buildDetalleSheet(wb, payload);
+
+  const buffer = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buffer], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename || 'Facturacion_Intercompania.xlsx';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+};
+
+export const buildExportFromRun = (run) => {
+  const costMatrix = parseJsonField(run?.costMatrixJson) || {};
+  const matrix = costMatrix.matrix || {};
+  const companyNames = costMatrix.companyNames || {};
+  const details = Array.isArray(costMatrix.details) ? costMatrix.details : [];
+  const warnings = Array.isArray(costMatrix.warnings) ? costMatrix.warnings : [];
+
+  const lines = (run.lines || []).map((l) => ({
+    fromCompany: l.fromCompanyData?.nombre_comercial || companyNames[l.fromCompanyId] || l.fromCompanyId,
+    toCompany: l.toCompanyData?.nombre_comercial || companyNames[l.toCompanyId] || l.toCompanyId,
+    concept: l.concept,
+    baseAmount: Number(l.baseAmount),
+    marginPercentage: Number(l.marginPercentage),
+    marginAmount: Number(l.marginAmount),
+    ivaAmount: Number(l.ivaAmount),
+    totalAmount: Number(l.totalAmount)
+  }));
+
+  return {
+    payrollTitle: run.payrollTitle,
+    lines,
+    matrix,
+    companyNames,
+    details,
+    warnings
+  };
+};

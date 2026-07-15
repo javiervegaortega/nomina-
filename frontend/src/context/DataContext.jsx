@@ -1,114 +1,121 @@
-import React, { createContext, useState, useEffect, useRef, useContext } from 'react';
+import React, { createContext, useState, useEffect, useRef, useContext, useMemo } from 'react';
 import { AuthContext } from './AuthContext';
+import { isDateInQuincena, CUOTA_LABORAL_RATE } from '../utils/payrollPeriod';
 
 export const DataContext = createContext();
+
+const CACHE_KEYS = {
+  companies: 'nomina-companies',
+  departments: 'nomina-departments',
+  areas: 'nomina-areas',
+  divisions: 'nomina-divisions',
+  subdivisions: 'nomina-subdivisions',
+  dimension5s: 'nomina-dimension5s',
+  bonuses: 'nomina-bonuses',
+  commissions: 'nomina-commissions',
+};
+
+const readCache = (key, fallback = []) => {
+  try {
+    const saved = localStorage.getItem(key);
+    return saved ? JSON.parse(saved) : fallback;
+  } catch {
+    return fallback;
+  }
+};
+
+const parseDrafts = (apiDrafts) => apiDrafts.map(d => {
+  let comps = d.companies || [];
+  let emps = d.employees || [];
+  if (typeof comps === 'string') {
+    try { comps = JSON.parse(comps); } catch { comps = []; }
+  }
+  if (typeof emps === 'string') {
+    try { emps = JSON.parse(emps); } catch { emps = []; }
+  }
+  if (Array.isArray(emps)) {
+    emps = emps.map(emp => (typeof emp === 'string' ? JSON.parse(emp) : emp));
+  }
+  return { ...d, companies: comps, employees: emps };
+});
 
 export function DataProvider({ children }) {
   // --- STATE ---
   const { token } = useContext(AuthContext);
   const saveTimeouts = useRef({});
+  const persistTimer = useRef(null);
+  const persistSnapshot = useRef({});
 
-  const [companies, setCompanies] = useState(() => {
-    const saved = localStorage.getItem('nomina-companies');
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const [departments, setDepartments] = useState(() => {
-    const saved = localStorage.getItem('nomina-departments');
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const [areas, setAreas] = useState(() => {
-    const saved = localStorage.getItem('nomina-areas');
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const [divisions, setDivisions] = useState(() => {
-    const saved = localStorage.getItem('nomina-divisions');
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const [subdivisions, setSubdivisions] = useState(() => {
-    const saved = localStorage.getItem('nomina-subdivisions');
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const [dimension5s, setDimension5s] = useState(() => {
-    const saved = localStorage.getItem('nomina-dimension5s');
-    return saved ? JSON.parse(saved) : [];
-  });
-
+  const [companies, setCompanies] = useState(() => readCache(CACHE_KEYS.companies));
+  const [departments, setDepartments] = useState(() => readCache(CACHE_KEYS.departments));
+  const [areas, setAreas] = useState(() => readCache(CACHE_KEYS.areas));
+  const [divisions, setDivisions] = useState(() => readCache(CACHE_KEYS.divisions));
+  const [subdivisions, setSubdivisions] = useState(() => readCache(CACHE_KEYS.subdivisions));
+  const [dimension5s, setDimension5s] = useState(() => readCache(CACHE_KEYS.dimension5s));
   const [employees, setEmployees] = useState([]);
-
-  const [bonuses, setBonuses] = useState(() => {
-    const saved = localStorage.getItem('nomina-bonuses');
-    // Initially empty or some default types
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const [commissions, setCommissions] = useState(() => {
-    const saved = localStorage.getItem('nomina-commissions');
-    return saved ? JSON.parse(saved) : [];
-  });
-
+  const [bonuses, setBonuses] = useState(() => readCache(CACHE_KEYS.bonuses));
+  const [commissions, setCommissions] = useState(() => readCache(CACHE_KEYS.commissions));
   const [operationLogs, setOperationLogs] = useState([]);
   const [activePayrolls, setActivePayrolls] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  // Historial se carga solo desde API (evitar stringify masivo en localStorage)
+  const [payrollHistory, setPayrollHistory] = useState([]);
 
-  const [payrollHistory, setPayrollHistory] = useState(() => {
-    const saved = localStorage.getItem('nomina-history');
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  // --- EFFECT: PERSIST TO LOCAL STORAGE ---
+  // Persistencia diferida de catálogos (no bloquea el hilo principal en cada setState)
   useEffect(() => {
-    localStorage.setItem('nomina-companies', JSON.stringify(companies));
-  }, [companies]);
-
-  useEffect(() => {
-    localStorage.setItem('nomina-departments', JSON.stringify(departments));
-  }, [departments]);
-
-  useEffect(() => {
-    localStorage.setItem('nomina-areas', JSON.stringify(areas));
-  }, [areas]);
-
-  useEffect(() => {
-    localStorage.setItem('nomina-divisions', JSON.stringify(divisions));
-  }, [divisions]);
-
-  useEffect(() => {
-    localStorage.setItem('nomina-subdivisions', JSON.stringify(subdivisions));
-  }, [subdivisions]);
-
-  useEffect(() => {
-    localStorage.setItem('nomina-dimension5s', JSON.stringify(dimension5s));
-  }, [dimension5s]);
-
-  useEffect(() => {
-    localStorage.setItem('nomina-bonuses', JSON.stringify(bonuses));
-  }, [bonuses]);
-
-  useEffect(() => {
-    localStorage.setItem('nomina-commissions', JSON.stringify(commissions));
-  }, [commissions]);
-
-  useEffect(() => {
-    localStorage.setItem('nomina-history', JSON.stringify(payrollHistory));
-  }, [payrollHistory]);
+    persistSnapshot.current = {
+      companies, departments, areas, divisions, subdivisions, dimension5s, bonuses, commissions
+    };
+    if (persistTimer.current) clearTimeout(persistTimer.current);
+    persistTimer.current = setTimeout(() => {
+      const snap = persistSnapshot.current;
+      try {
+        localStorage.setItem(CACHE_KEYS.companies, JSON.stringify(snap.companies));
+        localStorage.setItem(CACHE_KEYS.departments, JSON.stringify(snap.departments));
+        localStorage.setItem(CACHE_KEYS.areas, JSON.stringify(snap.areas));
+        localStorage.setItem(CACHE_KEYS.divisions, JSON.stringify(snap.divisions));
+        localStorage.setItem(CACHE_KEYS.subdivisions, JSON.stringify(snap.subdivisions));
+        localStorage.setItem(CACHE_KEYS.dimension5s, JSON.stringify(snap.dimension5s));
+        localStorage.setItem(CACHE_KEYS.bonuses, JSON.stringify(snap.bonuses));
+        localStorage.setItem(CACHE_KEYS.commissions, JSON.stringify(snap.commissions));
+        // Limpiar historial gigante si quedó de versiones anteriores
+        if (localStorage.getItem('nomina-history')) {
+          localStorage.removeItem('nomina-history');
+        }
+      } catch {
+        // QuotaExceeded u otros: no romper la app
+      }
+    }, 400);
+    return () => {
+      if (persistTimer.current) clearTimeout(persistTimer.current);
+    };
+  }, [companies, departments, areas, divisions, subdivisions, dimension5s, bonuses, commissions]);
 
   // --- FETCH FROM BACKEND ON MOUNT ---
   useEffect(() => {
+    let cancelled = false;
+
+    const safeJson = async (res) => {
+      if (!res?.ok) return null;
+      try {
+        return await res.json();
+      } catch {
+        return null;
+      }
+    };
+
     const fetchBackendData = async () => {
       try {
-        const token = localStorage.getItem('nomina-token');
-        const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+        const authToken = localStorage.getItem('nomina-token');
+        const headers = authToken ? { 'Authorization': `Bearer ${authToken}` } : {};
         const fetchOpts = { headers };
 
-        const [compRes, empRes, histRes, deptRes, areaRes, divRes, subdivRes, dim5Res, draftsRes, commRes, opLogsRes, sapRes] = await Promise.all([
+        // Carga crítica primero (sin historial/logs pesados ni SAP no usado)
+        const [
+          compRes, empRes, deptRes, areaRes, divRes, subdivRes, dim5Res, draftsRes, commRes
+        ] = await Promise.all([
           fetch('http://localhost:3000/api/companies', fetchOpts),
           fetch('http://localhost:3000/api/employees', fetchOpts),
-          fetch('http://localhost:3000/api/payrolls', fetchOpts),
           fetch('http://localhost:3000/api/departments', fetchOpts),
           fetch('http://localhost:3000/api/areas', fetchOpts),
           fetch('http://localhost:3000/api/divisions', fetchOpts),
@@ -116,83 +123,54 @@ export function DataProvider({ children }) {
           fetch('http://localhost:3000/api/dimension5', fetchOpts),
           fetch('http://localhost:3000/api/payroll-drafts', fetchOpts),
           fetch('http://localhost:3000/api/commissions', fetchOpts),
-          fetch('http://localhost:3000/api/operation-logs', fetchOpts),
-          fetch('http://localhost:3000/api/sap/status', fetchOpts)
         ]);
-        
-        if (compRes.ok) {
-          const apiCompanies = await compRes.json();
-          if (Array.isArray(apiCompanies)) setCompanies(apiCompanies);
-        }
-        
-        if (empRes.ok) {
-          const apiEmployees = await empRes.json();
-          if (Array.isArray(apiEmployees)) setEmployees(apiEmployees);
-        }
 
-        if (histRes.ok) {
-          const apiHistory = await histRes.json();
-          if (Array.isArray(apiHistory)) setPayrollHistory(apiHistory);
-        }
+        const [
+          apiCompanies, apiEmployees, apiDepts, apiAreas, apiDivs, apiSubdivs, apiDim5s, apiDrafts, apiCommissions
+        ] = await Promise.all([
+          safeJson(compRes), safeJson(empRes), safeJson(deptRes), safeJson(areaRes),
+          safeJson(divRes), safeJson(subdivRes), safeJson(dim5Res), safeJson(draftsRes), safeJson(commRes)
+        ]);
 
-        if (deptRes.ok) {
-          const apiDepts = await deptRes.json();
-          if (Array.isArray(apiDepts)) setDepartments(apiDepts);
-        }
+        if (cancelled) return;
 
-        if (areaRes.ok) {
-          const apiAreas = await areaRes.json();
-          if (Array.isArray(apiAreas)) setAreas(apiAreas);
-        }
-
-        if (divRes.ok) {
-          const apiDivs = await divRes.json();
-          if (Array.isArray(apiDivs)) setDivisions(apiDivs);
-        }
-
-        if (subdivRes.ok) {
-          const apiSubdivs = await subdivRes.json();
-          if (Array.isArray(apiSubdivs)) setSubdivisions(apiSubdivs);
-        }
-
-        if (dim5Res.ok) {
-          const apiDim5s = await dim5Res.json();
-          if (Array.isArray(apiDim5s)) setDimension5s(apiDim5s);
-        }
-
-        if (draftsRes.ok) {
-          const apiDrafts = await draftsRes.json();
-          if (Array.isArray(apiDrafts)) {
-            const parsedDrafts = apiDrafts.map(d => {
-              let comps = d.companies || [];
-              let emps = d.employees || [];
-              if (typeof comps === 'string') {
-                try { comps = JSON.parse(comps); } catch(e) { comps = []; }
-              }
-              if (typeof emps === 'string') {
-                try { emps = JSON.parse(emps); } catch(e) { emps = []; }
-              }
-              if (Array.isArray(emps)) {
-                emps = emps.map(emp => (typeof emp === 'string' ? JSON.parse(emp) : emp));
-              }
-              return { ...d, companies: comps, employees: emps };
-            });
-            setActivePayrolls(parsedDrafts);
-          }
-        }
-        
-        if (commRes.ok) {
-          const apiCommissions = await commRes.json();
-          if (Array.isArray(apiCommissions)) setCommissions(apiCommissions);
-        }
-
-        if (opLogsRes.ok) {
-          const apiOperationLogs = await opLogsRes.json();
-          if (Array.isArray(apiOperationLogs)) setOperationLogs(apiOperationLogs);
-        }
-      } catch (err) {
-      } finally {
+        // Un solo batch de updates críticos → menos re-renders en cascada
+        if (Array.isArray(apiCompanies)) setCompanies(apiCompanies);
+        if (Array.isArray(apiEmployees)) setEmployees(apiEmployees);
+        if (Array.isArray(apiDepts)) setDepartments(apiDepts);
+        if (Array.isArray(apiAreas)) setAreas(apiAreas);
+        if (Array.isArray(apiDivs)) setDivisions(apiDivs);
+        if (Array.isArray(apiSubdivs)) setSubdivisions(apiSubdivs);
+        if (Array.isArray(apiDim5s)) setDimension5s(apiDim5s);
+        if (Array.isArray(apiDrafts)) setActivePayrolls(parseDrafts(apiDrafts));
+        if (Array.isArray(apiCommissions)) setCommissions(apiCommissions);
         setIsLoading(false);
+
+        // Historial y logs en segundo plano (payloads grandes)
+        const deferHeavy = async () => {
+          try {
+            const [histRes, opLogsRes] = await Promise.all([
+              fetch('http://localhost:3000/api/payrolls', fetchOpts),
+              fetch('http://localhost:3000/api/operation-logs', fetchOpts),
+            ]);
+            const [apiHistory, apiOperationLogs] = await Promise.all([
+              safeJson(histRes), safeJson(opLogsRes)
+            ]);
+            if (cancelled) return;
+            if (Array.isArray(apiHistory)) setPayrollHistory(apiHistory);
+            if (Array.isArray(apiOperationLogs)) setOperationLogs(apiOperationLogs);
+          } catch {
+            // no-op
+          }
+        };
+
+        if (typeof requestIdleCallback === 'function') {
+          requestIdleCallback(() => { deferHeavy(); }, { timeout: 2000 });
+        } else {
+          setTimeout(deferHeavy, 0);
+        }
+      } catch {
+        if (!cancelled) setIsLoading(false);
       }
     };
 
@@ -201,6 +179,8 @@ export function DataProvider({ children }) {
     } else {
       setIsLoading(false);
     }
+
+    return () => { cancelled = true; };
   }, [token]);
 
   // --- ACTIONS ---
@@ -551,12 +531,12 @@ export function DataProvider({ children }) {
     } catch (e) {}
   };
 
-  const updateOperationLogStatus = async (id, status, periodAssigned = null, justification = null) => {
+  const updateOperationLogStatus = async (id, status, periodAssigned = null, justification = null, rejectionFromNomina = false) => {
     try {
       const res = await fetch(`http://localhost:3000/api/operation-logs/${id}/status`, {
         method: 'PUT',
         headers: getAuthHeader(),
-        body: JSON.stringify({ status, periodAssigned, justification })
+        body: JSON.stringify({ status, periodAssigned, justification, rejectionFromNomina })
       });
       if (res.ok) {
         setOperationLogs(prev => {
@@ -801,7 +781,6 @@ export function DataProvider({ children }) {
   const deleteBonus = (id) => setBonuses(bonuses.filter(b => b.id !== id));
 
   // Payroll
-  // Payroll
   const createActivePayroll = async (title, selectedCompanies, periodType = '1ra', draftDateStr = null) => {
     // selectedCompanies contains commercial names of the selected companies
     // Map selectedCompany names to company IDs
@@ -810,50 +789,74 @@ export function DataProvider({ children }) {
       return comp ? comp.id : null;
     }).filter(id => id !== null);
 
-    // If 2nd quincena, find 1st quincena payouts
+    const draftRefDate = draftDateStr || new Date().toISOString();
+
+    // If 2nd quincena, find 1st quincena payouts (prefer cerrada, most recent)
     let firstQuincenaPayouts = {};
+    let missingAnticipoWarning = false;
     if (periodType === '2da') {
-      const targetDate = draftDateStr ? new Date(draftDateStr) : new Date();
+      const targetDate = new Date(draftRefDate);
       const month = targetDate.getMonth();
       const year = targetDate.getFullYear();
-      
-      const histories1ra = payrollHistory.filter(h => {
-        if (h.periodType !== '1ra') return false;
-        const hDate = new Date(h.createdAt || h.closedAt || Date.now());
-        if (hDate.getMonth() !== month || hDate.getFullYear() !== year) return false;
-        // Check if it belongs to the same companies
+
+      const parseCompanies = (h) => {
         let hComps = [];
         if (Array.isArray(h.companies)) hComps = h.companies;
         else if (typeof h.companies === 'string') {
-          try { hComps = JSON.parse(h.companies); } catch(e) {}
+          try { hComps = JSON.parse(h.companies); } catch (e) { hComps = []; }
         }
-        if (selectedCompanyIds.length === 0) return true; // If we selected ALL companies, include all 1st quincenas
-        if (hComps.length === 0 || hComps.includes('ALL')) return true; // If history was for ALL companies, include it
+        return hComps;
+      };
+
+      const matchesCompanies = (h) => {
+        const hComps = parseCompanies(h);
+        if (selectedCompanyIds.length === 0) return true;
+        if (hComps.length === 0 || hComps.includes('ALL')) return true;
         return selectedCompanyIds.some(id => hComps.some(hc => String(hc) === String(id)));
+      };
+
+      const matchesMonth = (h) => {
+        const hDate = new Date(h.closedAt || h.createdAt || Date.now());
+        return hDate.getMonth() === month && hDate.getFullYear() === year;
+      };
+
+      let histories1ra = payrollHistory.filter(h =>
+        h.periodType === '1ra' && matchesMonth(h) && matchesCompanies(h)
+      );
+
+      // Prefer cerrada over auditoria; then most recent
+      histories1ra = histories1ra.sort((a, b) => {
+        const statusScore = (s) => (s === 'cerrada' ? 2 : s === 'auditoria' ? 1 : 0);
+        const ds = statusScore(b.status) - statusScore(a.status);
+        if (ds !== 0) return ds;
+        return new Date(b.closedAt || b.createdAt || 0) - new Date(a.closedAt || a.createdAt || 0);
       });
 
-      if (histories1ra.length > 0) {
-        histories1ra.forEach(history1ra => {
-          let emps = [];
-          if (typeof history1ra.data === 'string') {
-            try { emps = JSON.parse(history1ra.data); } catch(e) {}
-          } else if (Array.isArray(history1ra.data)) {
-            emps = history1ra.data;
-          } else if (typeof history1ra.employees === 'string') {
-            try { emps = JSON.parse(history1ra.employees); } catch(e) {}
-          } else if (Array.isArray(history1ra.employees)) {
-            emps = history1ra.employees;
-          }
-          emps.forEach(emp => {
-            if (emp.netTotal) {
-              firstQuincenaPayouts[emp.id] = emp.netTotal;
-            }
-          });
+      // Use only the best matching history (avoid overwriting with older ones)
+      const best = histories1ra[0];
+      if (best) {
+        let emps = [];
+        if (typeof best.data === 'string') {
+          try { emps = JSON.parse(best.data); } catch (e) { emps = []; }
+        } else if (Array.isArray(best.data)) {
+          emps = best.data;
+        } else if (typeof best.employees === 'string') {
+          try { emps = JSON.parse(best.employees); } catch (e) { emps = []; }
+        } else if (Array.isArray(best.employees)) {
+          emps = best.employees;
+        }
+        emps.forEach(emp => {
+          const payout = emp.netTotal != null
+            ? Number(emp.netTotal)
+            : (Number(emp.calculated?.netPayable) || Number(emp.calculated?.net) || 0);
+          if (payout) firstQuincenaPayouts[emp.id] = payout;
         });
+      } else {
+        missingAnticipoWarning = true;
       }
     }
 
-    const targetDateForCommissions = draftDateStr ? new Date(draftDateStr) : new Date();
+    const targetDateForCommissions = new Date(draftRefDate);
     const monthNames = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
     const currentMonth = monthNames[targetDateForCommissions.getMonth()];
     
@@ -869,7 +872,8 @@ export function DataProvider({ children }) {
         const days = periodType === '1ra' ? 15 : 30;
         const baseSalary = Number(e.sueldo_ordinario) || 0;
         const baseFactor = days / 30;
-        const igssVal = (baseSalary * baseFactor) * 0.0483;
+        const igssExempt = !!(e.jubilacion === true || e.jubilacion === 1);
+        const igssVal = igssExempt ? 0 : (baseSalary * baseFactor) * CUOTA_LABORAL_RATE;
 
         // Calculate commissions
         const empCommissions = currentCommissions.filter(c => c.employee_id === e.id);
@@ -883,9 +887,10 @@ export function DataProvider({ children }) {
           totalBonos += (Number(c.monto_bono) || 0);
         });
 
-        // Calculate operation logs (APPROVED_MANAGER)
+        // Operation logs APPROVED_MANAGER filtered by quincena date
         const empOpLogs = operationLogs.filter(l => {
           if (String(l.employeeId) !== String(e.id) || l.status !== 'APPROVED_MANAGER') return false;
+          if (!isDateInQuincena(l.date, draftRefDate, periodType)) return false;
           if (selectedCompanyIds.length > 0 && l.companyId) {
             return selectedCompanyIds.some(id => String(id) === String(l.companyId));
           }
@@ -904,6 +909,16 @@ export function DataProvider({ children }) {
         const hourlyRate = baseSalary / 30 / 8;
         const valSimples = qtySimples * hourlyRate * 1.5;
         const valDobles = qtyDobles * hourlyRate * 2;
+
+        // Catálogo de bonos: solo si date cae en la quincena (o sin date = no incluir en auto)
+        const appliedBonuses = bonuses.reduce((acc, b) => {
+          const amount = b.assignments?.[e.id] || 0;
+          if (!amount) return acc;
+          if (b.date && !isDateInQuincena(b.date, draftRefDate, periodType)) return acc;
+          if (!b.date) return acc; // sin fecha no se auto-aplica a cada nómina
+          acc[b.id] = amount;
+          return acc;
+        }, {});
 
         return {
           ...e,
@@ -927,6 +942,7 @@ export function DataProvider({ children }) {
             otros_egresos: (Number(e.otros_egresos) || 0) * baseFactor,
           },
           anticipo1ra: firstQuincenaPayouts[e.id] || 0,
+          missingAnticipoWarning: periodType === '2da' && missingAnticipoWarning,
           extras: {
             bonos: totalBonos,
             simplesQty: (Number(e.horas_extras_simples) || 0) + qtySimples,
@@ -937,10 +953,7 @@ export function DataProvider({ children }) {
             otrosIngresos: Number(e.otro_ingresos) || 0,
           },
           operationLogs: empOpLogs,
-          appliedBonuses: bonuses.reduce((acc, b) => {
-            acc[b.id] = b.assignments?.[e.id] || 0;
-            return acc;
-          }, {})
+          appliedBonuses
         };
       });
 
@@ -954,7 +967,8 @@ export function DataProvider({ children }) {
       periodType,
       companies: selectedCompanyIds,
       createdAt: draftDateStr ? new Date(draftDateStr).toISOString() : new Date().toISOString(),
-      employees: frozenEmployees
+      employees: frozenEmployees,
+      missingAnticipoWarning: periodType === '2da' && missingAnticipoWarning
     };
 
     try {
@@ -1124,10 +1138,11 @@ export function DataProvider({ children }) {
         setPayrollHistory([historyRecord, ...payrollHistory]);
         deleteActivePayroll(id);
 
-        // Mark operation logs as PROCESSED_PAYROLL
+        // Mark operation logs as PROCESSED_PAYROLL with periodAssigned
         if (logsToProcess.length > 0) {
+          const periodLabel = historyRecord.id;
           await Promise.all(logsToProcess.map(logId => 
-            updateOperationLogStatus(logId, 'PROCESSED_PAYROLL')
+            updateOperationLogStatus(logId, 'PROCESSED_PAYROLL', periodLabel)
           ));
         }
 
@@ -1189,18 +1204,34 @@ export function DataProvider({ children }) {
     }
   };
 
-  return (
-    <DataContext.Provider value={{
+  const activeAreas = useMemo(
+    () => areas.filter(a => String(a.id_estado) === '1' || a.id_estado === undefined),
+    [areas]
+  );
+  const activeDivisions = useMemo(
+    () => divisions.filter(d => String(d.id_estado) === '1' || d.id_estado === undefined),
+    [divisions]
+  );
+  const activeSubdivisions = useMemo(
+    () => subdivisions.filter(s => String(s.id_estado) === '1' || s.id_estado === undefined),
+    [subdivisions]
+  );
+  const activeDimension5s = useMemo(
+    () => dimension5s.filter(d => String(d.id_estado) === '1' || d.id_estado === undefined),
+    [dimension5s]
+  );
+
+  const contextValue = useMemo(() => ({
       companies, 
       departments, 
       employees, 
       bonuses, 
       commissions, 
       payrollHistory, 
-      areas: areas.filter(a => String(a.id_estado) === '1' || a.id_estado === undefined), 
-      divisions: divisions.filter(d => String(d.id_estado) === '1' || d.id_estado === undefined), 
-      subdivisions: subdivisions.filter(s => String(s.id_estado) === '1' || s.id_estado === undefined), 
-      dimension5s: dimension5s.filter(d => String(d.id_estado) === '1' || d.id_estado === undefined), 
+      areas: activeAreas, 
+      divisions: activeDivisions, 
+      subdivisions: activeSubdivisions, 
+      dimension5s: activeDimension5s, 
       isLoading,
       addCompany, updateCompany, deleteCompany,
       addDepartment, updateDepartment, deleteDepartment,
@@ -1215,7 +1246,14 @@ export function DataProvider({ children }) {
       operationLogs, addOperationLog, updateOperationLogStatus, deleteOperationLog, updateOperationLog,
       activePayrolls, createActivePayroll, updateActivePayroll, updateDraftMetadata, deleteActivePayroll, closePayroll,
       savePayroll, deletePayroll, auditorApprovePayroll, auditorRejectPayroll
-    }}>
+  }), [
+    companies, departments, employees, bonuses, commissions, payrollHistory,
+    activeAreas, activeDivisions, activeSubdivisions, activeDimension5s, isLoading,
+    operationLogs, activePayrolls
+  ]);
+
+  return (
+    <DataContext.Provider value={contextValue}>
       {children}
     </DataContext.Provider>
   );

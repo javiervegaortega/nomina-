@@ -193,10 +193,10 @@ export default function Dashboard() {
     toast.success('Período actualizado', { description: 'El dashboard refleja el nuevo filtro.' });
   };
 
-  const handleExportExcel = () => {
+  const handleExportExcel = async () => {
     setExporting('excel');
     try {
-      exportDashboardExcel(metrics, metrics.periodLabel);
+      await exportDashboardExcel(metrics, metrics.periodLabel);
       toast.success('Reporte Excel generado');
       setShowReportModal(false);
     } catch (err) {

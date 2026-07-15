@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useContext } from 'react';
-import { Box, Button, Flex, Heading, Text, Table, Thead, Tbody, Tr, Th, Td, Badge, IconButton, useColorModeValue, Modal, ModalOverlay, ModalContent, ModalHeader, ModalBody, ModalFooter, ModalCloseButton, Input, FormControl, FormLabel, useDisclosure } from '@chakra-ui/react';
-import { Plus, Eye, Trash2, CheckCircle2, XCircle } from 'lucide-react';
+import { Box, Button, Flex, Heading, Text, Table, Thead, Tbody, Tr, Th, Td, Badge, IconButton, useColorModeValue, Modal, ModalOverlay, ModalContent, ModalHeader, ModalBody, ModalFooter, ModalCloseButton, Input, FormControl, FormLabel, useDisclosure, HStack } from '@chakra-ui/react';
+import { Plus, Eye, Trash2, CheckCircle2, XCircle, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { AuthContext } from '../context/AuthContext';
 import { toast } from 'sonner';
@@ -79,6 +79,31 @@ export default function OperationBatches() {
   };
 
   const canCreateBatch = ['ADMIN', 'GERENTE GENERAL', 'SOLICITANTE', 'NOMINA', 'GERENTE'].includes(user?.role);
+  const isNominaRole = ['ADMIN', 'NOMINA', 'AUDITOR'].includes(user?.role);
+
+  const handleRejectToManager = async (batchId) => {
+    const note = prompt('Justificación del rechazo al gerente:');
+    if (!note) return;
+    try {
+      const token = localStorage.getItem('nomina-token');
+      const res = await fetch(`http://localhost:3000/api/operation-batches/${batchId}/status`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ status: 'PENDING_MANAGER', justification: note, rejectionFromNomina: true })
+      });
+      if (res.ok) {
+        toast.success('Lote devuelto al gerente');
+        fetchBatches();
+      } else {
+        toast.error('Error al rechazar');
+      }
+    } catch (err) {
+      toast.error('Error de red');
+    }
+  };
 
   return (
     <Box p={{ base: 3, md: 6, lg: 8 }}>
@@ -128,14 +153,26 @@ export default function OperationBatches() {
                     <Td>{batch.logs?.length || 0}</Td>
                     <Td>{getStatusBadge(batch.status)}</Td>
                     <Td textAlign="center">
-                      <IconButton
-                        aria-label="Ver Lote"
-                        icon={<Eye size={18} />}
-                        size="sm"
-                        variant="ghost"
-                        colorScheme="blue"
-                        onClick={() => navigate(`/operations/${batch.id}`)}
-                      />
+                      <HStack justify="center" spacing={1}>
+                        <IconButton
+                          aria-label="Ver Lote"
+                          icon={<Eye size={18} />}
+                          size="sm"
+                          variant="ghost"
+                          colorScheme="blue"
+                          onClick={() => navigate(`/operations/${batch.id}`)}
+                        />
+                        {isNominaRole && batch.status === 'APPROVED_MANAGER' && (
+                          <IconButton
+                            aria-label="Rechazar a Gerente"
+                            icon={<X size={18} />}
+                            size="sm"
+                            variant="ghost"
+                            colorScheme="orange"
+                            onClick={() => handleRejectToManager(batch.id)}
+                          />
+                        )}
+                      </HStack>
                     </Td>
                   </Tr>
                 ))

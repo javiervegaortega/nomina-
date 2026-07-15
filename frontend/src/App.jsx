@@ -1,38 +1,48 @@
-import React, { useState, useEffect, createContext, useContext, useMemo } from 'react';
+import React, { useState, useEffect, createContext, useContext, useMemo, useCallback, lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { DataProvider } from './context/DataContext';
 import { AuthProvider, AuthContext } from './context/AuthContext';
-import { ChakraProvider, Box, Flex, useColorMode } from '@chakra-ui/react';
+import { ChakraProvider, Box, Flex, useColorMode, Spinner, Center } from '@chakra-ui/react';
 import {
   Modal, ModalOverlay, ModalContent, ModalHeader, ModalBody, ModalFooter, ModalCloseButton,
-  Button, Text, useDisclosure
+  Button, Text
 } from '@chakra-ui/react';
 import theme from './theme';
 import { Toaster, toast } from 'sonner';
-import Sidebar, { DRAWER_WIDTH } from './components/Sidebar';
-import Dashboard from './pages/Dashboard';
-import Employees from './pages/Employees';
-import PayrollProcessing from './pages/PayrollProcessing';
-import PayrollHistory from './pages/PayrollHistory';
-import ReactivatePayroll from './pages/ReactivatePayroll';
-import Departments from './pages/Departments';
-import Areas from './pages/Areas';
-import Divisions from './pages/Divisions';
-import Subdivisions from './pages/Subdivisions';
-import Dimension5 from './pages/Dimension5';
-import Companies from './pages/Companies';
-import Settings from './pages/Settings';
-import OperationBatches from './pages/OperationBatches';
-import OperationLogs from './pages/OperationLogs';
-import Login from './pages/auth/Login';
-import Users from './pages/Users';
-import BillingDistribution from './pages/BillingDistribution';
-import BillingRules from './pages/BillingRules';
-
-import ForgotPassword from './pages/auth/ForgotPassword';
+import Sidebar from './components/Sidebar';
 import './index.css';
 
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Employees = lazy(() => import('./pages/Employees'));
+const PayrollProcessing = lazy(() => import('./pages/PayrollProcessing'));
+const PayrollHistory = lazy(() => import('./pages/PayrollHistory'));
+const ReactivatePayroll = lazy(() => import('./pages/ReactivatePayroll'));
+const Departments = lazy(() => import('./pages/Departments'));
+const Areas = lazy(() => import('./pages/Areas'));
+const Divisions = lazy(() => import('./pages/Divisions'));
+const Subdivisions = lazy(() => import('./pages/Subdivisions'));
+const Dimension5 = lazy(() => import('./pages/Dimension5'));
+const Companies = lazy(() => import('./pages/Companies'));
+const Settings = lazy(() => import('./pages/Settings'));
+const OperationBatches = lazy(() => import('./pages/OperationBatches'));
+const OperationLogs = lazy(() => import('./pages/OperationLogs'));
+const Login = lazy(() => import('./pages/auth/Login'));
+const Users = lazy(() => import('./pages/Users'));
+const BillingDistribution = lazy(() => import('./pages/BillingDistribution'));
+const BillingRules = lazy(() => import('./pages/BillingRules'));
+const BillingHistory = lazy(() => import('./pages/BillingHistory'));
+const Suspensions = lazy(() => import('./pages/Suspensions'));
+const ForgotPassword = lazy(() => import('./pages/auth/ForgotPassword'));
+
 export const AppContext = createContext();
+
+function PageLoader() {
+  return (
+    <Center h="60vh">
+      <Spinner size="lg" color="brand.500" thickness="3px" />
+    </Center>
+  );
+}
 
 // Layout with Sidebar for main app pages
 function MainLayout() {
@@ -47,7 +57,9 @@ function MainLayout() {
         pt={{ base: '60px', md: 0 }}
         sx={{ '@media print': { overflow: 'visible', h: 'auto' } }}
       >
-        <Outlet />
+        <Suspense fallback={<PageLoader />}>
+          <Outlet />
+        </Suspense>
       </Box>
     </Flex>
   );
@@ -83,7 +95,9 @@ function AuthLayout() {
   }
   return (
     <Flex className="app-layout" justify="center" align="center">
-      <Outlet />
+      <Suspense fallback={<PageLoader />}>
+        <Outlet />
+      </Suspense>
     </Flex>
   );
 }
@@ -92,7 +106,7 @@ function AppContent() {
   const { colorMode, toggleColorMode } = useColorMode();
   const [confirmDialog, setConfirmDialog] = useState({ isOpen: false, message: '', onConfirm: null });
 
-  const showToast = (message, type = 'success') => {
+  const showToast = useCallback((message, type = 'success') => {
     if (type === 'danger' || type === 'error') {
       toast.error(message);
     } else if (type === 'success') {
@@ -100,18 +114,23 @@ function AppContent() {
     } else {
       toast(message);
     }
-  };
+  }, []);
 
-  const confirmAction = (message, onConfirm) => {
+  const confirmAction = useCallback((message, onConfirm) => {
     setConfirmDialog({ isOpen: true, message, onConfirm });
-  };
+  }, []);
+
+  const appValue = useMemo(
+    () => ({ theme: colorMode, toggleTheme: toggleColorMode, showToast, confirmAction }),
+    [colorMode, toggleColorMode, showToast, confirmAction]
+  );
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', colorMode);
   }, [colorMode]);
 
   return (
-    <AppContext.Provider value={{ theme: colorMode, toggleTheme: toggleColorMode, showToast, confirmAction }}>
+    <AppContext.Provider value={appValue}>
       <AuthProvider>
         <DataProvider>
           <BrowserRouter>
@@ -150,11 +169,13 @@ function AppContent() {
                     <Route path="/settings" element={<Settings />} />
                     <Route path="/billing" element={<BillingDistribution />} />
                     <Route path="/billing/rules" element={<BillingRules />} />
+                    <Route path="/billing/history" element={<BillingHistory />} />
                   </Route>
 
                   {/* ADMIN, GERENTE GENERAL, NOMINA, AUDITOR, DIGITADOR */}
                   <Route element={<RoleProtectedRoute allowedRoles={['ADMIN', 'GERENTE GENERAL', 'NOMINA', 'AUDITOR', 'DIGITADOR']} />}>
                     <Route path="/employees" element={<Employees />} />
+                    <Route path="/suspensions" element={<Suspensions />} />
                   </Route>
 
                   {/* ADMIN, GERENTE GENERAL, GERENTE, SOLICITANTE, NOMINA */}

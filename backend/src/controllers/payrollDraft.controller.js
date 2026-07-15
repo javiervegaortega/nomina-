@@ -17,8 +17,10 @@ const getAll = async (req, res) => {
           return de.data;
         }
       });
-      // Retrofit calculations for old drafts
-      employeesArr = calculatePayrollBatch(employeesArr, draftObj.periodType);
+      // Solo recalcular si faltan snapshots (borradores antiguos)
+      if (Array.isArray(employeesArr) && employeesArr.length > 0 && !employeesArr.every(e => e && e.calculated)) {
+        employeesArr = calculatePayrollBatch(employeesArr, draftObj.periodType);
+      }
 
       return {
         id: draftObj.id,
