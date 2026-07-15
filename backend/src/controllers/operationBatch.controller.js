@@ -82,11 +82,17 @@ const updateStatus = async (req, res) => {
 
     // Send email to manager if sent to review
     if (status === 'PENDING_MANAGER' && batch.user?.idDepartamento) {
-      const gerentes = await User.findAll({ 
-        where: { role: 'GERENTE', idDepartamento: batch.user.idDepartamento } 
-      });
-      for (const gerente of gerentes) {
-        await sendOperationLogEmail(gerente.name, gerente.email, batch.user.name, batch.logs.length);
+      try {
+        const gerentes = await User.findAll({ 
+          where: { role: 'GERENTE', idDepartamento: batch.user.idDepartamento } 
+        });
+        for (const gerente of gerentes) {
+          if (gerente.email) {
+            await sendOperationLogEmail(gerente.name, gerente.email, batch.user.name, batch.logs.length);
+          }
+        }
+      } catch (emailError) {
+        console.error('Error enviando correos a los gerentes. El flujo continuará.', emailError.message);
       }
     }
 

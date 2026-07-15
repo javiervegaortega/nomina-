@@ -320,6 +320,7 @@ export default function OperationLogs() {
   const getStatusBadge = (status) => {
     const badgeProps = { variant: "subtle", borderRadius: "full", px: 2.5, py: 0.5, textTransform: "capitalize", fontWeight: "medium", fontSize: "xs" };
     switch(status) {
+      case 'DRAFT': return <Badge colorScheme="gray" {...badgeProps}>Borrador</Badge>;
       case 'PENDING_MANAGER': return <Badge colorScheme="yellow" {...badgeProps}>Pdte. Gerente</Badge>;
       case 'APPROVED_MANAGER': return <Badge colorScheme="blue" {...badgeProps}>Aprobado</Badge>;
       case 'RETURNED': return <Badge colorScheme="orange" {...badgeProps}>Devuelto</Badge>;
@@ -488,7 +489,7 @@ export default function OperationLogs() {
           {canEdit && (
             <>
               <Button 
-                colorScheme="gray" 
+                colorScheme="brand" 
                 leftIcon={<Plus size={16} />} 
                 onClick={() => {
                   setFormData({
@@ -497,13 +498,20 @@ export default function OperationLogs() {
                   });
                   onOpen();
                 }}
+                borderRadius="lg" 
+                transition="all 0.3s"
+                _hover={{ shadow: 'lg' }}
+                variant="outline"
               >
                 Nuevo Registro
               </Button>
               <Button 
-                colorScheme="blue" 
+                colorScheme="brand" 
                 leftIcon={<Send size={16} />} 
                 onClick={handleSendToManager}
+                borderRadius="lg" 
+                transition="all 0.3s"
+                _hover={{ shadow: 'lg' }}
               >
                 Enviar a Gerencia
               </Button>
@@ -512,8 +520,8 @@ export default function OperationLogs() {
 
           {isManagerOrAdmin && batch.status === 'PENDING_MANAGER' && (
             <>
-              <Button colorScheme="red" variant="outline" leftIcon={<X size={16} />} onClick={handleRejectBatch}>Rechazar Lote</Button>
-              <Button colorScheme="green" leftIcon={<Check size={16} />} onClick={handleApproveBatch}>Aprobar Lote Completo</Button>
+              <Button colorScheme="red" variant="outline" leftIcon={<X size={16} />} onClick={handleRejectBatch} borderRadius="lg" transition="all 0.3s" _hover={{ shadow: 'lg' }}>Rechazar Lote</Button>
+              <Button colorScheme="green" leftIcon={<Check size={16} />} onClick={handleApproveBatch} borderRadius="lg" transition="all 0.3s" _hover={{ shadow: 'lg' }}>Aprobar Lote Completo</Button>
             </>
           )}
         </Flex>
@@ -533,23 +541,7 @@ export default function OperationLogs() {
             <option value="BONO">Bonos</option>
           </Select>
         </FormControl>
-        <FormControl w="150px">
-          <FormLabel fontSize="xs" color={mutedTextColor}>Estado</FormLabel>
-          <Select size="sm" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
-            <option value="ALL">Todos</option>
-            {tabIndex === 0 ? (
-              <>
-                <option value="PENDING_MANAGER">Pendientes</option>
-                <option value="RETURNED">Devueltos</option>
-              </>
-            ) : (
-              <>
-                <option value="APPROVED_MANAGER">Aprobados</option>
-                <option value="PROCESSED_PAYROLL">Procesados</option>
-              </>
-            )}
-          </Select>
-        </FormControl>
+
       </HStack>
 
       {selectedRowIds.length > 0 && isManagerOrAdmin && (
@@ -585,7 +577,7 @@ export default function OperationLogs() {
               <Th color={theadTextColor}>Tipo</Th>
               <Th color={theadTextColor}>Detalle (Horas/Monto)</Th>
               <Th color={theadTextColor}>Tarea</Th>
-              <Th color={theadTextColor}>Estado</Th>
+
               <Th color={theadTextColor}>Acciones</Th>
             </Tr>
           </Thead>
@@ -603,7 +595,12 @@ export default function OperationLogs() {
                     ) : null}
                   </Td>
                 )}
-                <Td>{log.date}</Td>
+                <Td>
+                  {log.date}
+                  <Text fontSize="xs" color="gray.500">
+                    {new Date(log.createdAt).toLocaleTimeString('es-GT', { hour: '2-digit', minute: '2-digit' })}
+                  </Text>
+                </Td>
                 <Td>{log.companyData ? log.companyData.nombre_comercial : 'S/E'}</Td>
                 <Td>{log.Employee ? [log.Employee.primer_nombre, log.Employee.segundo_nombre, log.Employee.otro_nombre, log.Employee.primer_apellido, log.Employee.segundo_apellido].filter(Boolean).join(' ') : 'Desconocido'}</Td>
                 <Td>{log.type === 'HORA_EXTRA' ? 'Hrs Extras' : 'Bono'}</Td>
@@ -614,7 +611,7 @@ export default function OperationLogs() {
                   }
                 </Td>
                 <Td maxW="200px" isTruncated>{log.taskDescription}</Td>
-                <Td>{getStatusBadge(log.status)}</Td>
+
                 <Td>
                   <HStack spacing={2}>
                     <Tooltip label="Ver Detalles" hasArrow>
@@ -890,11 +887,25 @@ export default function OperationLogs() {
           <ModalBody>
             {selectedLog && (
               <VStack spacing={4} align="stretch">
-                <Box>
-                  <Text fontSize="xs" color={mutedTextColor} textTransform="uppercase" fontWeight="bold">Empleado</Text>
-                  <Text fontSize="md">{selectedLog.Employee ? [selectedLog.Employee.primer_nombre, selectedLog.Employee.segundo_nombre, selectedLog.Employee.otro_nombre, selectedLog.Employee.primer_apellido, selectedLog.Employee.segundo_apellido].filter(Boolean).join(' ') : 'Desconocido'}</Text>
-                </Box>
                 <Grid templateColumns="repeat(2, 1fr)" gap={4}>
+                  <GridItem>
+                    <Text fontSize="xs" color={mutedTextColor} textTransform="uppercase" fontWeight="bold">Empleado</Text>
+                    <Text fontSize="md">
+                      {selectedLog.Employee ? [selectedLog.Employee.primer_nombre, selectedLog.Employee.segundo_nombre, selectedLog.Employee.otro_nombre, selectedLog.Employee.primer_apellido, selectedLog.Employee.segundo_apellido].filter(Boolean).join(' ') : 'Desconocido'}
+                    </Text>
+                  </GridItem>
+                  <GridItem>
+                    <Text fontSize="xs" color={mutedTextColor} textTransform="uppercase" fontWeight="bold">Área</Text>
+                    <Text fontSize="md">
+                      {selectedLog.Employee && areas?.find(a => String(a.id) === String(selectedLog.Employee.areaId))?.nombre || 'No asignada'}
+                    </Text>
+                  </GridItem>
+                  <GridItem>
+                    <Text fontSize="xs" color={mutedTextColor} textTransform="uppercase" fontWeight="bold">Empresa</Text>
+                    <Text fontSize="md">
+                      {selectedLog.companyData ? selectedLog.companyData.nombre_comercial : 'S/E'}
+                    </Text>
+                  </GridItem>
                   <GridItem>
                     <Text fontSize="xs" color={mutedTextColor} textTransform="uppercase" fontWeight="bold">Fecha</Text>
                     <Text fontSize="md">{selectedLog.date}</Text>
@@ -913,14 +924,22 @@ export default function OperationLogs() {
                     </GridItem>
                     <GridItem>
                       <Text fontSize="xs" color={mutedTextColor} textTransform="uppercase" fontWeight="bold">Tipo de Hora</Text>
-                      <Text fontSize="md">{selectedLog.hourType}</Text>
+                      <Text fontSize="md">
+                        {selectedLog.hourType === 'SIMPLE' ? 'Simple (1x)' : selectedLog.hourType === 'DOBLE' ? 'Doble (2x)' : selectedLog.hourType}
+                      </Text>
                     </GridItem>
                   </Grid>
                 ) : (
-                  <Box>
-                    <Text fontSize="xs" color={mutedTextColor} textTransform="uppercase" fontWeight="bold">Monto del Bono</Text>
-                    <Text fontSize="md">Q{selectedLog.bonusAmount}</Text>
-                  </Box>
+                  <Grid templateColumns="repeat(2, 1fr)" gap={4}>
+                    <GridItem>
+                      <Text fontSize="xs" color={mutedTextColor} textTransform="uppercase" fontWeight="bold">Cantidad de Bonos</Text>
+                      <Text fontSize="md">{selectedLog.bonusQty || 1}</Text>
+                    </GridItem>
+                    <GridItem>
+                      <Text fontSize="xs" color={mutedTextColor} textTransform="uppercase" fontWeight="bold">Monto Unitario</Text>
+                      <Text fontSize="md">Q{parseFloat(selectedLog.bonusAmount).toFixed(2)}</Text>
+                    </GridItem>
+                  </Grid>
                 )}
 
                 <Box>
@@ -939,10 +958,7 @@ export default function OperationLogs() {
                   </Box>
                 )}
 
-                <Box pt={2}>
-                  <Text fontSize="xs" color={mutedTextColor} textTransform="uppercase" fontWeight="bold" mb={1}>Estado Actual</Text>
-                  {getStatusBadge(selectedLog.status)}
-                </Box>
+
               </VStack>
             )}
           </ModalBody>

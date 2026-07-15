@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useContext } from 'react';
-import { Box, Button, Flex, Heading, Text, Table, Thead, Tbody, Tr, Th, Td, Badge, IconButton, useColorModeValue, useToast, Modal, ModalOverlay, ModalContent, ModalHeader, ModalBody, ModalFooter, ModalCloseButton, Input, FormControl, FormLabel, useDisclosure } from '@chakra-ui/react';
+import { Box, Button, Flex, Heading, Text, Table, Thead, Tbody, Tr, Th, Td, Badge, IconButton, useColorModeValue, Modal, ModalOverlay, ModalContent, ModalHeader, ModalBody, ModalFooter, ModalCloseButton, Input, FormControl, FormLabel, useDisclosure } from '@chakra-ui/react';
 import { Plus, Eye, Trash2, CheckCircle2, XCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { AuthContext } from '../context/AuthContext';
+import { toast } from 'sonner';
 
 export default function OperationBatches() {
   const { user } = useContext(AuthContext);
   const navigate = useNavigate();
-  const toast = useToast();
   const { isOpen, onOpen, onClose } = useDisclosure();
   const [batches, setBatches] = useState([]);
   const [newBatchTitle, setNewBatchTitle] = useState('');
@@ -39,7 +39,7 @@ export default function OperationBatches() {
 
   const handleCreateBatch = async () => {
     if (!newBatchTitle.trim()) {
-      toast({ title: 'Ingrese un título', status: 'warning', duration: 3000 });
+      toast.warning('Ingrese un título');
       return;
     }
     setLoading(true);
@@ -55,14 +55,14 @@ export default function OperationBatches() {
       });
       if (res.ok) {
         const batch = await res.json();
-        toast({ title: 'Lote creado', status: 'success', duration: 3000 });
+        toast.success('Lote creado');
         navigate(`/operations/${batch.id}`);
       } else {
-        toast({ title: 'Error al crear lote', status: 'error', duration: 3000 });
+        toast.error('Error al crear lote');
       }
     } catch (err) {
       console.error(err);
-      toast({ title: 'Error de red', status: 'error', duration: 3000 });
+      toast.error('Error de red');
     }
     setLoading(false);
     onClose();
@@ -88,7 +88,14 @@ export default function OperationBatches() {
           <Text color="gray.500">Agrupación de bonos y horas extras</Text>
         </Box>
         {canCreateBatch && (
-          <Button leftIcon={<Plus size={20} />} colorScheme="blue" onClick={onOpen}>
+          <Button 
+            colorScheme="brand" 
+            leftIcon={<Plus size={16} />} 
+            onClick={onOpen}
+            borderRadius="lg" 
+            transition="all 0.3s"
+            _hover={{ shadow: 'lg' }}
+          >
             Nuevo Lote
           </Button>
         )}
@@ -115,7 +122,7 @@ export default function OperationBatches() {
               ) : (
                 batches.map(batch => (
                   <Tr key={batch.id} _hover={{ bg: hoverBg }}>
-                    <Td>{new Date(batch.createdAt).toLocaleDateString()}</Td>
+                    <Td>{new Date(batch.createdAt).toLocaleString('es-GT', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</Td>
                     <Td fontWeight="bold">{batch.title}</Td>
                     <Td>{batch.user?.name || 'Desconocido'}</Td>
                     <Td>{batch.logs?.length || 0}</Td>
