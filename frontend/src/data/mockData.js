@@ -5408,6 +5408,8 @@ export const EMPLOYEES = [
 /** Alineado con payrollCalculator.service.js (fuente de verdad en backend) */
 export const CUOTA_PATRONAL_RATE = 0.1067;
 export const CUOTA_LABORAL_RATE = 0.0483;
+/** IRTRA 1% + INTECAP 1% — el Excel los incluye en la cuota patronal (12.67%) */
+export const IRTRA_INTECAP_RATE = 0.02;
 export const IVA_RATE = 0.12;
 
 // Cálculo de ISR Mensual (Régimen de Asalariados - Guatemala)

@@ -5,7 +5,7 @@ import usePagination from '../hooks/usePagination';
 import Pagination from '../components/Pagination';
 import { AuthContext } from '../context/AuthContext';
 import { History, Calendar, Trash2, Eye, Download, FileText, CheckCircle2, ArrowLeft, Building2, X, Search, ChevronDown, LayoutGrid, RotateCcw } from 'lucide-react';
-import { formatQ, CUOTA_LABORAL_RATE, CUOTA_PATRONAL_RATE } from '../data/mockData';
+import { formatQ, CUOTA_LABORAL_RATE, CUOTA_PATRONAL_RATE, IRTRA_INTECAP_RATE } from '../data/mockData';
 import { getNetPayable } from '../utils/payrollPeriod';
 import { exportPayrollReportExcel } from '../utils/payrollReports';
 import { matchesDepartmentFilter, normalizeMultiFilter, resolveEmployeeDepartment } from '../utils/orgFilters';
@@ -551,7 +551,7 @@ function PayrollHistoryDetail({ group, onBack }) {
         // Enforce backend calculated properties
         const gross = e.calculated?.gross || 0;
         const ded = e.calculated?.ded || 0;
-        const patronal = e.calculated?.patronal || 0;
+        const patronal = (e.calculated?.patronal || 0) + (e.calculated?.irtraIntecap || 0);
         
         grossTotal += gross;
         dedTotal += ded;
@@ -610,7 +610,9 @@ function PayrollHistoryDetail({ group, onBack }) {
     filteredEmps.forEach(e => {
       fGrossTotal += e.calculated.gross;
       fDedTotal += e.calculated.ded;
-      fPatronalTotal += e.calculated.baseSalary * CUOTA_PATRONAL_RATE;
+      fPatronalTotal += e.calculated.patronal != null
+        ? (e.calculated.patronal + (e.calculated.irtraIntecap || 0))
+        : e.calculated.baseSalary * (CUOTA_PATRONAL_RATE + IRTRA_INTECAP_RATE);
     });
     
     return { data: filteredEmps, totals: { grossTotal: fGrossTotal, dedTotal: fDedTotal, patronalTotal: fPatronalTotal, netTotal: fGrossTotal - fDedTotal } };

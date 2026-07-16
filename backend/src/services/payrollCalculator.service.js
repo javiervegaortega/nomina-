@@ -3,6 +3,8 @@ const Decimal = require('decimal.js');
 /** Tasas oficiales IGSS Guatemala (fuente única) */
 const CUOTA_PATRONAL_RATE = new Decimal('0.1067');
 const CUOTA_LABORAL_RATE = new Decimal('0.0483');
+/** IRTRA 1% + INTECAP 1% — el Excel de nómina los incluye en la cuota patronal (12.67%) */
+const IRTRA_INTECAP_RATE = new Decimal('0.02');
 const IVA_RATE = new Decimal('0.12');
 
 /**
@@ -18,7 +20,8 @@ const getCompanyCost = (calculated) => {
   if (!calculated) return 0;
   const gross = new Decimal(calculated.gross || 0);
   const patronal = new Decimal(calculated.patronal || 0);
-  return gross.plus(patronal).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber();
+  const irtraIntecap = new Decimal(calculated.irtraIntecap || 0);
+  return gross.plus(patronal).plus(irtraIntecap).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber();
 };
 
 /**
@@ -106,16 +109,28 @@ const calculateEmployeePayroll = (e, periodType) => {
 
   const gross = baseSalary.plus(bonusLey).plus(bonusDec).plus(extrasBonos).plus(extrasTotal).plus(bonusesSum);
 
+  // Base afecta al IGSS: todo lo devengado excepto bonificación decreto/incentivo
+  // (igual que el Excel: sueldo + hrs extra + comisiones + otros)
+  const igssBase = baseSalary.plus(extrasTotal).plus(extrasBonos).plus(bonusesSum);
+
   const exempt = isIgssExempt(e);
   const igssValue = exempt
     ? new Decimal(0)
-    : baseSalary.times(CUOTA_LABORAL_RATE).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+    : igssBase.times(CUOTA_LABORAL_RATE).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
   const patronal = exempt
     ? new Decimal(0)
-    : baseSalary.times(CUOTA_PATRONAL_RATE).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+    : igssBase.times(CUOTA_PATRONAL_RATE).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+  const irtraIntecap = exempt
+    ? new Decimal(0)
+    : igssBase.times(IRTRA_INTECAP_RATE).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
 
+  // ISR: manda el valor del maestro del empleado (retención mensual definida por
+  // contabilidad, como en el Excel). La fórmula 5%-7% es solo fallback/sugerencia.
   const { calculateMonthlyISR } = require('./isr.service');
-  const monthlyIsr = calculateMonthlyISR(sueldoOrd.toNumber(), bonDec.toNumber());
+  const hasMasterIsr = e.isr !== undefined && e.isr !== null && e.isr !== '';
+  const monthlyIsr = hasMasterIsr
+    ? (Number(e.isr) || 0)
+    : calculateMonthlyISR(sueldoOrd.toNumber(), bonDec.toNumber());
   const isrValue = new Decimal(monthlyIsr)
     .times(baseFactor)
     .toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
@@ -124,10 +139,10 @@ const calculateEmployeePayroll = (e, periodType) => {
   currentDeductions.igss = igssValue.toNumber();
   currentDeductions.isr = isrValue.toNumber();
 
-  // Backfill Bantrab/préstamo desde maestro (borradores antiguos sin cablear)
-  if (new Decimal(e.bantrab || 0).gt(0) && !(new Decimal(currentDeductions.bancos || 0).gt(0))) {
-    currentDeductions.bancos = new Decimal(e.bantrab || 0)
-      .plus(e.bancos || 0)
+  // Backfill Bantrab/bancos/préstamo/otros desde maestro (borradores antiguos sin cablear)
+  const masterBancos = new Decimal(e.bantrab || 0).plus(e.bancos || 0);
+  if (masterBancos.gt(0) && !(new Decimal(currentDeductions.bancos || 0).gt(0))) {
+    currentDeductions.bancos = masterBancos
       .times(baseFactor)
       .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
       .toNumber();
@@ -135,6 +150,13 @@ const calculateEmployeePayroll = (e, periodType) => {
   if (!Object.prototype.hasOwnProperty.call(currentDeductions, 'prestamo_empresa')
       && new Decimal(e.prestamo_empresa || 0).gt(0)) {
     currentDeductions.prestamo_empresa = new Decimal(e.prestamo_empresa)
+      .times(baseFactor)
+      .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
+      .toNumber();
+  }
+  const masterOtros = new Decimal(e.otros_egresos || 0).plus(e.otro_descuentos || 0);
+  if (masterOtros.gt(0) && !(new Decimal(currentDeductions.otros_egresos || 0).gt(0))) {
+    currentDeductions.otros_egresos = masterOtros
       .times(baseFactor)
       .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
       .toNumber();
@@ -162,6 +184,7 @@ const calculateEmployeePayroll = (e, periodType) => {
   const netPayable = net.minus(anticipo1ra);
   const grossRounded = gross.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber();
   const patronalNum = patronal.toNumber();
+  const irtraIntecapNum = irtraIntecap.toNumber();
 
   const calculated = {
     proratedDeductions,
@@ -177,7 +200,8 @@ const calculateEmployeePayroll = (e, periodType) => {
     anticipo1ra: anticipo1ra.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(),
     netPayable: netPayable.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(),
     patronal: patronalNum,
-    companyCost: getCompanyCost({ gross: grossRounded, patronal: patronalNum }),
+    irtraIntecap: irtraIntecapNum,
+    companyCost: getCompanyCost({ gross: grossRounded, patronal: patronalNum, irtraIntecap: irtraIntecapNum }),
     igssExempt: exempt,
     hourlyRate: sueldoOrd.dividedBy(30).dividedBy(8).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(),
     vacacionesVal: vacacionesVal.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(),
@@ -209,5 +233,6 @@ module.exports = {
   isDateInQuincena,
   CUOTA_PATRONAL_RATE,
   CUOTA_LABORAL_RATE,
+  IRTRA_INTECAP_RATE,
   IVA_RATE
 };

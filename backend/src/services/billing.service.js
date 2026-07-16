@@ -71,6 +71,7 @@ const getEmployeePayrollSnapshot = (employee, periodType) => {
   const bonusesSum = round2(calc.bonusesSum);
   const gross = round2(calc.gross);
   const patronal = round2(calc.patronal);
+  const irtraIntecap = round2(calc.irtraIntecap);
   const companyCost = round2(getCompanyCost(calc));
   const igssLaboral = round2(proDed.igss ?? employee.igss_laboral);
   const isr = round2(proDed.isr ?? employee.isr);
@@ -100,6 +101,7 @@ const getEmployeePayrollSnapshot = (employee, periodType) => {
     totalDeductions,
     net,
     patronal,
+    irtraIntecap,
     companyCost
   };
 };
@@ -221,6 +223,7 @@ class BillingService {
           totalDescuentos: payrollSnap.totalDeductions,
           liquido: payrollSnap.net,
           igssPatronal: payrollSnap.patronal,
+          irtraIntecap: payrollSnap.irtraIntecap,
           employeeCost: totalCost,
           // Parte asignada a la empresa destino según %
           asgSueldo: splitByPct(payrollSnap.baseSalary, pct),

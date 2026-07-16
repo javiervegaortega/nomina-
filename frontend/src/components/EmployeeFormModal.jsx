@@ -36,11 +36,29 @@ const parseEmployeeFormData = (initialData) => {
   return data;
 };
 
+/**
+ * Sincroniza IGSS automático. ISR solo se rellena con la fórmula si está vacío
+ * (no pisa un valor manual/importado al abrir o guardar el formulario).
+ */
 const withAutoPayrollFields = (data) => {
   const next = parseEmployeeFormData(data);
   const jubilado = !!next.jubilacion;
   next.igss_laboral = Number(calcIgssLaboralAmount(next.sueldo_ordinario, jubilado));
   next.igss_patronal = Number(calcIgssPatronalAmount(next.sueldo_ordinario, jubilado));
+  const hasManualIsr = next.isr !== undefined && next.isr !== null && next.isr !== '';
+  if (!hasManualIsr) {
+    next.isr = Number(calcAutoIsrAmount(next.sueldo_ordinario, next.bon_dec_37_2001));
+  }
+  return next;
+};
+
+/**
+ * Igual que withAutoPayrollFields pero además recalcula el ISR con la fórmula.
+ * Se usa cuando cambian sueldo / bono decreto / jubilación, para que el ISR
+ * se actualice automático como el IGSS (sigue siendo editable después).
+ */
+const withRecalculatedIsr = (data) => {
+  const next = withAutoPayrollFields(data);
   next.isr = Number(calcAutoIsrAmount(next.sueldo_ordinario, next.bon_dec_37_2001));
   return next;
 };
@@ -590,7 +608,7 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
                   <FormControl display="flex" alignItems="center" h="100%">
                     <Checkbox isChecked={form.jubilacion} onChange={e => {
                       const checked = e.target.checked;
-                      setForm(prev => withAutoPayrollFields({ ...prev, jubilacion: checked }));
+                      setForm(prev => withRecalculatedIsr({ ...prev, jubilacion: checked }));
                     }}>
                       <Text fontSize="sm" fontWeight={600} ml={2}>Jubilación</Text>
                     </Checkbox>
@@ -607,10 +625,10 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
                   <Box>
                     <SectionTitle title="Devengados" />
                     <Field label="Sueldo Ordinario (Obligatorio)" type="number" val={form.sueldo_ordinario} onChange={v => {
-                      setForm(prev => withAutoPayrollFields({ ...prev, sueldo_ordinario: v }));
+                      setForm(prev => withRecalculatedIsr({ ...prev, sueldo_ordinario: v }));
                     }} required />
                     <Box mt={4}><Field label="Bono Decreto / Incentivo (Oblig.)" type="number" val={form.bon_dec_37_2001 ?? 250} onChange={v => {
-                      setForm(prev => withAutoPayrollFields({ ...prev, bon_dec_37_2001: v }));
+                      setForm(prev => withRecalculatedIsr({ ...prev, bon_dec_37_2001: v }));
                     }} required /></Box>
                     <Box mt={4}><Field label="Otros Ingresos" type="number" val={form.otro_ingresos ?? 0} onChange={v => handleChange('otro_ingresos', v)} /></Box>
                     <Box mt={4}><Field label="Vacaciones" type="number" val={form.vacaciones ?? 0} onChange={v => handleChange('vacaciones', v)} /></Box>
@@ -621,7 +639,12 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
                   <Box>
                     <SectionTitle title="Descuentos" />
                     <Field label="IGSS laboral (4.83% automático)" type="number" readOnly val={autoIgssLaboral} />
-                    <Box mt={4}><Field label="ISR (Automático 5%-7%)" type="number" readOnly val={autoIsr} /></Box>
+                    <Box mt={4}>
+                      <Field label="ISR mensual (automático 5%-7%, editable)" type="number" val={form.isr ?? autoIsr} onChange={v => handleChange('isr', v)} />
+                      <Text fontSize="11px" color="gray.500" mt={1}>
+                        Se recalcula automático al cambiar sueldo/bono. Fórmula: Q {autoIsr}. Puede corregirse a mano.
+                      </Text>
+                    </Box>
                     <Box mt={4}><Field label="Anticipo Quincenal" type="number" val={form.anticipo_quincenal ?? 0} onChange={v => handleChange('anticipo_quincenal', v)} /></Box>
                     <Box mt={4}><Field label="Bantrab" type="number" val={form.bantrab ?? 0} onChange={v => handleChange('bantrab', v)} /></Box>
                     <Box mt={4}><Field label="Boleto de ornato" type="number" val={form.boleto_de_ornato ?? 0} onChange={v => handleChange('boleto_de_ornato', v)} /></Box>

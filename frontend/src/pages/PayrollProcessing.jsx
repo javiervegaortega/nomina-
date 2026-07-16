@@ -7,7 +7,7 @@ import {
 import { AppContext } from '../App';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
-import { CUOTA_PATRONAL_RATE, CUOTA_LABORAL_RATE, formatQ, calculateMonthlyISR } from '../data/mockData';
+import { CUOTA_PATRONAL_RATE, CUOTA_LABORAL_RATE, IRTRA_INTECAP_RATE, formatQ, calculateMonthlyISR } from '../data/mockData';
 import { getNetPayable } from '../utils/payrollPeriod';
 import EmployeeIncidences from '../components/EmployeeIncidences';
 import EmployeeDeductions from '../components/EmployeeDeductions';
@@ -31,6 +31,25 @@ const TABS = [
   { id: 'distribution', label: 'Distribución de Costos', icon: Building2 },
   { id: 'observations', label: 'Observaciones', icon: Edit3 },
 ];
+
+/** ISR mensual: manda la retención del maestro (como en el Excel); fórmula solo de fallback. */
+const monthlyIsrOf = (emp) =>
+  (emp.isr !== undefined && emp.isr !== null && emp.isr !== '')
+    ? (Number(emp.isr) || 0)
+    : calculateMonthlyISR(Number(emp.sueldo_ordinario) || 0, Number(emp.bon_dec_37_2001) || 0);
+
+/** Base afecta al IGSS del período: sueldo prorrateado + extras (sin bono decreto/incentivo). */
+const igssBaseOf = (emp, baseSalary) => {
+  const ex = emp.extras || {};
+  return baseSalary
+    + (Number(ex.simplesVal) || 0)
+    + (Number(ex.doblesVal) || 0)
+    + (Number(ex.comisiones) || 0)
+    + (Number(ex.otrosIngresos) || 0)
+    + (Number(ex.vacacionesVal) || 0)
+    + (Number(ex.ventasEconomicas) || 0)
+    + (Number(ex.bonos) || 0);
+};
 
 export default function PayrollProcessing() {
   const [selectedDraftId, setSelectedDraftId] = useState(null);
@@ -496,8 +515,8 @@ function PayrollEditor({ draftId, onBack }) {
       if (section === 'root' && field === 'days') {
         updated.deductions = {
           ...updated.deductions,
-          igss: igssExempt ? 0 : Number((baseSalary * CUOTA_LABORAL_RATE).toFixed(2)) || 0,
-          isr: Number((calculateMonthlyISR(sueldoOrd, bonDec) * baseFactor).toFixed(2)) || 0
+          igss: igssExempt ? 0 : Number((igssBaseOf(updated, baseSalary) * CUOTA_LABORAL_RATE).toFixed(2)) || 0,
+          isr: Number((monthlyIsrOf(e) * baseFactor).toFixed(2)) || 0
         };
       }
 
@@ -520,13 +539,12 @@ function PayrollEditor({ draftId, onBack }) {
         // Recalculate igss / isr based on new days (0 si jubilado)
         const baseFactor = updated.days / 30;
         const sueldoOrd = Number(emp.sueldo_ordinario) || 0;
-        const bonDec = Number(emp.bon_dec_37_2001) || 0;
         const baseSalary = sueldoOrd * baseFactor;
         const igssExempt = !!(emp.jubilacion === true || emp.jubilacion === 1);
         updated.deductions = {
           ...updated.deductions,
-          igss: igssExempt ? 0 : Number((baseSalary * CUOTA_LABORAL_RATE).toFixed(2)) || 0,
-          isr: Number((calculateMonthlyISR(sueldoOrd, bonDec) * baseFactor).toFixed(2)) || 0
+          igss: igssExempt ? 0 : Number((igssBaseOf(updated, baseSalary) * CUOTA_LABORAL_RATE).toFixed(2)) || 0,
+          isr: Number((monthlyIsrOf(emp) * baseFactor).toFixed(2)) || 0
         };
         
         return updated;
@@ -549,13 +567,12 @@ function PayrollEditor({ draftId, onBack }) {
         // Recalculate igss / isr based on new days (0 si jubilado)
         const baseFactor = updated.days / 30;
         const sueldoOrd = Number(emp.sueldo_ordinario) || 0;
-        const bonDec = Number(emp.bon_dec_37_2001) || 0;
         const baseSalary = sueldoOrd * baseFactor;
         const igssExempt = !!(emp.jubilacion === true || emp.jubilacion === 1);
         updated.deductions = {
           ...updated.deductions,
-          igss: igssExempt ? 0 : Number((baseSalary * CUOTA_LABORAL_RATE).toFixed(2)) || 0,
-          isr: Number((calculateMonthlyISR(sueldoOrd, bonDec) * baseFactor).toFixed(2)) || 0
+          igss: igssExempt ? 0 : Number((igssBaseOf(updated, baseSalary) * CUOTA_LABORAL_RATE).toFixed(2)) || 0,
+          isr: Number((monthlyIsrOf(emp) * baseFactor).toFixed(2)) || 0
         };
 
         return updated;
@@ -684,7 +701,7 @@ function PayrollEditor({ draftId, onBack }) {
       if (e.calculated) {
         grossTotal += e.calculated.gross || 0;
         dedTotal += e.calculated.ded || 0;
-        patronalTotal += e.calculated.patronal || 0;
+        patronalTotal += (e.calculated.patronal || 0) + (e.calculated.irtraIntecap || 0);
       } else {
         const baseFactor = (e.days || 30) / 30;
         const sueldoOrd = Number(e.sueldo_ordinario) || 0;
@@ -1847,12 +1864,14 @@ function DistributionTab({ data }) {
       if (pct > 0) {
         const baseFactor = (e.days || 30) / 30;
         const sueldoOrd = Number(e.sueldo_ordinario) || 0;
-        const bonInc = Number(e.bon_incentivo) || 0;
+        // Bono decreto 37-2001 + bono incentivo (el Excel los reparte juntos)
+        const bonInc = (Number(e.bon_dec_37_2001) || 0) + (Number(e.bon_incentivo) || 0);
         
         const eSalary = (sueldoOrd * baseFactor) * pct;
         const eBonus = (bonInc * baseFactor) * pct;
         const eExtras = ((e.extras?.simplesVal || 0) + (e.extras?.doblesVal || 0) + (e.extras?.comisiones || 0) + (e.extras?.otrosIngresos || 0)) * pct;
-        const ePatronal = (sueldoOrd * baseFactor) * CUOTA_PATRONAL_RATE * pct;
+        // Cuota patronal total como en el Excel: IGSS 10.67% + IRTRA/INTECAP 2% sobre base afecta
+        const ePatronal = ((sueldoOrd * baseFactor) * pct + eExtras) * (CUOTA_PATRONAL_RATE + IRTRA_INTECAP_RATE);
         
         salary += eSalary;
         bonus += eBonus;

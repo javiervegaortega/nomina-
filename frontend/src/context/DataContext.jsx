@@ -885,7 +885,6 @@ export function DataProvider({ children }) {
         const baseSalary = Number(e.sueldo_ordinario) || 0;
         const baseFactor = days / 30;
         const igssExempt = !!(e.jubilacion === true || e.jubilacion === 1);
-        const igssVal = igssExempt ? 0 : (baseSalary * baseFactor) * CUOTA_LABORAL_RATE;
 
         // Calculate commissions
         const empCommissions = currentCommissions.filter(c => c.employee_id === e.id);
@@ -939,14 +938,24 @@ export function DataProvider({ children }) {
         const vacacionesPeriodo = (Number(e.vacaciones) || 0) * baseFactor;
         const ventasPeriodo = (Number(e.ventas_economicas) || 0) * baseFactor;
 
+        // Base afecta al IGSS: sueldo + hrs extra + bonos/comisiones + otros (sin bono decreto)
+        const otrosIngresosVal = Number(e.otro_ingresos) || 0;
+        const igssBase = (baseSalary * baseFactor) + valSimples + valDobles + totalBonos
+          + otrosIngresosVal + vacacionesPeriodo + ventasPeriodo;
+        const igssVal = igssExempt ? 0 : igssBase * CUOTA_LABORAL_RATE;
+
+        // ISR: manda la retención mensual del maestro (como en el Excel); fórmula solo de fallback
+        const monthlyIsr = (e.isr !== undefined && e.isr !== null && e.isr !== '')
+          ? (Number(e.isr) || 0)
+          : calculateMonthlyISR(baseSalary, Number(e.bon_dec_37_2001) || 0);
+
         return {
           ...e,
           days,
           company: e.company || (companies.find(c => c.id === e.companyId)?.nombre_comercial || ''),
           deductions: {
             igss: igssVal,
-            // Semilla; el motor recalcula ISR del período desde sueldo + bono decreto
-            isr: calculateMonthlyISR(baseSalary, Number(e.bon_dec_37_2001) || 0) * baseFactor,
+            isr: monthlyIsr * baseFactor,
             cafe: 0,
             cell: 0,
             uniform: 0,
@@ -971,7 +980,7 @@ export function DataProvider({ children }) {
             doblesQty: doblesQtyTotal,
             doblesVal: valDobles,
             comisiones: 0,
-            otrosIngresos: Number(e.otro_ingresos) || 0,
+            otrosIngresos: otrosIngresosVal,
             vacacionesVal: vacacionesPeriodo,
             ventasEconomicas: ventasPeriodo,
           },
