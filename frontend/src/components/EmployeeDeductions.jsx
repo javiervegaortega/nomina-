@@ -14,7 +14,8 @@ const DEDUCTION_TYPES = [
   { key: 'shoes', label: 'Calzado' },
   { key: 'equipo', label: 'Equipo' },
   { key: 'product', label: 'Producto' },
-  { key: 'bancos', label: 'Bancos' },
+  { key: 'bancos', label: 'Bantrab' },
+  { key: 'prestamo_empresa', label: 'Préstamo Empresa' },
   { key: 'otros', label: 'Otros...' }
 ];
 

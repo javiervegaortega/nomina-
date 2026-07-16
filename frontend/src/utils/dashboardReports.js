@@ -153,8 +153,9 @@ export const buildCompanyDistribution = (employees, companies, usePayrollGross =
 export const buildDeptDistribution = (employees, deptNameById, usePayrollGross = false) => {
   const groups = {};
   employees.forEach(e => {
-    const deptKey = e.departamento_laboral || 'Sin Depto';
-    const label = deptNameById[String(deptKey)] || deptKey;
+    // departmentId es el campo actual; departamento_laboral queda como fallback de datos legacy
+    const deptKey = e.departmentId || e.departamento_laboral || 'Sin Depto';
+    const label = deptNameById[String(deptKey)] || (deptKey === 'Sin Depto' ? deptKey : String(deptKey));
     if (!groups[label]) groups[label] = { count: 0, cost: 0 };
     groups[label].count++;
     groups[label].cost += usePayrollGross ? computeEmployeePayroll(e).gross : getBasePay(e);

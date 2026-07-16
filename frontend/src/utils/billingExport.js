@@ -229,13 +229,50 @@ const buildMatrizSheet = (wb, { payrollTitle, matrix, companyNames }) => {
 };
 
 const buildDetalleSheet = (wb, { payrollTitle, details }) => {
-  const cols = 7;
-  const ws = wb.addWorksheet('Detalle', { views: [{ state: 'frozen', ySplit: 4 }] });
-  setCols(ws, [10, 36, 26, 26, 12, 14, 14]);
+  const headers = [
+    'ID',
+    'Empleado',
+    'Empresa Pagadora',
+    'Empresa Destino',
+    '% Destino',
+    'Días',
+    'Período',
+    'Sueldo Ordinario',
+    'Bono Decreto',
+    'Bono Incentivo',
+    'Bonos Extras',
+    'H. Extras y Otros',
+    'Bruto Período',
+    'IGSS Laboral',
+    'ISR',
+    'Otros Descuentos',
+    'Total Descuentos',
+    'Líquido',
+    'IGSS Patronal',
+    'Costo Empleado',
+    'Asg. Sueldo',
+    'Asg. Bono Decreto',
+    'Asg. Bono Incentivo',
+    'Asg. Bonos Extras',
+    'Asg. H. Extras',
+    'Asg. Bruto',
+    'Asg. IGSS Laboral',
+    'Asg. ISR',
+    'Asg. IGSS Patronal',
+    'Monto Asignado (Costo)'
+  ];
+  const cols = headers.length;
+  const ws = wb.addWorksheet('Detalle', { views: [{ state: 'frozen', ySplit: 4, xSplit: 2 }] });
+  setCols(ws, [
+    8, 28, 22, 22, 10, 8, 10,
+    13, 12, 12, 12, 13, 12,
+    12, 10, 13, 13, 11, 12, 13,
+    11, 13, 13, 12, 11, 11, 12, 10, 12, 16
+  ]);
 
-  const title = ws.addRow(['Detalle por Empleado — Distribución de Costos']);
+  const title = ws.addRow(['Detalle por Empleado — Distribución de Costos (desglose de nómina)']);
   styleTitleRow(title, cols);
-  ws.mergeCells(1, 1, 1, cols);
+  ws.mergeCells(1, 1, 1, Math.min(cols, 10));
 
   const meta = ws.addRow([
     `Nómina: ${payrollTitle || '—'}`,
@@ -243,63 +280,88 @@ const buildDetalleSheet = (wb, { payrollTitle, details }) => {
     '',
     `Registros: ${(details || []).length}`,
     '',
-    `Generado: ${new Date().toLocaleString('es-GT')}`,
-    ''
+    '',
+    `Generado: ${new Date().toLocaleString('es-GT')}`
   ]);
   styleMetaRow(meta, cols);
   ws.mergeCells(2, 1, 2, 3);
   ws.mergeCells(2, 4, 2, 5);
-  ws.mergeCells(2, 6, 2, 7);
+  ws.mergeCells(2, 7, 2, 10);
 
   ws.addRow([]);
 
-  const header = ws.addRow([
-    'ID',
-    'Empleado',
-    'Empresa Pagadora',
-    'Empresa Destino',
-    '% Destino',
-    'Costo Empleado',
-    'Monto Asignado'
-  ]);
+  const header = ws.addRow(headers);
   styleHeaderRow(header, cols);
 
+  const moneyCols = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30];
   let sumAmount = 0;
+
   (details || []).forEach((d, idx) => {
     const pct = Number(d.percentage) || 0;
     const amount = Number(d.baseAmount) || 0;
     const employeeCost = Number(d.employeeCost ?? d.totalCost) || (pct > 0 ? amount / (pct / 100) : 0);
+    const periodLabel = d.periodType === '1ra' ? '1ra Quincena'
+      : d.periodType === '2da' ? '2da Quincena'
+      : d.periodType === 'mensual' ? 'Mensual'
+      : (d.periodType || '—');
+
     const row = ws.addRow([
       d.employeeId ?? '',
       d.employeeName || '',
       d.fromCompany || '',
       d.toCompany || '',
       pct,
+      d.days != null ? Number(d.days) : '',
+      periodLabel,
+      Number(d.sueldoOrdinario) || 0,
+      Number(d.bonoDecreto) || 0,
+      Number(d.bonoIncentivo) || 0,
+      Number(d.bonosExtras) || 0,
+      Number(d.horasExtrasOtros) || 0,
+      Number(d.bruto) || 0,
+      Number(d.igssLaboral) || 0,
+      Number(d.isr) || 0,
+      Number(d.otrosDescuentos) || 0,
+      Number(d.totalDescuentos) || 0,
+      Number(d.liquido) || 0,
+      Number(d.igssPatronal) || 0,
       Math.round(employeeCost * 100) / 100,
+      Number(d.asgSueldo) || 0,
+      Number(d.asgBonoDecreto) || 0,
+      Number(d.asgBonoIncentivo) || 0,
+      Number(d.asgBonosExtras) || 0,
+      Number(d.asgHorasExtrasOtros) || 0,
+      Number(d.asgBruto) || 0,
+      Number(d.asgIgssLaboral) || 0,
+      Number(d.asgIsr) || 0,
+      Number(d.asgIgssPatronal) || 0,
       amount
     ]);
     styleDataRow(row, cols, idx % 2 === 1);
     applyPct(row.getCell(5));
-    applyMoney(row.getCell(6));
-    applyMoney(row.getCell(7));
+    moneyCols.forEach((c) => applyMoney(row.getCell(c)));
+    row.getCell(30).font = { bold: true, size: 10, name: 'Calibri', color: { argb: '196F3D' } };
     sumAmount += amount;
   });
 
   if ((details || []).length === 0) {
     const empty = ws.addRow([
-      'Sin detalle por empleado. Si exportó desde historial, regenere la vista previa o confirme de nuevo la facturación.'
+      'Sin detalle por empleado. Regenere la vista previa o confirme de nuevo la facturación para obtener el desglose completo.'
     ]);
     styleDataRow(empty, cols, false);
     ws.mergeCells(empty.number, 1, empty.number, cols);
   } else {
-    const total = ws.addRow(['', 'TOTALES', '', '', '', '', sumAmount]);
+    const totalValues = Array(cols).fill('');
+    totalValues[1] = 'TOTALES';
+    totalValues[29] = sumAmount;
+    const total = ws.addRow(totalValues);
     styleDataRow(total, cols, false);
     for (let c = 1; c <= cols; c += 1) {
       const cell = total.getCell(c);
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.totalBg } };
       cell.font = { bold: true, size: 10, name: 'Calibri' };
     }
-    applyMoney(total.getCell(7));
+    applyMoney(total.getCell(30));
   }
 
   return ws;

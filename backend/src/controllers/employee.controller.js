@@ -1,5 +1,28 @@
 const { Op } = require('sequelize');
 const { Employee, EmployeeRecord, EmployeeIncidence, Department } = require('../models');
+const { calculateMonthlyISR } = require('../services/isr.service');
+
+const CUOTA_LABORAL = 0.0483;
+const CUOTA_PATRONAL = 0.1067;
+
+/** Sincroniza ISR e IGSS automáticos desde sueldo / bono decreto / jubilación. */
+const applyAutoPayrollFields = (body) => {
+  if (!body || typeof body !== 'object') return body;
+  const next = { ...body };
+  const hasSueldo = next.sueldo_ordinario !== undefined && next.sueldo_ordinario !== null;
+  const hasBono = next.bon_dec_37_2001 !== undefined && next.bon_dec_37_2001 !== null;
+  const hasJub = next.jubilacion !== undefined && next.jubilacion !== null;
+  if (!hasSueldo && !hasBono && !hasJub) return next;
+
+  const base = Number(next.sueldo_ordinario) || 0;
+  const bonus = Number(next.bon_dec_37_2001) || 0;
+  const jubilado = !!(next.jubilacion === true || next.jubilacion === 1);
+
+  next.isr = calculateMonthlyISR(base, bonus);
+  next.igss_laboral = jubilado ? 0 : Number((base * CUOTA_LABORAL).toFixed(2));
+  next.igss_patronal = jubilado ? 0 : Number((base * CUOTA_PATRONAL).toFixed(2));
+  return next;
+};
 
 const validateDist = (dist) => {
   if (dist === undefined || dist === null) return null;
@@ -48,7 +71,8 @@ const createEmployee = async (req, res) => {
   try {
     const distError = validateDist(req.body.dist);
     if (distError) return res.status(400).json({ error: distError });
-    const newEmployee = await Employee.create(req.body);
+    const payload = applyAutoPayrollFields(req.body);
+    const newEmployee = await Employee.create(payload);
     res.status(201).json(newEmployee);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -63,7 +87,14 @@ const updateEmployee = async (req, res) => {
       const distError = validateDist(req.body.dist);
       if (distError) return res.status(400).json({ error: distError });
     }
-    await employee.update(req.body);
+    const merged = {
+      sueldo_ordinario: employee.sueldo_ordinario,
+      bon_dec_37_2001: employee.bon_dec_37_2001,
+      jubilacion: employee.jubilacion,
+      ...req.body
+    };
+    const payload = applyAutoPayrollFields(merged);
+    await employee.update(payload);
     res.json(employee);
   } catch (err) {
     console.error('Update error:', err);

@@ -1,6 +1,38 @@
 const { PayrollDraft, PayrollDraftEmployee, sequelize } = require('../models');
 const { calculatePayrollBatch } = require('../services/payrollCalculator.service');
 
+/** Exige exactamente una empresa concreta (bloquea ALL / vacías / multi-empresa). */
+const requireSingleCompany = (companies) => {
+  let comps = companies;
+  if (typeof comps === 'string') {
+    try {
+      comps = JSON.parse(comps);
+    } catch {
+      comps = [];
+    }
+  }
+  if (!Array.isArray(comps)) comps = [];
+
+  const normalized = comps
+    .map(c => (c == null ? '' : String(c).trim()))
+    .filter(Boolean);
+
+  const hasAllToken = normalized.some(c => {
+    const s = c.toLowerCase();
+    return s === 'all' || s === 'todas' || s === 'todas las empresas';
+  });
+
+  if (normalized.length !== 1 || hasAllToken) {
+    const err = new Error(
+      'Debe seleccionar una empresa específica. No se permite crear o actualizar nóminas para todas las empresas a la vez.'
+    );
+    err.status = 400;
+    throw err;
+  }
+
+  return normalized;
+};
+
 const getAll = async (req, res) => {
   try {
     const drafts = await PayrollDraft.findAll({
@@ -17,8 +49,8 @@ const getAll = async (req, res) => {
           return de.data;
         }
       });
-      // Solo recalcular si faltan snapshots (borradores antiguos)
-      if (Array.isArray(employeesArr) && employeesArr.length > 0 && !employeesArr.every(e => e && e.calculated)) {
+      // Recalcular siempre (ISR/IGSS y prorrateos deben reflejar la fórmula vigente)
+      if (Array.isArray(employeesArr) && employeesArr.length > 0) {
         employeesArr = calculatePayrollBatch(employeesArr, draftObj.periodType);
       }
 
@@ -43,6 +75,7 @@ const create = async (req, res) => {
   const t = await sequelize.transaction();
   try {
     const { id, title, companies, employees, createdAt, periodType, notes } = req.body;
+    const validatedCompanies = requireSingleCompany(companies);
     
     // SERVER-SIDE CALCULATION ENFORCEMENT
     const calculatedEmployees = employees && employees.length > 0 
@@ -53,7 +86,7 @@ const create = async (req, res) => {
     const newDraft = await PayrollDraft.create({
       id,
       title,
-      companies,
+      companies: validatedCompanies,
       periodType,
       notes,
       employeesCount: calculatedEmployees.length,
@@ -71,10 +104,10 @@ const create = async (req, res) => {
     }
 
     await t.commit();
-    res.status(201).json({ ...req.body, employees: calculatedEmployees }); // Return the calculated payload
+    res.status(201).json({ ...req.body, companies: validatedCompanies, employees: calculatedEmployees }); // Return the calculated payload
   } catch (err) {
     await t.rollback();
-    res.status(400).json({ error: err.message });
+    res.status(err.status || 400).json({ error: err.message });
   }
 };
 
@@ -90,6 +123,9 @@ const update = async (req, res) => {
     }
 
     const { title, companies, employees, createdAt, periodType, notes } = req.body;
+    const validatedCompanies = requireSingleCompany(
+      companies !== undefined ? companies : draft.companies
+    );
     console.log("UPDATE DRAFT ID:", draftId, "PAYLOAD PERIOD:", periodType);
     
     // SERVER-SIDE CALCULATION ENFORCEMENT
@@ -100,7 +136,7 @@ const update = async (req, res) => {
     // Update main record
     await draft.update({
       title,
-      companies,
+      companies: validatedCompanies,
       periodType,
       notes,
       createdAt,
@@ -125,10 +161,10 @@ const update = async (req, res) => {
     }
 
     await t.commit();
-    res.json({ ...req.body, employees: calculatedEmployees });
+    res.json({ ...req.body, companies: validatedCompanies, employees: calculatedEmployees });
   } catch (err) {
     await t.rollback();
-    res.status(400).json({ error: err.message });
+    res.status(err.status || 400).json({ error: err.message });
   }
 };
 

@@ -7,7 +7,7 @@ import {
 import { AppContext } from '../App';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
-import { CUOTA_PATRONAL_RATE, CUOTA_LABORAL_RATE, formatQ } from '../data/mockData';
+import { CUOTA_PATRONAL_RATE, CUOTA_LABORAL_RATE, formatQ, calculateMonthlyISR } from '../data/mockData';
 import { getNetPayable } from '../utils/payrollPeriod';
 import EmployeeIncidences from '../components/EmployeeIncidences';
 import EmployeeDeductions from '../components/EmployeeDeductions';
@@ -24,6 +24,7 @@ import {
   Menu, MenuButton, MenuList, MenuItem, MenuItemOption, MenuOptionGroup, Tooltip
 } from '@chakra-ui/react';
 import { exportPayrollReportExcel } from '../utils/payrollReports';
+import { matchesDepartmentFilter, normalizeMultiFilter, resolveEmployeeDepartment } from '../utils/orgFilters';
 
 const TABS = [
   { id: 'payments', label: 'Listado Pagos', icon: FileText },
@@ -63,17 +64,21 @@ function PayrollHub({ onSelectDraft }) {
   const [notes, setNotes] = useState('');
 
   const handleCreateOrUpdate = async () => {
-    if (!title || !selectedCompany) return;
+    if (!title || !selectedCompany || selectedCompany === 'ALL') return;
     
-    const companiesPayload = selectedCompany === 'ALL' ? [] : [selectedCompany];
+    const companiesPayload = [selectedCompany];
 
     if (editingDraftId) {
-      await updateDraftMetadata(editingDraftId, title, companiesPayload, draftDate ? new Date(draftDate).toISOString() : new Date().toISOString(), periodType, notes);
-      setShowModal(false);
-      showToast('Borrador actualizado', 'success');
+      try {
+        await updateDraftMetadata(editingDraftId, title, companiesPayload, draftDate ? new Date(draftDate).toISOString() : new Date().toISOString(), periodType, notes);
+        setShowModal(false);
+        showToast('Borrador actualizado', 'success');
+      } catch (err) {
+        showToast(err.message, 'danger');
+      }
     } else {
       const isDuplicate = activePayrolls.some(p => {
-        let pComp = 'ALL';
+        let pComp = '';
         if (Array.isArray(p.companies) && p.companies.length > 0) pComp = p.companies[0];
         else if (typeof p.companies === 'string') {
           try { 
@@ -81,7 +86,7 @@ function PayrollHub({ onSelectDraft }) {
             if (parsed.length > 0) pComp = parsed[0]; 
           } catch(e) {}
         }
-        return p.title === title || pComp === selectedCompany;
+        return p.title === title || (pComp && String(pComp) === String(selectedCompany));
       });
 
       const createAction = async () => {
@@ -110,12 +115,27 @@ function PayrollHub({ onSelectDraft }) {
     setDraftDate(dateStr);
     setNotes(draft.notes || '');
     
-    let comp = 'ALL';
-    if (Array.isArray(draft.companies) && draft.companies.length > 0) comp = draft.companies[0];
-    else if (typeof draft.companies === 'string') {
+    let comp = '';
+    if (Array.isArray(draft.companies) && draft.companies.length > 0) {
+      const raw = draft.companies[0];
+      const found = companies.find(c =>
+        String(c.id) === String(raw) ||
+        c.nombre_comercial === raw ||
+        c.nit === raw
+      );
+      comp = found ? (found.nombre_comercial || found.nit) : String(raw);
+    } else if (typeof draft.companies === 'string') {
       try { 
         const parsed = JSON.parse(draft.companies); 
-        if (parsed.length > 0) comp = parsed[0]; 
+        if (parsed.length > 0) {
+          const raw = parsed[0];
+          const found = companies.find(c =>
+            String(c.id) === String(raw) ||
+            c.nombre_comercial === raw ||
+            c.nit === raw
+          );
+          comp = found ? (found.nombre_comercial || found.nit) : String(raw);
+        }
       } catch(e) {}
     }
     setSelectedCompany(comp);
@@ -262,7 +282,7 @@ function PayrollHub({ onSelectDraft }) {
                     try { companiesArr = JSON.parse(draft.companies); } catch(e) {}
                   }
                   if (!companiesArr || companiesArr.length === 0) {
-                    return <Badge colorScheme="purple" variant="subtle" size="sm">Todas las empresas</Badge>;
+                    return <Badge colorScheme="orange" variant="subtle" size="sm">Sin empresa</Badge>;
                   }
                   return (
                     <Flex gap={1} wrap="wrap">
@@ -348,7 +368,6 @@ function PayrollHub({ onSelectDraft }) {
                   onChange={e => setSelectedCompany(e.target.value)}
                 >
                   <option value="">Seleccione una empresa...</option>
-                  <option value="ALL">Todas las empresas</option>
                   {companies.map(c => (
                     <option key={c.id} value={c.nombre_comercial || c.nit}>{c.nombre_comercial || c.nit}</option>
                   ))}
@@ -433,6 +452,7 @@ function PayrollEditor({ draftId, onBack }) {
   const [filterDiv, setFilterDiv] = useState([]);
   const [filterSubdiv, setFilterSubdiv] = useState([]);
   const [filterDim5, setFilterDim5] = useState([]);
+  const [filterCompany, setFilterCompany] = useState([]);
   const [filterStatus, setFilterStatus] = useState('ACTIVO');
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -465,15 +485,20 @@ function PayrollEditor({ draftId, onBack }) {
         }
       }
 
-      // 2. Recalculate igss based on salary and days worked (0 si jubilado)
+      // 2. Recalculate igss / isr based on salary and days worked (0 si jubilado)
       const currentDays = (section === 'root' && field === 'days') ? Number(value) || 0 : e.days || 30;
       const baseFactor = currentDays / 30;
       const sueldoOrd = Number(e.sueldo_ordinario) || 0;
+      const bonDec = Number(e.bon_dec_37_2001) || 0;
       const baseSalary = sueldoOrd * baseFactor;
       const igssExempt = !!(e.jubilacion === true || e.jubilacion === 1);
       
       if (section === 'root' && field === 'days') {
-        updated.deductions.igss = igssExempt ? 0 : Number((baseSalary * CUOTA_LABORAL_RATE).toFixed(2)) || 0;
+        updated.deductions = {
+          ...updated.deductions,
+          igss: igssExempt ? 0 : Number((baseSalary * CUOTA_LABORAL_RATE).toFixed(2)) || 0,
+          isr: Number((calculateMonthlyISR(sueldoOrd, bonDec) * baseFactor).toFixed(2)) || 0
+        };
       }
 
       return updated;
@@ -492,12 +517,17 @@ function PayrollEditor({ draftId, onBack }) {
           days: Math.max(0, currentDays - dQ),
           incidences: [...(emp.incidences || []), newIncidence]
         };
-        // Recalculate igss based on new days (0 si jubilado)
+        // Recalculate igss / isr based on new days (0 si jubilado)
         const baseFactor = updated.days / 30;
         const sueldoOrd = Number(emp.sueldo_ordinario) || 0;
+        const bonDec = Number(emp.bon_dec_37_2001) || 0;
         const baseSalary = sueldoOrd * baseFactor;
         const igssExempt = !!(emp.jubilacion === true || emp.jubilacion === 1);
-        updated.deductions = { ...updated.deductions, igss: igssExempt ? 0 : Number((baseSalary * CUOTA_LABORAL_RATE).toFixed(2)) || 0 };
+        updated.deductions = {
+          ...updated.deductions,
+          igss: igssExempt ? 0 : Number((baseSalary * CUOTA_LABORAL_RATE).toFixed(2)) || 0,
+          isr: Number((calculateMonthlyISR(sueldoOrd, bonDec) * baseFactor).toFixed(2)) || 0
+        };
         
         return updated;
       }
@@ -516,12 +546,17 @@ function PayrollEditor({ draftId, onBack }) {
           days: (emp.days || 30) + daysToRestore,
           incidences: filtered
         };
-        // Recalculate igss based on new days (0 si jubilado)
+        // Recalculate igss / isr based on new days (0 si jubilado)
         const baseFactor = updated.days / 30;
         const sueldoOrd = Number(emp.sueldo_ordinario) || 0;
+        const bonDec = Number(emp.bon_dec_37_2001) || 0;
         const baseSalary = sueldoOrd * baseFactor;
         const igssExempt = !!(emp.jubilacion === true || emp.jubilacion === 1);
-        updated.deductions = { ...updated.deductions, igss: igssExempt ? 0 : Number((baseSalary * CUOTA_LABORAL_RATE).toFixed(2)) || 0 };
+        updated.deductions = {
+          ...updated.deductions,
+          igss: igssExempt ? 0 : Number((baseSalary * CUOTA_LABORAL_RATE).toFixed(2)) || 0,
+          isr: Number((calculateMonthlyISR(sueldoOrd, bonDec) * baseFactor).toFixed(2)) || 0
+        };
 
         return updated;
       }
@@ -587,25 +622,33 @@ function PayrollEditor({ draftId, onBack }) {
   // Filter employees
   const filteredEmployees = useMemo(() => {
     const normalize = (str) => str ? str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase() : '';
-    const employeesByDpi = new Map((employees || []).map(emp => [emp.dpi, emp]));
+    const employeesByDpi = new Map((employees || []).map(emp => [String(emp.dpi), emp]));
     const areasById = new Map((areas || []).map(area => [String(area.id), area]));
+    const selectedDepts = normalizeMultiFilter(filterDept);
+    const selectedAreas = normalizeMultiFilter(filterArea);
+    const selectedDivs = normalizeMultiFilter(filterDiv);
+    const selectedSubdivs = normalizeMultiFilter(filterSubdiv);
+    const selectedDim5s = normalizeMultiFilter(filterDim5);
+    const selectedCompanies = normalizeMultiFilter(filterCompany);
 
     const filtered = data.filter(e => {
       const fullName = [e.primer_nombre, e.segundo_nombre, e.otro_nombre, e.primer_apellido, e.segundo_apellido, e.apellido_casada].filter(Boolean).join(' ');
       const matchSearch = normalize(fullName).includes(normalize(searchQuery)) || normalize(e.puesto).includes(normalize(searchQuery));
       
-      const liveEmp = employeesByDpi.get(e.dpi) || e;
-      const dept = liveEmp.departamento_laboral || e.departamento_laboral || liveEmp.departmentId;
+      const liveEmp = employeesByDpi.get(String(e.dpi)) || e;
+      const mergedEmp = { ...e, ...liveEmp, departmentId: liveEmp.departmentId ?? e.departmentId, departamento_laboral: liveEmp.departamento_laboral || e.departamento_laboral };
       const area = liveEmp.areaId || e.areaId;
       const div = liveEmp.divisionId || e.divisionId;
       const subdiv = liveEmp.subdivisionId || e.subdivisionId;
       const dim5 = liveEmp.nivel_5 || liveEmp.dimension_5 || e.nivel_5 || e.dimension_5;
+      const company = liveEmp.empresa_principal || e.empresa_principal || liveEmp.companyId || e.companyId;
 
-      const matchArea = filterArea.length === 0 || filterArea.includes(String(area));
-      const matchDept = filterDept.length === 0 || filterDept.includes(dept) || filterDept.includes(String(dept));
-      const matchDiv = filterDiv.length === 0 || filterDiv.includes(String(div));
-      const matchSubdiv = filterSubdiv.length === 0 || filterSubdiv.includes(String(subdiv));
-      const matchDim5 = filterDim5.length === 0 || filterDim5.includes(String(dim5));
+      const matchArea = selectedAreas.length === 0 || selectedAreas.includes(String(area));
+      const matchDept = matchesDepartmentFilter(mergedEmp, selectedDepts, departments);
+      const matchDiv = selectedDivs.length === 0 || selectedDivs.includes(String(div));
+      const matchSubdiv = selectedSubdivs.length === 0 || selectedSubdivs.includes(String(subdiv));
+      const matchDim5 = selectedDim5s.length === 0 || selectedDim5s.includes(String(dim5));
+      const matchCompany = selectedCompanies.length === 0 || selectedCompanies.includes(String(company));
       
       let matchStatus = true;
       if (filterStatus !== 'ALL') {
@@ -614,12 +657,12 @@ function PayrollEditor({ draftId, onBack }) {
         matchStatus = empStatus === selStatus;
       }
 
-      return matchSearch && matchArea && matchDept && matchDiv && matchSubdiv && matchDim5 && matchStatus;
+      return matchSearch && matchArea && matchDept && matchDiv && matchSubdiv && matchDim5 && matchCompany && matchStatus;
     });
 
     return filtered.sort((a, b) => {
-      const liveEmpA = employeesByDpi.get(a.dpi) || a;
-      const liveEmpB = employeesByDpi.get(b.dpi) || b;
+      const liveEmpA = employeesByDpi.get(String(a.dpi)) || a;
+      const liveEmpB = employeesByDpi.get(String(b.dpi)) || b;
       
       const areaA = areasById.get(String(liveEmpA.areaId || a.areaId))?.nombre || '';
       const areaB = areasById.get(String(liveEmpB.areaId || b.areaId))?.nombre || '';
@@ -631,7 +674,7 @@ function PayrollEditor({ draftId, onBack }) {
       const nameB = [b.primer_nombre, b.segundo_nombre, b.otro_nombre, b.primer_apellido, b.segundo_apellido].filter(Boolean).join(' ').trim();
       return nameA.localeCompare(nameB);
     });
-  }, [data, searchQuery, filterArea, filterDept, filterDiv, filterSubdiv, filterDim5, filterStatus, areas, employees]);
+  }, [data, searchQuery, filterArea, filterDept, filterDiv, filterSubdiv, filterDim5, filterCompany, filterStatus, areas, departments, employees]);
 
   // General totals calculation
   const totals = useMemo(() => {
@@ -767,6 +810,8 @@ function PayrollEditor({ draftId, onBack }) {
             setFilterSubdiv={setFilterSubdiv}
             filterDim5={filterDim5}
             setFilterDim5={setFilterDim5}
+            filterCompany={filterCompany}
+            setFilterCompany={setFilterCompany}
             dimension5s={dimension5s}
             employees={employees}
             filterStatus={filterStatus}
@@ -881,7 +926,7 @@ function PayrollEditor({ draftId, onBack }) {
 function calculateGroupTotals(groupData, periodType) {
   let totSalarioOrd = 0, totBonInc = 0, totBonDec = 0, totBonos = 0, totDevengado = 0;
   let totHorasSimples = 0, totValSimple = 0, totHorasDobles = 0, totValDouble = 0, totOtrosIngresos = 0, totSalarioTotal = 0;
-  let totIgss = 0, totIsr = 0, totCafe = 0, totCell = 0, totUniform = 0, totShoes = 0, totEquipo = 0, totProduct = 0, totBancos = 0, totOtros = 0, totJudiciales = 0, totSeguro = 0, totParqueo = 0, totBoleta = 0, totOtrosEgresos = 0, totTotalEgresos = 0;
+  let totIgss = 0, totIsr = 0, totCafe = 0, totCell = 0, totUniform = 0, totShoes = 0, totEquipo = 0, totProduct = 0, totBancos = 0, totPrestamo = 0, totOtros = 0, totJudiciales = 0, totSeguro = 0, totParqueo = 0, totBoleta = 0, totOtrosEgresos = 0, totTotalEgresos = 0;
   let totLiquido = 0, totQuincena1 = 0, totQuincena2 = 0;
 
   groupData.forEach(e => {
@@ -895,13 +940,16 @@ function calculateGroupTotals(groupData, periodType) {
     const bonusDec = bonDec * baseFactor;
     const bonos = (Number(e.extras?.bonos) || 0) + Object.values(e.appliedBonuses || {}).reduce((s, v) => s + (Number(v) || 0), 0);
     const comisiones = Number(e.extras?.comisiones) || 0;
+    const vacacionesVal = Number(e.extras?.vacacionesVal) || 0;
+    const ventasEconomicas = Number(e.extras?.ventasEconomicas) || 0;
+    // T. Devengado = sueldos + bonos (sin HE / otros / vacaciones / ventas)
     const devengado = baseSalary + bonusLey + bonusDec + bonos;
 
     const simplesQty = Number(e.extras?.simplesQty) || 0;
     const simplesVal = Number(e.extras?.simplesVal) || 0;
     const doblesQty = Number(e.extras?.doblesQty) || 0;
     const doblesVal = Number(e.extras?.doblesVal) || 0;
-    const otrosIngresos = Number(e.extras?.otrosIngresos) || 0;
+    const otrosIngresos = (Number(e.extras?.otrosIngresos) || 0) + vacacionesVal + ventasEconomicas;
     const salarioTotal = e.calculated?.gross != null
       ? Number(e.calculated.gross)
       : (devengado + simplesVal + doblesVal + otrosIngresos + comisiones);
@@ -916,6 +964,7 @@ function calculateGroupTotals(groupData, periodType) {
     const equipo = Number(proDed.equipo) || 0;
     const product = Number(proDed.product) || 0;
     const bancos = Number(proDed.bancos) || 0;
+    const prestamo_empresa = Number(proDed.prestamo_empresa) || 0;
     const otros = Number(proDed.otros) || 0;
     const judiciales = Number(proDed.judiciales) || 0;
     const seguro = Number(proDed.seguro) || 0;
@@ -926,7 +975,7 @@ function calculateGroupTotals(groupData, periodType) {
     
     const totalEgresos = e.calculated?.ded != null
       ? Number(e.calculated.ded)
-      : (igss + isr + cafe + cell + uniform + shoes + equipo + product + bancos + otros + judiciales + seguro + parqueo + boleto_de_ornato + otros_egresos);
+      : (igss + isr + cafe + cell + uniform + shoes + equipo + product + bancos + prestamo_empresa + otros + judiciales + seguro + parqueo + boleto_de_ornato + otros_egresos);
     const liquido = e.calculated?.net != null ? Number(e.calculated.net) : (salarioTotal - totalEgresos);
     const q1 = periodType === '2da' ? anticipo : liquido;
     const q2 = periodType === '2da' ? (liquido - anticipo) : 0;
@@ -953,6 +1002,7 @@ function calculateGroupTotals(groupData, periodType) {
     totEquipo += equipo;
     totProduct += product;
     totBancos += bancos;
+    totPrestamo += prestamo_empresa;
     totOtros += otros;
     totJudiciales += judiciales;
     totSeguro += seguro;
@@ -968,7 +1018,7 @@ function calculateGroupTotals(groupData, periodType) {
   return {
     totSalarioOrd, totBonInc, totBonDec, totBonos, totDevengado,
     totHorasSimples, totValSimple, totHorasDobles, totValDouble, totOtrosIngresos, totSalarioTotal,
-    totIgss, totIsr, totCafe, totCell, totUniform, totShoes, totEquipo, totProduct, totBancos, totOtros, totJudiciales, totSeguro, totParqueo, totBoleta, totOtrosEgresos, totTotalEgresos,
+    totIgss, totIsr, totCafe, totCell, totUniform, totShoes, totEquipo, totProduct, totBancos, totPrestamo, totOtros, totJudiciales, totSeguro, totParqueo, totBoleta, totOtrosEgresos, totTotalEgresos,
     totLiquido, totQuincena1, totQuincena2
   };
 }
@@ -981,6 +1031,7 @@ function ListadoPagosTab({
   filterDiv, setFilterDiv,
   filterSubdiv, setFilterSubdiv,
   filterDim5, setFilterDim5,
+  filterCompany, setFilterCompany,
   filterStatus, setFilterStatus,
   searchQuery, setSearchQuery,
   handleClose, handleSaveIncidence, handleDeleteIncidence,
@@ -1015,7 +1066,7 @@ function ListadoPagosTab({
 
   const EDITABLE_FIELDS = {
     summary: ['days'],
-    detailed: ['days', 'bonos', 'simplesQty', 'simplesVal', 'doblesQty', 'doblesVal', 'otrosIngresos', 'igss', 'isr', 'cafe', 'cell', 'uniform', 'shoes', 'equipo', 'product', 'bancos', 'otros', 'judiciales', 'seguro', 'parqueo', 'boleto_de_ornato', 'otros_egresos']
+    detailed: ['days', 'bonos', 'simplesQty', 'simplesVal', 'doblesQty', 'doblesVal', 'otrosIngresos', 'igss', 'isr', 'cafe', 'cell', 'uniform', 'shoes', 'equipo', 'product', 'bancos', 'prestamo_empresa', 'otros', 'judiciales', 'seguro', 'parqueo', 'boleto_de_ornato', 'otros_egresos']
   };
 
   const handleNavigation = (currentId, currentField, key, shiftKey) => {
@@ -1062,23 +1113,31 @@ function ListadoPagosTab({
     onDrawerOpen();
   };
 
+  const companyList = companiesProp || companies || [];
+
   const groupedData = useMemo(() => {
-    if (filterDept.length === 0 && filterArea.length === 0 && filterDiv.length === 0 && filterSubdiv.length === 0 && filterDim5.length === 0) {
+    if (filterDept.length === 0 && filterArea.length === 0 && filterDiv.length === 0 && filterSubdiv.length === 0 && filterDim5.length === 0 && filterCompany.length === 0) {
       return [{ title: '', data }];
     }
 
     const groups = {};
     data.forEach(e => {
-      const liveEmp = employees?.find(emp => emp.dpi === e.dpi) || e;
-      const dept = liveEmp.departamento_laboral || e.departamento_laboral || liveEmp.departmentId;
+      const liveEmp = employees?.find(emp => String(emp.dpi) === String(e.dpi)) || e;
+      const mergedEmp = { ...e, ...liveEmp, departmentId: liveEmp.departmentId ?? e.departmentId, departamento_laboral: liveEmp.departamento_laboral || e.departamento_laboral };
+      const { name: deptName } = resolveEmployeeDepartment(mergedEmp, departments);
       const area = liveEmp.areaId || e.areaId;
       const div = liveEmp.divisionId || e.divisionId;
       const subdiv = liveEmp.subdivisionId || e.subdivisionId;
       const dim5 = liveEmp.nivel_5 || liveEmp.dimension_5 || e.nivel_5 || e.dimension_5;
+      const company = liveEmp.empresa_principal || e.empresa_principal || liveEmp.companyId || e.companyId;
 
       const keyParts = [];
+      if (filterCompany.length > 0) {
+        const companyName = companyList.find(c => String(c.id) === String(company))?.nombre_comercial || 'Sin Empresa';
+        keyParts.push(`Empresa: ${companyName}`);
+      }
       if (filterDept.length > 0) {
-        keyParts.push(`Depto: ${dept || 'Sin Departamento'}`);
+        keyParts.push(`Depto: ${deptName}`);
       }
       if (filterDiv.length > 0) {
         const divName = divisions?.find(d => String(d.id) === String(div))?.nombre || 'Sin División';
@@ -1107,7 +1166,7 @@ function ListadoPagosTab({
       title: key,
       data: groups[key]
     }));
-  }, [data, filterDept, filterArea, filterDiv, filterSubdiv, divisions, areas, subdivisions]);
+  }, [data, filterDept, filterArea, filterDiv, filterSubdiv, filterDim5, filterCompany, divisions, areas, departments, subdivisions, dimension5s, employees, companyList]);
 
   const { confirmAction, showToast } = useContext(AppContext);
 
@@ -1118,12 +1177,25 @@ function ListadoPagosTab({
         <HStack spacing={{ base: 2, md: 3 }} wrap="wrap" flex="1">
           <Menu closeOnSelect={false}>
             <MenuButton as={Button} size="sm" variant="outline" rightIcon={<ChevronDown size={14}/>} w={{ base: '100%', sm: '180px' }} textAlign="left" fontWeight="normal" bg={tdBg} borderRadius="md" px={3}>
+              {filterCompany.length > 0 ? `${filterCompany.length} Empresas...` : 'Empresa...'}
+            </MenuButton>
+            <MenuList maxH="300px" overflowY="auto" zIndex={100} boxShadow="lg">
+              <MenuOptionGroup type="checkbox" value={filterCompany} onChange={setFilterCompany}>
+                {companyList.map(c => (
+                  <MenuItemOption key={c.id} value={String(c.id)} fontSize="sm">{c.nombre_comercial || c.nit || `Empresa ${c.id}`}</MenuItemOption>
+                ))}
+              </MenuOptionGroup>
+            </MenuList>
+          </Menu>
+
+          <Menu closeOnSelect={false}>
+            <MenuButton as={Button} size="sm" variant="outline" rightIcon={<ChevronDown size={14}/>} w={{ base: '100%', sm: '180px' }} textAlign="left" fontWeight="normal" bg={tdBg} borderRadius="md" px={3}>
               {filterDept.length > 0 ? `${filterDept.length} Deptos...` : 'Departamento...'}
             </MenuButton>
             <MenuList maxH="300px" overflowY="auto" zIndex={100} boxShadow="lg">
-              <MenuOptionGroup type="checkbox" value={filterDept} onChange={setFilterDept}>
+              <MenuOptionGroup type="checkbox" value={filterDept} onChange={(v) => setFilterDept(normalizeMultiFilter(v))}>
                 {departments.map(d => (
-                  <MenuItemOption key={d.id} value={d.nombre_dimension} fontSize="sm">{d.nombre_dimension}</MenuItemOption>
+                  <MenuItemOption key={d.id} value={String(d.id)} fontSize="sm">{d.nombre_dimension}</MenuItemOption>
                 ))}
               </MenuOptionGroup>
             </MenuList>
@@ -1314,7 +1386,8 @@ function ListadoPagosTab({
                     <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Calzado</Th>
                     <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Equipo</Th>
                     <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Producto</Th>
-                    <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Bancos</Th>
+                    <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Bantrab</Th>
+                    <Th w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Préstamo</Th>
                     <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Otros</Th>
                     <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Judiciales</Th>
                     <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Seguro</Th>
@@ -1339,32 +1412,36 @@ function ListadoPagosTab({
                     const baseSalary = e.calculated?.baseSalary || 0;
                     const bonusLey = e.calculated?.bonusLey || 0;
                     const bonusDec = e.calculated?.bonusDec || 0;
-                    const bonos = e.calculated?.bonos || 0;
-                    const devengado = e.calculated?.gross || 0;
-                    
-                    const salarioTotal = devengado; // gross includes extras
+                    const bonos = (e.calculated?.bonos || 0) + (e.calculated?.bonusesSum || 0);
+                    // T. Devengado = sueldos + bonos; Salario Total = bruto completo (gross)
+                    const devengado = baseSalary + bonusLey + bonusDec + bonos;
+                    const salarioTotal = e.calculated?.gross != null ? Number(e.calculated.gross) : devengado;
 
                     const simplesQty = Number(e.extras?.simplesQty) || 0;
                     const simplesVal = Number(e.extras?.simplesVal) || 0;
                     const doblesQty = Number(e.extras?.doblesQty) || 0;
                     const doblesVal = Number(e.extras?.doblesVal) || 0;
-                    const otrosIngresos = Number(e.extras?.otrosIngresos) || 0;
+                    const otrosIngresos = (Number(e.extras?.otrosIngresos) || 0)
+                      + (Number(e.extras?.vacacionesVal) || 0)
+                      + (Number(e.extras?.ventasEconomicas) || 0);
 
-                    const igss = Number(e.deductions?.igss) || 0;
-                    const isr = Number(e.deductions?.isr) || 0;
-                    const cafe = Number(e.deductions?.cafe) || 0;
-                    const cell = Number(e.deductions?.cell) || 0;
-                    const uniform = Number(e.deductions?.uniform) || 0;
-                    const shoes = Number(e.deductions?.shoes) || 0;
-                    const equipo = Number(e.deductions?.equipo) || 0;
-                    const product = Number(e.deductions?.product) || 0;
-                    const bancos = Number(e.deductions?.bancos) || 0;
-                    const otros = Number(e.deductions?.otros) || 0;
-                    const judiciales = Number(e.deductions?.judiciales) || 0;
-                    const seguro = Number(e.deductions?.seguro) || 0;
-                    const parqueo = Number(e.deductions?.parqueo) || 0;
-                    const boleto_de_ornato = Number(e.deductions?.boleto_de_ornato) || 0;
-                    const otros_egresos = Number(e.deductions?.otros_egresos) || 0;
+                    const proDed = e.calculated?.proratedDeductions || e.deductions || {};
+                    const igss = Number(proDed.igss) || 0;
+                    const isr = Number(proDed.isr) || 0;
+                    const cafe = Number(proDed.cafe) || 0;
+                    const cell = Number(proDed.cell) || 0;
+                    const uniform = Number(proDed.uniform) || 0;
+                    const shoes = Number(proDed.shoes) || 0;
+                    const equipo = Number(proDed.equipo) || 0;
+                    const product = Number(proDed.product) || 0;
+                    const bancos = Number(proDed.bancos) || 0;
+                    const prestamo_empresa = Number(proDed.prestamo_empresa) || 0;
+                    const otros = Number(proDed.otros) || 0;
+                    const judiciales = Number(proDed.judiciales) || 0;
+                    const seguro = Number(proDed.seguro) || 0;
+                    const parqueo = Number(proDed.parqueo) || 0;
+                    const boleto_de_ornato = Number(proDed.boleto_de_ornato) || 0;
+                    const otros_egresos = Number(proDed.otros_egresos) || 0;
                     const anticipo = Number(e.anticipo1ra) || 0;
 
                     const totalEgresos = e.calculated?.ded || 0;
@@ -1408,21 +1485,22 @@ function ListadoPagosTab({
                         <EditableCell onNavigate={handleNavigation} id={e.id} field="otrosIngresos" section="extras" value={e.extras?.otrosIngresos || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney />
                         <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="gold.500">{formatQ(salarioTotal)}</Td>
 
-                        <EditableCell onNavigate={handleNavigation} id={e.id} field="igss" section="deductions" value={e.deductions?.igss || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
-                        <EditableCell onNavigate={handleNavigation} id={e.id} field="isr" section="deductions" value={e.deductions?.isr || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
-                        <EditableCell onNavigate={handleNavigation} id={e.id} field="cafe" section="deductions" value={e.deductions?.cafe || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
-                        <EditableCell onNavigate={handleNavigation} id={e.id} field="cell" section="deductions" value={e.deductions?.cell || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
-                        <EditableCell onNavigate={handleNavigation} id={e.id} field="uniform" section="deductions" value={e.deductions?.uniform || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
-                        <EditableCell onNavigate={handleNavigation} id={e.id} field="shoes" section="deductions" value={e.deductions?.shoes || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
-                        <EditableCell onNavigate={handleNavigation} id={e.id} field="equipo" section="deductions" value={e.deductions?.equipo || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
-                        <EditableCell onNavigate={handleNavigation} id={e.id} field="product" section="deductions" value={e.deductions?.product || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
-                        <EditableCell onNavigate={handleNavigation} id={e.id} field="bancos" section="deductions" value={e.deductions?.bancos || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
-                        <EditableCell onNavigate={handleNavigation} id={e.id} field="otros" section="deductions" value={e.deductions?.otros || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
-                        <EditableCell onNavigate={handleNavigation} id={e.id} field="judiciales" section="deductions" value={e.deductions?.judiciales || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
-                        <EditableCell onNavigate={handleNavigation} id={e.id} field="seguro" section="deductions" value={e.deductions?.seguro || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
-                        <EditableCell onNavigate={handleNavigation} id={e.id} field="parqueo" section="deductions" value={e.deductions?.parqueo || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
-                        <EditableCell onNavigate={handleNavigation} id={e.id} field="boleto_de_ornato" section="deductions" value={e.deductions?.boleto_de_ornato || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={85} isMoney isDanger />
-                        <EditableCell onNavigate={handleNavigation} id={e.id} field="otros_egresos" section="deductions" value={e.deductions?.otros_egresos || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={85} isMoney isDanger />
+                        <EditableCell onNavigate={handleNavigation} id={e.id} field="igss" section="deductions" value={igss} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
+                        <EditableCell onNavigate={handleNavigation} id={e.id} field="isr" section="deductions" value={isr} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
+                        <EditableCell onNavigate={handleNavigation} id={e.id} field="cafe" section="deductions" value={cafe} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
+                        <EditableCell onNavigate={handleNavigation} id={e.id} field="cell" section="deductions" value={cell} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
+                        <EditableCell onNavigate={handleNavigation} id={e.id} field="uniform" section="deductions" value={uniform} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
+                        <EditableCell onNavigate={handleNavigation} id={e.id} field="shoes" section="deductions" value={shoes} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
+                        <EditableCell onNavigate={handleNavigation} id={e.id} field="equipo" section="deductions" value={equipo} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
+                        <EditableCell onNavigate={handleNavigation} id={e.id} field="product" section="deductions" value={product} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
+                        <EditableCell onNavigate={handleNavigation} id={e.id} field="bancos" section="deductions" value={bancos} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
+                        <EditableCell onNavigate={handleNavigation} id={e.id} field="prestamo_empresa" section="deductions" value={prestamo_empresa} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={85} isMoney isDanger />
+                        <EditableCell onNavigate={handleNavigation} id={e.id} field="otros" section="deductions" value={otros} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
+                        <EditableCell onNavigate={handleNavigation} id={e.id} field="judiciales" section="deductions" value={judiciales} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
+                        <EditableCell onNavigate={handleNavigation} id={e.id} field="seguro" section="deductions" value={seguro} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
+                        <EditableCell onNavigate={handleNavigation} id={e.id} field="parqueo" section="deductions" value={parqueo} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
+                        <EditableCell onNavigate={handleNavigation} id={e.id} field="boleto_de_ornato" section="deductions" value={boleto_de_ornato} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={85} isMoney isDanger />
+                        <EditableCell onNavigate={handleNavigation} id={e.id} field="otros_egresos" section="deductions" value={otros_egresos} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={85} isMoney isDanger />
                         <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="red.500">{formatQ(totalEgresos)}</Td>
                         
                         <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500" bg={liquidoBg}>
@@ -1495,6 +1573,7 @@ function ListadoPagosTab({
                     <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totEquipo)}</Th>
                     <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totProduct)}</Th>
                     <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totBancos)}</Th>
+                    <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totPrestamo)}</Th>
                     <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totOtros)}</Th>
                     <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totJudiciales)}</Th>
                     <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totSeguro)}</Th>

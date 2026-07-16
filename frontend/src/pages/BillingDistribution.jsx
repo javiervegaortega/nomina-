@@ -247,27 +247,51 @@ export default function BillingDistribution() {
             <Box bg={bgCard} p={5} borderRadius="xl" shadow="sm" borderWidth="1px" borderColor={borderColor}>
               <Text fontSize="lg" fontWeight="bold" mb={1}>Detalle por Empleado</Text>
               <Text fontSize="sm" color="gray.500" mb={4}>
-                {(previewData.details || []).length} asignación(es) de costo
+                {(previewData.details || []).length} asignación(es) · desglose de sueldo, bonos, IGSS, ISR y parte por empresa
               </Text>
-              <Box overflowX="auto" maxH="420px" overflowY="auto">
+              <Box overflowX="auto" maxH="520px" overflowY="auto">
                 <Table variant="simple" size="sm">
                   <Thead bg={bgHeader} position="sticky" top={0} zIndex={1}>
                     <Tr>
-                      <Th>Empleado</Th>
-                      <Th>Pagadora</Th>
-                      <Th>Destino</Th>
-                      <Th isNumeric>%</Th>
-                      <Th isNumeric>Monto</Th>
+                      <Th whiteSpace="nowrap">Empleado</Th>
+                      <Th whiteSpace="nowrap">Pagadora</Th>
+                      <Th whiteSpace="nowrap">Destino</Th>
+                      <Th isNumeric whiteSpace="nowrap">%</Th>
+                      <Th isNumeric whiteSpace="nowrap">Días</Th>
+                      <Th isNumeric whiteSpace="nowrap">Sueldo</Th>
+                      <Th isNumeric whiteSpace="nowrap">Bono Dec.</Th>
+                      <Th isNumeric whiteSpace="nowrap">Bruto</Th>
+                      <Th isNumeric whiteSpace="nowrap">IGSS Lab.</Th>
+                      <Th isNumeric whiteSpace="nowrap">ISR</Th>
+                      <Th isNumeric whiteSpace="nowrap">Líquido</Th>
+                      <Th isNumeric whiteSpace="nowrap">IGSS Pat.</Th>
+                      <Th isNumeric whiteSpace="nowrap">Costo Total</Th>
+                      <Th isNumeric whiteSpace="nowrap">Asg. Bruto</Th>
+                      <Th isNumeric whiteSpace="nowrap">Asg. IGSS</Th>
+                      <Th isNumeric whiteSpace="nowrap">Asg. ISR</Th>
+                      <Th isNumeric whiteSpace="nowrap">Asg. Costo</Th>
                     </Tr>
                   </Thead>
                   <Tbody>
                     {(previewData.details || []).map((d, i) => (
                       <Tr key={`${d.employeeId}-${d.toCompanyId}-${i}`}>
-                        <Td fontWeight="medium">{d.employeeName}</Td>
-                        <Td fontSize="xs">{d.fromCompany}</Td>
-                        <Td fontSize="xs">{d.toCompany}</Td>
+                        <Td fontWeight="medium" whiteSpace="nowrap">{d.employeeName}</Td>
+                        <Td fontSize="xs" whiteSpace="nowrap">{d.fromCompany}</Td>
+                        <Td fontSize="xs" whiteSpace="nowrap">{d.toCompany}</Td>
                         <Td isNumeric>{d.percentage}%</Td>
-                        <Td isNumeric>{formatCurrency(d.baseAmount)}</Td>
+                        <Td isNumeric>{d.days ?? '—'}</Td>
+                        <Td isNumeric fontSize="xs">{formatCurrency(d.sueldoOrdinario)}</Td>
+                        <Td isNumeric fontSize="xs">{formatCurrency(d.bonoDecreto)}</Td>
+                        <Td isNumeric fontSize="xs">{formatCurrency(d.bruto)}</Td>
+                        <Td isNumeric fontSize="xs">{formatCurrency(d.igssLaboral)}</Td>
+                        <Td isNumeric fontSize="xs">{formatCurrency(d.isr)}</Td>
+                        <Td isNumeric fontSize="xs">{formatCurrency(d.liquido)}</Td>
+                        <Td isNumeric fontSize="xs">{formatCurrency(d.igssPatronal)}</Td>
+                        <Td isNumeric fontSize="xs" fontWeight="600">{formatCurrency(d.employeeCost)}</Td>
+                        <Td isNumeric fontSize="xs">{formatCurrency(d.asgBruto)}</Td>
+                        <Td isNumeric fontSize="xs">{formatCurrency(d.asgIgssLaboral)}</Td>
+                        <Td isNumeric fontSize="xs">{formatCurrency(d.asgIsr)}</Td>
+                        <Td isNumeric fontWeight="700" color="brand.500">{formatCurrency(d.baseAmount)}</Td>
                       </Tr>
                     ))}
                   </Tbody>

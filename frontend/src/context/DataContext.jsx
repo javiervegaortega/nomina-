@@ -1,6 +1,7 @@
 import React, { createContext, useState, useEffect, useRef, useContext, useMemo } from 'react';
 import { AuthContext } from './AuthContext';
 import { isDateInQuincena, CUOTA_LABORAL_RATE } from '../utils/payrollPeriod';
+import { calculateMonthlyISR } from '../data/mockData';
 
 export const DataContext = createContext();
 
@@ -782,12 +783,26 @@ export function DataProvider({ children }) {
 
   // Payroll
   const createActivePayroll = async (title, selectedCompanies, periodType = '1ra', draftDateStr = null) => {
+    // Obligatorio: exactamente una empresa (no se permite "todas")
+    const rawCompanies = Array.isArray(selectedCompanies) ? selectedCompanies : [];
+    const hasAllToken = rawCompanies.some(c => {
+      const s = String(c ?? '').trim().toLowerCase();
+      return !s || s === 'all' || s === 'todas' || s === 'todas las empresas';
+    });
+    if (rawCompanies.length !== 1 || hasAllToken) {
+      throw new Error('Debe seleccionar una empresa específica. Las nóminas se procesan empresa por empresa.');
+    }
+
     // selectedCompanies contains commercial names of the selected companies
     // Map selectedCompany names to company IDs
-    const selectedCompanyIds = selectedCompanies.map(name => {
+    const selectedCompanyIds = rawCompanies.map(name => {
       const comp = companies.find(c => (c.nombre_comercial || c.nit) === name || c.id?.toString() === name);
       return comp ? comp.id : null;
     }).filter(id => id !== null);
+
+    if (selectedCompanyIds.length !== 1) {
+      throw new Error('Debe seleccionar una empresa válida para crear el borrador.');
+    }
 
     const draftRefDate = draftDateStr || new Date().toISOString();
 
@@ -810,8 +825,8 @@ export function DataProvider({ children }) {
 
       const matchesCompanies = (h) => {
         const hComps = parseCompanies(h);
-        if (selectedCompanyIds.length === 0) return true;
-        if (hComps.length === 0 || hComps.includes('ALL')) return true;
+        if (selectedCompanyIds.length === 0) return false;
+        if (hComps.length === 0 || hComps.includes('ALL')) return false;
         return selectedCompanyIds.some(id => hComps.some(hc => String(hc) === String(id)));
       };
 
@@ -864,10 +879,7 @@ export function DataProvider({ children }) {
     const currentCommissions = commissions.filter(c => c.mes === currentMonth && c.estado !== 'Aplicado');
 
     const frozenEmployees = employees
-      .filter(e => {
-        if (selectedCompanyIds.length === 0) return true;
-        return selectedCompanyIds.includes(e.empresa_principal);
-      })
+      .filter(e => selectedCompanyIds.some(id => String(id) === String(e.empresa_principal)))
       .map(e => {
         const days = periodType === '1ra' ? 15 : 30;
         const baseSalary = Number(e.sueldo_ordinario) || 0;
@@ -905,10 +917,12 @@ export function DataProvider({ children }) {
           }
         });
 
-        // 1 normal hour = BaseSalary / 30 / 8
+        // 1 normal hour = BaseSalary / 30 / 8 (sobre sueldo mensual)
         const hourlyRate = baseSalary / 30 / 8;
-        const valSimples = qtySimples * hourlyRate * 1.5;
-        const valDobles = qtyDobles * hourlyRate * 2;
+        const simplesQtyTotal = (Number(e.horas_extras_simples) || 0) + qtySimples;
+        const doblesQtyTotal = (Number(e.horas_extras_dobles) || 0) + qtyDobles;
+        const valSimples = simplesQtyTotal * hourlyRate * 1.5;
+        const valDobles = doblesQtyTotal * hourlyRate * 2;
 
         // Catálogo de bonos: solo si date cae en la quincena (o sin date = no incluir en auto)
         const appliedBonuses = bonuses.reduce((acc, b) => {
@@ -920,37 +934,46 @@ export function DataProvider({ children }) {
           return acc;
         }, {});
 
+        // Bantrab del maestro (campo bantrab) + bancos; ambos alimentan la columna Bancos/Bantrab
+        const bantrabMensual = (Number(e.bantrab) || 0) + (Number(e.bancos) || 0);
+        const vacacionesPeriodo = (Number(e.vacaciones) || 0) * baseFactor;
+        const ventasPeriodo = (Number(e.ventas_economicas) || 0) * baseFactor;
+
         return {
           ...e,
           days,
           company: e.company || (companies.find(c => c.id === e.companyId)?.nombre_comercial || ''),
           deductions: {
             igss: igssVal,
-            isr: Number(e.isr) || 0,
+            // Semilla; el motor recalcula ISR del período desde sueldo + bono decreto
+            isr: calculateMonthlyISR(baseSalary, Number(e.bon_dec_37_2001) || 0) * baseFactor,
             cafe: 0,
             cell: 0,
             uniform: 0,
             shoes: 0,
             equipo: 0,
             product: 0,
-            bancos: (Number(e.bancos) || 0) * baseFactor,
+            bancos: bantrabMensual * baseFactor,
+            prestamo_empresa: (Number(e.prestamo_empresa) || 0) * baseFactor,
             otros: 0,
             judiciales: (Number(e.judiciales) || 0) * baseFactor,
             seguro: (Number(e.seguro) || 0) * baseFactor,
             parqueo: (Number(e.parqueo) || 0) * baseFactor,
             boleto_de_ornato: (Number(e.boleto_de_ornato) || 0) * baseFactor,
-            otros_egresos: (Number(e.otros_egresos) || 0) * baseFactor,
+            otros_egresos: ((Number(e.otros_egresos) || 0) + (Number(e.otro_descuentos) || 0)) * baseFactor,
           },
           anticipo1ra: firstQuincenaPayouts[e.id] || 0,
           missingAnticipoWarning: periodType === '2da' && missingAnticipoWarning,
           extras: {
             bonos: totalBonos,
-            simplesQty: (Number(e.horas_extras_simples) || 0) + qtySimples,
+            simplesQty: simplesQtyTotal,
             simplesVal: valSimples,
-            doblesQty: (Number(e.horas_extras_dobles) || 0) + qtyDobles,
+            doblesQty: doblesQtyTotal,
             doblesVal: valDobles,
             comisiones: 0,
             otrosIngresos: Number(e.otro_ingresos) || 0,
+            vacacionesVal: vacacionesPeriodo,
+            ventasEconomicas: ventasPeriodo,
           },
           operationLogs: empOpLogs,
           appliedBonuses
@@ -982,14 +1005,12 @@ export function DataProvider({ children }) {
         setActivePayrolls([savedDraft, ...activePayrolls]);
         return savedDraft.id;
       } else {
-        await res.json().catch(() => null);
+        const errBody = await res.json().catch(() => null);
+        throw new Error(errBody?.error || 'No se pudo crear el borrador de nómina');
       }
     } catch(e) {
+      throw e;
     }
-    
-    // Fallback if API fails
-    setActivePayrolls([newDraftData, ...activePayrolls]);
-    return newDraftData.id;
   };
 
   const updateActivePayroll = async (id, newEmployeesData) => {
@@ -1057,8 +1078,22 @@ export function DataProvider({ children }) {
     console.error("Error in updateActivePayroll:", err);
   }
 };
-  const updateDraftMetadata = async (id, title, companies, createdAt, periodType) => {
-    const updatedDrafts = activePayrolls.map(p => p.id === id ? { ...p, title, companies, createdAt, periodType } : p);
+  const updateDraftMetadata = async (id, title, companiesPayload, createdAt, periodType) => {
+    const rawCompanies = Array.isArray(companiesPayload) ? companiesPayload : [];
+    const hasAllToken = rawCompanies.some(c => {
+      const s = String(c ?? '').trim().toLowerCase();
+      return !s || s === 'all' || s === 'todas' || s === 'todas las empresas';
+    });
+    if (rawCompanies.length !== 1 || hasAllToken) {
+      throw new Error('Debe seleccionar una empresa específica. Las nóminas se procesan empresa por empresa.');
+    }
+
+    const resolved = rawCompanies.map(name => {
+      const comp = companies.find(c => (c.nombre_comercial || c.nit) === name || c.id?.toString() === name);
+      return comp ? comp.id : name;
+    });
+
+    const updatedDrafts = activePayrolls.map(p => p.id === id ? { ...p, title, companies: resolved, createdAt, periodType } : p);
     setActivePayrolls(updatedDrafts);
 
     const draft = updatedDrafts.find(p => p.id === id);
@@ -1070,9 +1105,11 @@ export function DataProvider({ children }) {
           body: JSON.stringify(draft)
         });
         if (!res.ok) {
-          await res.json().catch(() => null);
+          const errBody = await res.json().catch(() => null);
+          throw new Error(errBody?.error || 'No se pudo actualizar el borrador');
         }
       } catch(e) {
+        throw e;
       }
     }
   };
@@ -1090,6 +1127,21 @@ export function DataProvider({ children }) {
   const closePayroll = async (id) => {
     const draft = activePayrolls.find(p => p.id === id);
     if (draft) {
+      let draftCompanies = draft.companies || [];
+      if (typeof draftCompanies === 'string') {
+        try { draftCompanies = JSON.parse(draftCompanies); } catch { draftCompanies = []; }
+      }
+      const hasAllToken = (Array.isArray(draftCompanies) ? draftCompanies : []).some(c => {
+        const s = String(c ?? '').trim().toLowerCase();
+        return !s || s === 'all' || s === 'todas' || s === 'todas las empresas';
+      });
+      if (!Array.isArray(draftCompanies) || draftCompanies.length !== 1 || hasAllToken) {
+        return {
+          success: false,
+          error: 'No se puede cerrar una nómina sin una empresa específica. Las nóminas se procesan empresa por empresa.'
+        };
+      }
+
       // Calculate totals for history view
       let grossTotal = 0;
       let dedTotal = 0;
@@ -1114,6 +1166,7 @@ export function DataProvider({ children }) {
       const historyRecord = {
         id: Date.now().toString(),
         ...draft,
+        companies: draftCompanies,
         status: draft.isApproved ? 'cerrada' : 'auditoria',
         employeesCount: draft.employees.length,
         netTotal: grossTotal - dedTotal,

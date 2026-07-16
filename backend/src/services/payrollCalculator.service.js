@@ -72,13 +72,31 @@ const calculateEmployeePayroll = (e, periodType) => {
   const bonusLey = bonInc.times(baseFactor);
   const bonusDec = bonDec.times(baseFactor);
 
-  const extrasBonos = new Decimal((e.extras && e.extras.bonos) || 0);
-  const extrasSimples = new Decimal((e.extras && e.extras.simplesVal) || 0);
-  const extrasDobles = new Decimal((e.extras && e.extras.doblesVal) || 0);
-  const comisiones = new Decimal((e.extras && e.extras.comisiones) || 0);
-  const otrosIngresos = new Decimal((e.extras && e.extras.otrosIngresos) || 0);
+  // Extras de período (+ backfill maestro para borradores antiguos)
+  const extrasObj = { ...(e.extras || {}) };
+  if (extrasObj.vacacionesVal == null && new Decimal(e.vacaciones || 0).gt(0)) {
+    extrasObj.vacacionesVal = new Decimal(e.vacaciones).times(baseFactor)
+      .toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber();
+  }
+  if (extrasObj.ventasEconomicas == null && new Decimal(e.ventas_economicas || 0).gt(0)) {
+    extrasObj.ventasEconomicas = new Decimal(e.ventas_economicas).times(baseFactor)
+      .toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber();
+  }
 
-  const extrasTotal = extrasSimples.plus(extrasDobles).plus(comisiones).plus(otrosIngresos);
+  const extrasBonos = new Decimal(extrasObj.bonos || 0);
+  const extrasSimples = new Decimal(extrasObj.simplesVal || 0);
+  const extrasDobles = new Decimal(extrasObj.doblesVal || 0);
+  const comisiones = new Decimal(extrasObj.comisiones || 0);
+  const otrosIngresos = new Decimal(extrasObj.otrosIngresos || 0);
+  const vacacionesVal = new Decimal(extrasObj.vacacionesVal || 0);
+  const ventasEconomicas = new Decimal(extrasObj.ventasEconomicas || 0);
+
+  const extrasTotal = extrasSimples
+    .plus(extrasDobles)
+    .plus(comisiones)
+    .plus(otrosIngresos)
+    .plus(vacacionesVal)
+    .plus(ventasEconomicas);
 
   const appliedBonusesValues = Object.values(e.appliedBonuses || {});
   let bonusesSum = new Decimal(0);
@@ -89,7 +107,6 @@ const calculateEmployeePayroll = (e, periodType) => {
   const gross = baseSalary.plus(bonusLey).plus(bonusDec).plus(extrasBonos).plus(extrasTotal).plus(bonusesSum);
 
   const exempt = isIgssExempt(e);
-  // IGSS laboral y patronal = 0 para jubilados / exentos
   const igssValue = exempt
     ? new Decimal(0)
     : baseSalary.times(CUOTA_LABORAL_RATE).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
@@ -97,13 +114,40 @@ const calculateEmployeePayroll = (e, periodType) => {
     ? new Decimal(0)
     : baseSalary.times(CUOTA_PATRONAL_RATE).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
 
+  const { calculateMonthlyISR } = require('./isr.service');
+  const monthlyIsr = calculateMonthlyISR(sueldoOrd.toNumber(), bonDec.toNumber());
+  const isrValue = new Decimal(monthlyIsr)
+    .times(baseFactor)
+    .toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+
   const currentDeductions = { ...(e.deductions || {}) };
   currentDeductions.igss = igssValue.toNumber();
+  currentDeductions.isr = isrValue.toNumber();
 
-  const proratedDeductions = { ...currentDeductions };
-  for (const key in proratedDeductions) {
-    if (key !== 'igss' && proratedDeductions[key]) {
-      proratedDeductions[key] = new Decimal(proratedDeductions[key]).times(baseFactor).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber();
+  // Backfill Bantrab/préstamo desde maestro (borradores antiguos sin cablear)
+  if (new Decimal(e.bantrab || 0).gt(0) && !(new Decimal(currentDeductions.bancos || 0).gt(0))) {
+    currentDeductions.bancos = new Decimal(e.bantrab || 0)
+      .plus(e.bancos || 0)
+      .times(baseFactor)
+      .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
+      .toNumber();
+  }
+  if (!Object.prototype.hasOwnProperty.call(currentDeductions, 'prestamo_empresa')
+      && new Decimal(e.prestamo_empresa || 0).gt(0)) {
+    currentDeductions.prestamo_empresa = new Decimal(e.prestamo_empresa)
+      .times(baseFactor)
+      .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
+      .toNumber();
+  }
+
+  // Deducciones ya son del período (semilla FE o edición); no re-prorratear
+  const proratedDeductions = {};
+  for (const key in currentDeductions) {
+    const raw = currentDeductions[key];
+    if (raw == null || raw === '') {
+      proratedDeductions[key] = 0;
+    } else {
+      proratedDeductions[key] = new Decimal(raw).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber();
     }
   }
 
@@ -113,10 +157,11 @@ const calculateEmployeePayroll = (e, periodType) => {
     totalDeductions = totalDeductions.plus(new Decimal(val || 0));
   }
 
-  // Anticipo 1ra (solo aplica en 2da; no prorratear)
   const anticipo1ra = new Decimal(e.anticipo1ra || 0);
   const net = gross.minus(totalDeductions);
   const netPayable = net.minus(anticipo1ra);
+  const grossRounded = gross.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber();
+  const patronalNum = patronal.toNumber();
 
   const calculated = {
     proratedDeductions,
@@ -126,23 +171,23 @@ const calculateEmployeePayroll = (e, periodType) => {
     bonos: extrasBonos.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(),
     extrasTotal: extrasTotal.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(),
     bonusesSum: bonusesSum.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(),
-    gross: gross.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(),
+    gross: grossRounded,
     ded: totalDeductions.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(),
     net: net.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(),
     anticipo1ra: anticipo1ra.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(),
     netPayable: netPayable.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(),
-    patronal: patronal.toNumber(),
-    companyCost: getCompanyCost({
-      gross: gross.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(),
-      patronal: patronal.toNumber()
-    }),
+    patronal: patronalNum,
+    companyCost: getCompanyCost({ gross: grossRounded, patronal: patronalNum }),
     igssExempt: exempt,
-    hourlyRate: baseSalary.dividedBy(30).dividedBy(8).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(),
+    hourlyRate: sueldoOrd.dividedBy(30).dividedBy(8).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(),
+    vacacionesVal: vacacionesVal.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(),
+    ventasEconomicas: ventasEconomicas.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(),
     periodType: periodType || null
   };
 
   return {
     ...e,
+    extras: extrasObj,
     deductions: currentDeductions,
     calculated
   };

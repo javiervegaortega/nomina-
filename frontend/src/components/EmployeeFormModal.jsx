@@ -12,6 +12,39 @@ import { AuthContext } from '../context/AuthContext';
 import { toast } from 'sonner';
 import { calculateMonthlyISR } from '../data/mockData';
 
+const IGSS_LABORAL_RATE = 0.0483;
+const IGSS_PATRONAL_RATE = 0.1067;
+
+const calcIgssLaboralAmount = (sueldo, jubilado) => {
+  if (jubilado) return '0.00';
+  return ((Number(sueldo) || 0) * IGSS_LABORAL_RATE).toFixed(2);
+};
+
+const calcIgssPatronalAmount = (sueldo, jubilado) => {
+  if (jubilado) return '0.00';
+  return ((Number(sueldo) || 0) * IGSS_PATRONAL_RATE).toFixed(2);
+};
+
+const calcAutoIsrAmount = (sueldo, bono) =>
+  calculateMonthlyISR(Number(sueldo || 0), Number(bono ?? 0)).toFixed(2);
+
+const parseEmployeeFormData = (initialData) => {
+  const data = initialData ? { ...initialData } : {};
+  if (typeof data.dist === 'string') {
+    try { data.dist = JSON.parse(data.dist); } catch (e) { data.dist = {}; }
+  }
+  return data;
+};
+
+const withAutoPayrollFields = (data) => {
+  const next = parseEmployeeFormData(data);
+  const jubilado = !!next.jubilacion;
+  next.igss_laboral = Number(calcIgssLaboralAmount(next.sueldo_ordinario, jubilado));
+  next.igss_patronal = Number(calcIgssPatronalAmount(next.sueldo_ordinario, jubilado));
+  next.isr = Number(calcAutoIsrAmount(next.sueldo_ordinario, next.bon_dec_37_2001));
+  return next;
+};
+
 function SidebarTab({ active, label, icon: IconComponent, onClick }) {
   const activeBg = useColorModeValue('white', 'rgba(30, 41, 59, 0.8)');
   const hoverBg = useColorModeValue('gray.100', 'whiteAlpha.50');
@@ -60,10 +93,11 @@ const SectionTitle = ({ title }) => {
   );
 };
 
-const Field = ({ label, val, onChange, type = 'text', required, error, placeholder }) => {
+const Field = ({ label, val, onChange, type = 'text', required, error, placeholder, readOnly }) => {
   const labelColor = useColorModeValue('gray.700', 'gray.300');
   const inputBg = useColorModeValue('white', 'whiteAlpha.50');
   const inputBorder = useColorModeValue('gray.200', 'whiteAlpha.100');
+  const readOnlyBg = useColorModeValue('gray.50', 'whiteAlpha.100');
   
   return (
     <FormControl isRequired={required} isInvalid={!!error}>
@@ -73,13 +107,14 @@ const Field = ({ label, val, onChange, type = 'text', required, error, placehold
       <Input
         size="sm"
         type={type}
-        value={val || ''}
-        onChange={e => onChange(type === 'number' ? parseFloat(e.target.value) || 0 : e.target.value)}
+        value={val ?? ''}
+        isReadOnly={readOnly}
+        onChange={readOnly ? undefined : (e => onChange(type === 'number' ? parseFloat(e.target.value) || 0 : e.target.value))}
         borderRadius="md"
-        bg={inputBg}
+        bg={readOnly ? readOnlyBg : inputBg}
         borderColor={error ? 'red.400' : inputBorder}
         placeholder={placeholder}
-        _hover={{ borderColor: error ? 'red.500' : 'brand.300' }}
+        _hover={{ borderColor: error ? 'red.500' : readOnly ? inputBorder : 'brand.300' }}
         _focus={{ borderColor: error ? 'red.500' : 'brand.500', boxShadow: 'none' }}
       />
       {error && <Text color="red.500" fontSize="xs" mt={1} fontWeight="bold">{error}</Text>}
@@ -198,24 +233,14 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
   const { user } = useContext(AuthContext);
   const isReadOnly = user?.role === 'AUDITOR';
   const [tab, setTab] = useState('personal');
-  const [form, setForm] = useState(() => {
-    const data = initialData ? { ...initialData } : {};
-    if (typeof data.dist === 'string') {
-      try { data.dist = JSON.parse(data.dist); } catch(e) { data.dist = {}; }
-    }
-    return data;
-  });
+  const [form, setForm] = useState(() => withAutoPayrollFields(initialData));
 
   // Record inline form states
   const [showRecordForm, setShowRecordForm] = useState(null); // 'estudio', 'curso', etc.
   const [editingRecord, setEditingRecord] = useState(null);
 
   useEffect(() => {
-    const data = initialData ? { ...initialData } : {};
-    if (typeof data.dist === 'string') {
-      try { data.dist = JSON.parse(data.dist); } catch(e) { data.dist = {}; }
-    }
-    setForm(data);
+    setForm(withAutoPayrollFields(initialData));
   }, [initialData]);
 
   const handleChange = (field, value) => setForm(prev => ({ ...prev, [field]: value }));
@@ -233,28 +258,7 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
   const handleSave = () => {
     if (distTotal !== 100) return;
     if (duplicateDpi || duplicateIgss) return;
-    const finalForm = { ...form };
-    // Persist auto-calculated ISR if not manually set
-    if (!finalForm.isr || Number(finalForm.isr) === 0) {
-      const autoISR = calculateMonthlyISR(
-        Number(finalForm.sueldo_ordinario || 0),
-        Number(finalForm.bon_dec_37_2001) || 0
-      );
-      finalForm.isr = Number(autoISR.toFixed(2));
-    }
-    // Persist auto-calculated IGSS (0 si jubilado)
-    if (finalForm.jubilacion) {
-      finalForm.igss_laboral = 0;
-      finalForm.igss_patronal = 0;
-    } else {
-      if (!finalForm.igss_laboral || Number(finalForm.igss_laboral) === 0) {
-        finalForm.igss_laboral = Number(calcIgssLaboral(finalForm.sueldo_ordinario, false));
-      }
-      if (!finalForm.igss_patronal || Number(finalForm.igss_patronal) === 0) {
-        finalForm.igss_patronal = Number(calcIgssPatronal(finalForm.sueldo_ordinario, false));
-      }
-    }
-    onSave(finalForm);
+    onSave(withAutoPayrollFields(form));
   };
 
   let parsedDistValues = [];
@@ -278,19 +282,11 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
   const distBoxBg = useColorModeValue('white', 'whiteAlpha.50');
   const distBoxBorder = useColorModeValue('gray.200', 'whiteAlpha.100');
 
-  // IGSS Auto calculations (jubilados: 0)
-  const calcIgssPatronal = (sueldo, jubilado = form.jubilacion) => {
-    if (jubilado) return '0.00';
-    return ((Number(sueldo) || 0) * 0.1067).toFixed(2);
-  };
-  const calcIrtra = () => '20.00';
-  const calcIntecap = () => '20.00';
-  const calcIgssLaboral = (sueldo, jubilado = form.jubilacion) => {
-    if (jubilado) return '0.00';
-    return ((Number(sueldo) || 0) * 0.0483).toFixed(2);
-  };
+  const autoIgssLaboral = calcIgssLaboralAmount(form.sueldo_ordinario, form.jubilacion);
+  const autoIgssPatronal = calcIgssPatronalAmount(form.sueldo_ordinario, form.jubilacion);
+  const autoIsr = calcAutoIsrAmount(form.sueldo_ordinario, form.bon_dec_37_2001);
 
-  const igssPatronal = Number(form.igss_patronal) || Number(calcIgssPatronal(form.sueldo_ordinario));
+  const igssPatronal = Number(autoIgssPatronal);
   const irtra = Number(form.irtra) || 20;
   const intecap = Number(form.intecap) || 20;
   const totalIgssPatronal = (igssPatronal + irtra + intecap).toFixed(2);
@@ -594,9 +590,7 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
                   <FormControl display="flex" alignItems="center" h="100%">
                     <Checkbox isChecked={form.jubilacion} onChange={e => {
                       const checked = e.target.checked;
-                      handleChange('jubilacion', checked);
-                      handleChange('igss_laboral', calcIgssLaboral(form.sueldo_ordinario, checked));
-                      handleChange('igss_patronal', calcIgssPatronal(form.sueldo_ordinario, checked));
+                      setForm(prev => withAutoPayrollFields({ ...prev, jubilacion: checked }));
                     }}>
                       <Text fontSize="sm" fontWeight={600} ml={2}>Jubilación</Text>
                     </Checkbox>
@@ -613,14 +607,10 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
                   <Box>
                     <SectionTitle title="Devengados" />
                     <Field label="Sueldo Ordinario (Obligatorio)" type="number" val={form.sueldo_ordinario} onChange={v => {
-                      handleChange('sueldo_ordinario', v);
-                      handleChange('igss_laboral', calcIgssLaboral(v));
-                      handleChange('igss_patronal', calcIgssPatronal(v));
-                      handleChange('isr', calculateMonthlyISR(Number(v || 0), Number(form.bon_dec_37_2001) || 0).toFixed(2));
+                      setForm(prev => withAutoPayrollFields({ ...prev, sueldo_ordinario: v }));
                     }} required />
                     <Box mt={4}><Field label="Bono Decreto / Incentivo (Oblig.)" type="number" val={form.bon_dec_37_2001 ?? 250} onChange={v => {
-                      handleChange('bon_dec_37_2001', v);
-                      handleChange('isr', calculateMonthlyISR(Number(form.sueldo_ordinario || 0), Number(v) || 0).toFixed(2));
+                      setForm(prev => withAutoPayrollFields({ ...prev, bon_dec_37_2001: v }));
                     }} required /></Box>
                     <Box mt={4}><Field label="Otros Ingresos" type="number" val={form.otro_ingresos ?? 0} onChange={v => handleChange('otro_ingresos', v)} /></Box>
                     <Box mt={4}><Field label="Vacaciones" type="number" val={form.vacaciones ?? 0} onChange={v => handleChange('vacaciones', v)} /></Box>
@@ -630,8 +620,8 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
                   {/* DESCUENTOS */}
                   <Box>
                     <SectionTitle title="Descuentos" />
-                    <Field label="IGSS laboral (4.83% automático)" type="number" val={(!form.igss_laboral || Number(form.igss_laboral) === 0) ? calcIgssLaboral(form.sueldo_ordinario) : form.igss_laboral} onChange={v => handleChange('igss_laboral', v)} />
-                    <Box mt={4}><Field label="ISR (Automático 5%-7%)" type="number" val={(!form.isr || Number(form.isr) === 0) ? calculateMonthlyISR(Number(form.sueldo_ordinario || 0), Number(form.bon_dec_37_2001) || 0).toFixed(2) : form.isr} onChange={v => handleChange('isr', v)} /></Box>
+                    <Field label="IGSS laboral (4.83% automático)" type="number" readOnly val={autoIgssLaboral} />
+                    <Box mt={4}><Field label="ISR (Automático 5%-7%)" type="number" readOnly val={autoIsr} /></Box>
                     <Box mt={4}><Field label="Anticipo Quincenal" type="number" val={form.anticipo_quincenal ?? 0} onChange={v => handleChange('anticipo_quincenal', v)} /></Box>
                     <Box mt={4}><Field label="Bantrab" type="number" val={form.bantrab ?? 0} onChange={v => handleChange('bantrab', v)} /></Box>
                     <Box mt={4}><Field label="Boleto de ornato" type="number" val={form.boleto_de_ornato ?? 0} onChange={v => handleChange('boleto_de_ornato', v)} /></Box>
@@ -650,7 +640,7 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
                   <SectionTitle title="Detalle IGSS Patronal" />
                   <Box p={5} borderRadius="xl" bg={distBoxBg} border="1px solid" borderColor={distBoxBorder}>
                     <SimpleGrid columns={{ base: 1, sm: 2 }} spacing={6}>
-                      <Field label="IGSS Patronal (10.67% auto)" type="number" val={(!form.igss_patronal || Number(form.igss_patronal) === 0) ? calcIgssPatronal(form.sueldo_ordinario) : form.igss_patronal} onChange={v => handleChange('igss_patronal', v)} />
+                      <Field label="IGSS Patronal (10.67% auto)" type="number" readOnly val={autoIgssPatronal} />
                       <Field label="Irtra (Q 20.00 fijo por ley)" type="number" val={(!form.irtra || Number(form.irtra) === 0) ? '20.00' : form.irtra} onChange={v => handleChange('irtra', v)} />
                       <Field label="Intecap (Q 20.00 fijo por ley)" type="number" val={(!form.intecap || Number(form.intecap) === 0) ? '20.00' : form.intecap} onChange={v => handleChange('intecap', v)} />
                       <Box>

@@ -28,9 +28,32 @@ const getPayrolls = async (req, res) => {
 
 const { calculatePayrollBatch } = require('../services/payrollCalculator.service');
 
+/** Exige exactamente una empresa concreta al cerrar/crear historial de nómina. */
+const requireSingleCompany = (companies) => {
+  let comps = companies;
+  if (typeof comps === 'string') {
+    try { comps = JSON.parse(comps); } catch { comps = []; }
+  }
+  if (!Array.isArray(comps)) comps = [];
+  const normalized = comps.map(c => (c == null ? '' : String(c).trim())).filter(Boolean);
+  const hasAllToken = normalized.some(c => {
+    const s = c.toLowerCase();
+    return s === 'all' || s === 'todas' || s === 'todas las empresas';
+  });
+  if (normalized.length !== 1 || hasAllToken) {
+    const err = new Error(
+      'Debe seleccionar una empresa específica. No se permite cerrar nóminas para todas las empresas a la vez.'
+    );
+    err.status = 400;
+    throw err;
+  }
+  return normalized;
+};
+
 const createPayroll = async (req, res) => {
   try {
     const payload = req.body;
+    payload.companies = requireSingleCompany(payload.companies);
     
     // SERVER-SIDE CALCULATION ENFORCEMENT
     let emps = typeof payload.data === 'string' ? JSON.parse(payload.data) : payload.data;
@@ -42,7 +65,7 @@ const createPayroll = async (req, res) => {
     const newPayroll = await PayrollHistory.create(payload);
     res.status(201).json(newPayroll);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    res.status(err.status || 400).json({ error: err.message });
   }
 };
 

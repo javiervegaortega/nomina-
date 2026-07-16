@@ -61,6 +61,7 @@ export default function Employees() {
 
   // Strip accents/tildes for search comparison
   const normalize = useCallback((str) => str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase(), []);
+  const [filterCompany, setFilterCompany] = useState('ALL');
   const [filterDept, setFilterDept] = useState('ALL');
   const [filterArea, setFilterArea] = useState('ALL');
   const [filterDiv, setFilterDiv] = useState('ALL');
@@ -129,6 +130,10 @@ export default function Employees() {
   const filteredEmployees = useMemo(() => {
     const searchNorm = normalize(debouncedSearch);
     return employees.filter(e => {
+      if (filterCompany !== 'ALL') {
+        const empCompanyId = String(e.empresa_principal || e.companyId || '');
+        if (empCompanyId !== filterCompany) return false;
+      }
       if (filterDept !== 'ALL' && getEmployeeDepartment(e) !== filterDept) return false;
       if (filterArea !== 'ALL' && String(e.areaId) !== filterArea) return false;
       if (filterDiv !== 'ALL' && String(e.divisionId) !== filterDiv) return false;
@@ -146,7 +151,7 @@ export default function Employees() {
              (e.no_igss || '').includes(debouncedSearch) ||
              (e.nit || '').includes(debouncedSearch);
     });
-  }, [employees, debouncedSearch, filterDept, filterArea, filterDiv, filterSubdiv, filterStatus, normalize]);
+  }, [employees, debouncedSearch, filterCompany, filterDept, filterArea, filterDiv, filterSubdiv, filterStatus, normalize]);
 
   const pagination = usePagination(filteredEmployees, 10);
 
@@ -942,11 +947,11 @@ export default function Employees() {
           >
             Filtros {showFilters ? '▲' : '▼'}
           </Button>
-          {(filterDept !== 'ALL' || filterArea !== 'ALL' || filterDiv !== 'ALL' || filterSubdiv !== 'ALL' || filterStatus !== 'ALL') && (
+          {(filterCompany !== 'ALL' || filterDept !== 'ALL' || filterArea !== 'ALL' || filterDiv !== 'ALL' || filterSubdiv !== 'ALL' || filterStatus !== 'ALL') && (
             <Button
               variant="ghost"
               leftIcon={<X size={16} />}
-              onClick={() => { setFilterDept('ALL'); setFilterArea('ALL'); setFilterDiv('ALL'); setFilterSubdiv('ALL'); setFilterStatus('ALL'); }}
+              onClick={() => { setFilterCompany('ALL'); setFilterDept('ALL'); setFilterArea('ALL'); setFilterDiv('ALL'); setFilterSubdiv('ALL'); setFilterStatus('ALL'); }}
             >
               Limpiar
             </Button>
@@ -963,6 +968,20 @@ export default function Employees() {
             borderColor={borderColor}
             flexWrap="wrap"
           >
+            <FormControl minW={{ base: '100%', sm: '180px' }} maxW={{ base: '100%', sm: '240px' }}>
+              <FormLabel fontSize="xs" color={textSecondary} fontWeight="600" textTransform="uppercase">Empresa</FormLabel>
+              <Select
+                value={filterCompany}
+                onChange={e => setFilterCompany(e.target.value)}
+                borderRadius="lg"
+                size="sm"
+              >
+                <option value="ALL">Todas</option>
+                {(companies || []).map(c => (
+                  <option key={c.id} value={String(c.id)}>{c.nombre_comercial || c.razon_social}</option>
+                ))}
+              </Select>
+            </FormControl>
             <FormControl minW={{ base: '100%', sm: '180px' }} maxW={{ base: '100%', sm: '240px' }}>
               <FormLabel fontSize="xs" color={textSecondary} fontWeight="600" textTransform="uppercase">Departamento</FormLabel>
               <Select

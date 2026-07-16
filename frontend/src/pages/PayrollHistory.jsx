@@ -8,6 +8,7 @@ import { History, Calendar, Trash2, Eye, Download, FileText, CheckCircle2, Arrow
 import { formatQ, CUOTA_LABORAL_RATE, CUOTA_PATRONAL_RATE } from '../data/mockData';
 import { getNetPayable } from '../utils/payrollPeriod';
 import { exportPayrollReportExcel } from '../utils/payrollReports';
+import { matchesDepartmentFilter, normalizeMultiFilter, resolveEmployeeDepartment } from '../utils/orgFilters';
 import ReportPreviewModal from '../components/ReportPreviewModal';
 import EmployeeSummaryModal from '../components/EmployeeSummaryModal';
 import {
@@ -408,7 +409,7 @@ export default function PayrollHistory() {
 function calculateGroupTotals(groupData, periodType) {
   let totSalarioOrd = 0, totBonInc = 0, totBonDec = 0, totBonos = 0, totDevengado = 0;
   let totHorasSimples = 0, totValSimple = 0, totHorasDobles = 0, totValDouble = 0, totOtrosIngresos = 0, totSalarioTotal = 0;
-  let totIgss = 0, totIsr = 0, totCafe = 0, totCell = 0, totUniform = 0, totShoes = 0, totEquipo = 0, totProduct = 0, totBancos = 0, totOtros = 0, totJudiciales = 0, totSeguro = 0, totParqueo = 0, totBoleta = 0, totOtrosEgresos = 0, totTotalEgresos = 0;
+  let totIgss = 0, totIsr = 0, totCafe = 0, totCell = 0, totUniform = 0, totShoes = 0, totEquipo = 0, totProduct = 0, totBancos = 0, totPrestamo = 0, totOtros = 0, totJudiciales = 0, totSeguro = 0, totParqueo = 0, totBoleta = 0, totOtrosEgresos = 0, totTotalEgresos = 0;
   let totLiquido = 0, totQuincena1 = 0, totQuincena2 = 0;
 
   groupData.forEach(e => {
@@ -433,26 +434,28 @@ function calculateGroupTotals(groupData, periodType) {
       ? Number(e.calculated.gross)
       : (devengado + simplesVal + doblesVal + otrosIngresos + comisiones);
 
-    const igss = Number(e.calculated?.proratedDeductions?.igss ?? e.deductions?.igss) || 0;
-    const isr = Number(e.calculated?.proratedDeductions?.isr ?? e.deductions?.isr) || 0;
-    const cafe = Number(e.deductions?.cafe) || 0;
-    const cell = Number(e.deductions?.cell) || 0;
-    const uniform = Number(e.deductions?.uniform) || 0;
-    const shoes = Number(e.deductions?.shoes) || 0;
-    const equipo = Number(e.deductions?.equipo) || 0;
-    const product = Number(e.deductions?.product) || 0;
-    const bancos = Number(e.deductions?.bancos) || 0;
-    const otros = Number(e.deductions?.otros) || 0;
-    const judiciales = Number(e.deductions?.judiciales) || 0;
-    const seguro = Number(e.deductions?.seguro) || 0;
-    const parqueo = Number(e.deductions?.parqueo) || 0;
-    const boleto_de_ornato = Number(e.deductions?.boleto_de_ornato) || 0;
-    const otros_egresos = Number(e.deductions?.otros_egresos) || 0;
+    const proDedRow = e.calculated?.proratedDeductions || e.deductions || {};
+    const igss = Number(proDedRow.igss) || 0;
+    const isr = Number(proDedRow.isr) || 0;
+    const cafe = Number(proDedRow.cafe) || 0;
+    const cell = Number(proDedRow.cell) || 0;
+    const uniform = Number(proDedRow.uniform) || 0;
+    const shoes = Number(proDedRow.shoes) || 0;
+    const equipo = Number(proDedRow.equipo) || 0;
+    const product = Number(proDedRow.product) || 0;
+    const bancos = Number(proDedRow.bancos) || 0;
+    const prestamo_empresa = Number(proDedRow.prestamo_empresa) || 0;
+    const otros = Number(proDedRow.otros) || 0;
+    const judiciales = Number(proDedRow.judiciales) || 0;
+    const seguro = Number(proDedRow.seguro) || 0;
+    const parqueo = Number(proDedRow.parqueo) || 0;
+    const boleto_de_ornato = Number(proDedRow.boleto_de_ornato) || 0;
+    const otros_egresos = Number(proDedRow.otros_egresos) || 0;
     const anticipo = Number(e.anticipo1ra) || 0;
     
     const totalEgresos = e.calculated?.ded != null
       ? Number(e.calculated.ded)
-      : (igss + isr + cafe + cell + uniform + shoes + equipo + product + bancos + otros + judiciales + seguro + parqueo + boleto_de_ornato + otros_egresos);
+      : (igss + isr + cafe + cell + uniform + shoes + equipo + product + bancos + prestamo_empresa + otros + judiciales + seguro + parqueo + boleto_de_ornato + otros_egresos);
     const liquido = e.calculated?.net != null ? Number(e.calculated.net) : (salarioTotal - totalEgresos);
     const q1 = periodType === '2da' ? anticipo : liquido;
     const q2 = periodType === '2da' ? liquido - anticipo : 0;
@@ -479,6 +482,7 @@ function calculateGroupTotals(groupData, periodType) {
     totEquipo += equipo;
     totProduct += product;
     totBancos += bancos;
+    totPrestamo += prestamo_empresa;
     totOtros += otros;
     totJudiciales += judiciales;
     totSeguro += seguro;
@@ -494,7 +498,7 @@ function calculateGroupTotals(groupData, periodType) {
   return {
     totSalarioOrd, totBonInc, totBonDec, totBonos, totDevengado,
     totHorasSimples, totValSimple, totHorasDobles, totValDouble, totOtrosIngresos, totSalarioTotal,
-    totIgss, totIsr, totCafe, totCell, totUniform, totShoes, totEquipo, totProduct, totBancos, totOtros, totJudiciales, totSeguro, totParqueo, totBoleta, totOtrosEgresos, totTotalEgresos,
+    totIgss, totIsr, totCafe, totCell, totUniform, totShoes, totEquipo, totProduct, totBancos, totPrestamo, totOtros, totJudiciales, totSeguro, totParqueo, totBoleta, totOtrosEgresos, totTotalEgresos,
     totLiquido, totQuincena1, totQuincena2
   };
 }
@@ -569,14 +573,14 @@ function PayrollHistoryDetail({ group, onBack }) {
       if (filterStatus === 'Activo' && String(e.estado).toLowerCase() !== 'activo') return false;
       if (filterStatus === 'De Baja' && String(e.estado).toLowerCase() !== 'de baja') return false;
       
-      const liveEmp = employees?.find(emp => emp.dpi === e.dpi) || e;
-      const dept = liveEmp.departamento_laboral || e.departamento_laboral || liveEmp.departmentId;
+      const liveEmp = employees?.find(emp => String(emp.dpi) === String(e.dpi)) || e;
+      const mergedEmp = { ...e, ...liveEmp, departmentId: liveEmp.departmentId ?? e.departmentId, departamento_laboral: liveEmp.departamento_laboral || e.departamento_laboral };
       const area = liveEmp.areaId || e.areaId;
       const div = liveEmp.divisionId || e.divisionId;
       const subdiv = liveEmp.subdivisionId || e.subdivisionId;
       const dim5 = liveEmp.nivel_5 || liveEmp.dimension_5 || e.nivel_5 || e.dimension_5;
 
-      if (filterDept.length > 0 && !filterDept.includes(dept) && !filterDept.includes(String(dept))) return false;
+      if (!matchesDepartmentFilter(mergedEmp, filterDept, departments)) return false;
       if (filterArea.length > 0 && !filterArea.includes(String(area))) return false;
       if (filterDiv.length > 0 && !filterDiv.includes(String(div))) return false;
       if (filterSubdiv.length > 0 && !filterSubdiv.includes(String(subdiv))) return false;
@@ -610,7 +614,7 @@ function PayrollHistoryDetail({ group, onBack }) {
     });
     
     return { data: filteredEmps, totals: { grossTotal: fGrossTotal, dedTotal: fDedTotal, patronalTotal: fPatronalTotal, netTotal: fGrossTotal - fDedTotal } };
-  }, [group, filterStatus, filterDept, filterArea, filterDiv, filterSubdiv, filterDim5, searchQuery, areas]);
+  }, [group, filterStatus, filterDept, filterArea, filterDiv, filterSubdiv, filterDim5, searchQuery, areas, departments, employees]);
 
   const groupedData = useMemo(() => {
     if (filterDept.length === 0 && filterArea.length === 0 && filterDiv.length === 0 && filterSubdiv.length === 0 && filterDim5.length === 0) {
@@ -619,8 +623,9 @@ function PayrollHistoryDetail({ group, onBack }) {
 
     const groups = {};
     data.forEach(e => {
-      const liveEmp = employees?.find(emp => emp.dpi === e.dpi) || e;
-      const dept = liveEmp.departamento_laboral || e.departamento_laboral || liveEmp.departmentId;
+      const liveEmp = employees?.find(emp => String(emp.dpi) === String(e.dpi)) || e;
+      const mergedEmp = { ...e, ...liveEmp, departmentId: liveEmp.departmentId ?? e.departmentId, departamento_laboral: liveEmp.departamento_laboral || e.departamento_laboral };
+      const { name: deptName } = resolveEmployeeDepartment(mergedEmp, departments);
       const area = liveEmp.areaId || e.areaId;
       const div = liveEmp.divisionId || e.divisionId;
       const subdiv = liveEmp.subdivisionId || e.subdivisionId;
@@ -628,7 +633,7 @@ function PayrollHistoryDetail({ group, onBack }) {
 
       const keyParts = [];
       if (filterDept.length > 0) {
-        keyParts.push(`Depto: ${dept || 'Sin Departamento'}`);
+        keyParts.push(`Depto: ${deptName}`);
       }
       if (filterDiv.length > 0) {
         const divName = divisions?.find(d => String(d.id) === String(div))?.nombre || 'Sin División';
@@ -657,7 +662,7 @@ function PayrollHistoryDetail({ group, onBack }) {
       title: key,
       data: groups[key]
     }));
-  }, [data, filterDept, filterArea, filterDiv, filterSubdiv, divisions, areas, subdivisions]);
+  }, [data, filterDept, filterArea, filterDiv, filterSubdiv, filterDim5, divisions, areas, departments, subdivisions, dimension5s, employees]);
 
   const exportExcel = async () => {
     const XLSX = await getXLSX();
@@ -679,23 +684,25 @@ function PayrollHistoryDetail({ group, onBack }) {
         'Valor Horas Simples': e.extras?.simplesVal || 0,
         'Horas Dobles': e.extras?.doblesQty || 0,
         'Valor Horas Dobles': e.extras?.doblesVal || 0,
-        'Otros Ingresos': e.extras?.otrosIngresos || 0,
-        'Salario Total': e.calculated.gross + (e.extras?.simplesVal || 0) + (e.extras?.doblesVal || 0) + (e.extras?.otrosIngresos || 0),
-        'IGSS': e.deductions?.igss || 0,
-        'ISR': e.deductions?.isr || 0,
-        'Cafetería': e.deductions?.cafe || 0,
-        'Celular': e.deductions?.cell || 0,
-        'Uniforme': e.deductions?.uniform || 0,
-        'Calzado': e.deductions?.shoes || 0,
-        'Equipo': e.deductions?.equipo || 0,
-        'Producto': e.deductions?.product || 0,
-        'Bancos': e.deductions?.bancos || 0,
-        'Otros Deducción': e.deductions?.otros || 0,
-        'Judiciales': e.deductions?.judiciales || 0,
-        'Seguro': e.deductions?.seguro || 0,
-        'Parqueo': e.deductions?.parqueo || 0,
-        'Boleta de Ornato': e.deductions?.boleto_de_ornato || 0,
-        'Otros Egresos': e.deductions?.otros_egresos || 0,
+        'Otros Ingresos': (e.extras?.otrosIngresos || 0) + (e.extras?.vacacionesVal || 0) + (e.extras?.ventasEconomicas || 0),
+        // gross ya incluye HE y otros ingresos — no sumar de nuevo
+        'Salario Total': e.calculated.gross,
+        'IGSS': e.calculated?.proratedDeductions?.igss ?? e.deductions?.igss ?? 0,
+        'ISR': e.calculated?.proratedDeductions?.isr ?? e.deductions?.isr ?? 0,
+        'Cafetería': e.calculated?.proratedDeductions?.cafe ?? e.deductions?.cafe ?? 0,
+        'Celular': e.calculated?.proratedDeductions?.cell ?? e.deductions?.cell ?? 0,
+        'Uniforme': e.calculated?.proratedDeductions?.uniform ?? e.deductions?.uniform ?? 0,
+        'Calzado': e.calculated?.proratedDeductions?.shoes ?? e.deductions?.shoes ?? 0,
+        'Equipo': e.calculated?.proratedDeductions?.equipo ?? e.deductions?.equipo ?? 0,
+        'Producto': e.calculated?.proratedDeductions?.product ?? e.deductions?.product ?? 0,
+        'Bantrab': e.calculated?.proratedDeductions?.bancos ?? e.deductions?.bancos ?? 0,
+        'Préstamo Empresa': e.calculated?.proratedDeductions?.prestamo_empresa ?? e.deductions?.prestamo_empresa ?? 0,
+        'Otros Deducción': e.calculated?.proratedDeductions?.otros ?? e.deductions?.otros ?? 0,
+        'Judiciales': e.calculated?.proratedDeductions?.judiciales ?? e.deductions?.judiciales ?? 0,
+        'Seguro': e.calculated?.proratedDeductions?.seguro ?? e.deductions?.seguro ?? 0,
+        'Parqueo': e.calculated?.proratedDeductions?.parqueo ?? e.deductions?.parqueo ?? 0,
+        'Boleta de Ornato': e.calculated?.proratedDeductions?.boleto_de_ornato ?? e.deductions?.boleto_de_ornato ?? 0,
+        'Otros Egresos': e.calculated?.proratedDeductions?.otros_egresos ?? e.deductions?.otros_egresos ?? 0,
         'Total Egresos': e.calculated.ded,
         'Líquido a Recibir': getNetPayable(e, group.periodType),
         '1ra Quincena': group.periodType === '2da' ? (e.anticipo1ra || 0) : getNetPayable(e, group.periodType),
@@ -956,7 +963,9 @@ function PayrollHistoryDetail({ group, onBack }) {
         const net = e.calculated.net;
         const q1 = group.periodType === '2da' ? anticipo : net;
         const q2 = group.periodType === '2da' ? net - anticipo : 0;
-        const totalIngresos = e.calculated.gross + (e.extras?.simplesVal || 0) + (e.extras?.doblesVal || 0) + (e.extras?.otrosIngresos || 0);
+        // gross ya incluye HE y otros ingresos — no sumar de nuevo
+        const totalIngresos = e.calculated.gross;
+        const proDed = e.calculated?.proratedDeductions || e.deductions || {};
 
         return {
           'No.': idx + 1,
@@ -966,21 +975,22 @@ function PayrollHistoryDetail({ group, onBack }) {
           'PUESTO': e.puesto || 'N/A',
           'Dias laborados': e.days || 30,
           'Salario ordinario': e.calculated.baseSalary,
-          'bono': e.calculated.bonusLey + e.calculated.bonusDec + e.calculated.bonos,
+          'bono': e.calculated.bonusLey + e.calculated.bonusDec + e.calculated.bonos + (e.calculated.bonusesSum || 0),
           'horas simples': e.extras?.simplesQty || 0,
           'total  horas simples': e.extras?.simplesVal || 0,
           'horas dobles': e.extras?.doblesQty || 0,
           'total horas dobles': e.extras?.doblesVal || 0,
-          'otros ingresos': e.extras?.otrosIngresos || 0,
+          'otros ingresos': (e.extras?.otrosIngresos || 0) + (e.extras?.vacacionesVal || 0) + (e.extras?.ventasEconomicas || 0),
           'total ingresos': totalIngresos,
-          'igss': e.deductions?.igss || 0,
-          'isr': e.deductions?.isr || 0,
-          'bantrab': e.deductions?.bancos || 0,
-          'celular': e.deductions?.cell || 0,
-          'UNIFORME': e.deductions?.uniform || 0,
-          'CALZADO': e.deductions?.shoes || 0,
-          'CAFETERIA': e.deductions?.cafe || 0,
-          'otros egresos': (e.deductions?.otros || 0) + (e.deductions?.judiciales || 0) + (e.deductions?.seguro || 0) + (e.deductions?.parqueo || 0) + (e.deductions?.boleto_de_ornato || 0) + (e.deductions?.otros_egresos || 0),
+          'igss': proDed.igss || 0,
+          'isr': proDed.isr || 0,
+          'bantrab': proDed.bancos || 0,
+          'prestamo': proDed.prestamo_empresa || 0,
+          'celular': proDed.cell || 0,
+          'UNIFORME': proDed.uniform || 0,
+          'CALZADO': proDed.shoes || 0,
+          'CAFETERIA': proDed.cafe || 0,
+          'otros egresos': (proDed.otros || 0) + (proDed.judiciales || 0) + (proDed.seguro || 0) + (proDed.parqueo || 0) + (proDed.boleto_de_ornato || 0) + (proDed.otros_egresos || 0),
           'total egresos': e.calculated.ded,
           'LIQUIDO A RECIBIR': net,
           'PRIMERA QUINCENA': q1,
@@ -1338,9 +1348,9 @@ function PayrollHistoryDetail({ group, onBack }) {
               {filterDept.length > 0 ? `${filterDept.length} Deptos...` : 'Departamento...'}
             </MenuButton>
             <MenuList maxH="300px" overflowY="auto" zIndex={100} boxShadow="lg">
-              <MenuOptionGroup type="checkbox" value={filterDept} onChange={setFilterDept}>
+              <MenuOptionGroup type="checkbox" value={filterDept} onChange={(v) => setFilterDept(normalizeMultiFilter(v))}>
                 {(departments || []).map(d => (
-                  <MenuItemOption key={d.id} value={d.nombre_dimension} fontSize="sm">{d.nombre_dimension}</MenuItemOption>
+                  <MenuItemOption key={d.id} value={String(d.id)} fontSize="sm">{d.nombre_dimension}</MenuItemOption>
                 ))}
               </MenuOptionGroup>
             </MenuList>
@@ -1539,7 +1549,8 @@ function PayrollHistoryDetail({ group, onBack }) {
                   <Th minW="95px" w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Calzado</Th>
                   <Th minW="95px" w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Equipo</Th>
                   <Th minW="95px" w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Producto</Th>
-                  <Th minW="95px" w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Bancos</Th>
+                  <Th minW="95px" w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Bantrab</Th>
+                  <Th minW="100px" w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Préstamo</Th>
                   <Th minW="95px" w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Otros</Th>
                   <Th minW="95px" w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Judiciales</Th>
                   <Th minW="95px" w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Seguro</Th>
@@ -1563,11 +1574,17 @@ function PayrollHistoryDetail({ group, onBack }) {
           </Thead>
           <Tbody>
             {groupData.data.map((e, idx) => {
-              const { baseSalary, bonusLey, bonusDec, bonos, extrasTotal, gross, ded, net } = e.calculated;
+              const { baseSalary, bonusLey, bonusDec, bonos, bonusesSum, gross, ded, net } = e.calculated || {};
+              const bonosTotal = (bonos || 0) + (bonusesSum || 0);
+              const tDevengado = (baseSalary || 0) + (bonusLey || 0) + (bonusDec || 0) + bonosTotal;
+              const proDed = e.calculated?.proratedDeductions || e.deductions || {};
               const anticipo = e.anticipo1ra || 0;
               const is2da = group.periodType === '2da';
               const q1 = is2da ? anticipo : net;
               const q2 = is2da ? net - anticipo : 0;
+              const otrosIngresosShow = (Number(e.extras?.otrosIngresos) || 0)
+                + (Number(e.extras?.vacacionesVal) || 0)
+                + (Number(e.extras?.ventasEconomicas) || 0);
 
               return (
                 <Tr key={e.id + '-' + idx} _hover={{ bg: hoverBg }}>
@@ -1590,35 +1607,36 @@ function PayrollHistoryDetail({ group, onBack }) {
                     <>
                       <Td fontFamily="mono" fontSize="xs">{formatQ(bonusLey)}</Td>
                       <Td fontFamily="mono" fontSize="xs">{formatQ(bonusDec)}</Td>
-                      <Td fontFamily="mono" fontSize="xs">{formatQ(bonos)}</Td>
-                      <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500">{formatQ(gross)}</Td>
+                      <Td fontFamily="mono" fontSize="xs">{formatQ(bonosTotal)}</Td>
+                      <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500">{formatQ(tDevengado)}</Td>
                       
                       <Td fontSize="xs">{e.extras?.simplesQty || 0}</Td>
                       <Td fontFamily="mono" fontSize="xs">{formatQ(e.extras?.simplesVal || 0)}</Td>
                       <Td fontSize="xs">{e.extras?.doblesQty || 0}</Td>
                       <Td fontFamily="mono" fontSize="xs">{formatQ(e.extras?.doblesVal || 0)}</Td>
-                      <Td fontFamily="mono" fontSize="xs">{formatQ(e.extras?.otrosIngresos || 0)}</Td>
+                      <Td fontFamily="mono" fontSize="xs">{formatQ(otrosIngresosShow)}</Td>
                     </>
                   )}
-                  <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="gold.500">{formatQ(gross + (e.extras?.simplesVal || 0) + (e.extras?.doblesVal || 0) + (e.extras?.otrosIngresos || 0) - (baseSalary + bonusLey + bonusDec + bonos))}</Td>
+                  <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="gold.500">{formatQ(gross)}</Td>
 
                   {viewMode === 'detailed' && (
                     <>
-                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.igss || 0)}</Td>
-                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.isr || 0)}</Td>
-                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.cafe || 0)}</Td>
-                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.cell || 0)}</Td>
-                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.uniform || 0)}</Td>
-                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.shoes || 0)}</Td>
-                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.equipo || 0)}</Td>
-                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.product || 0)}</Td>
-                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.bancos || 0)}</Td>
-                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.otros || 0)}</Td>
-                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.judiciales || 0)}</Td>
-                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.seguro || 0)}</Td>
-                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.parqueo || 0)}</Td>
-                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.boleto_de_ornato || 0)}</Td>
-                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(e.deductions?.otros_egresos || 0)}</Td>
+                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(Number(proDed.igss) || 0)}</Td>
+                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(Number(proDed.isr) || 0)}</Td>
+                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(Number(proDed.cafe) || 0)}</Td>
+                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(Number(proDed.cell) || 0)}</Td>
+                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(Number(proDed.uniform) || 0)}</Td>
+                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(Number(proDed.shoes) || 0)}</Td>
+                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(Number(proDed.equipo) || 0)}</Td>
+                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(Number(proDed.product) || 0)}</Td>
+                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(Number(proDed.bancos) || 0)}</Td>
+                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(Number(proDed.prestamo_empresa) || 0)}</Td>
+                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(Number(proDed.otros) || 0)}</Td>
+                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(Number(proDed.judiciales) || 0)}</Td>
+                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(Number(proDed.seguro) || 0)}</Td>
+                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(Number(proDed.parqueo) || 0)}</Td>
+                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(Number(proDed.boleto_de_ornato) || 0)}</Td>
+                      <Td fontFamily="mono" fontSize="xs" color="red.400">{formatQ(Number(proDed.otros_egresos) || 0)}</Td>
                     </>
                   )}
                   <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="red.500">{formatQ(ded)}</Td>
@@ -1694,6 +1712,7 @@ function PayrollHistoryDetail({ group, onBack }) {
                   <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totEquipo)}</Th>
                   <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totProduct)}</Th>
                   <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totBancos)}</Th>
+                  <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totPrestamo)}</Th>
                   <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totOtros)}</Th>
                   <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totJudiciales)}</Th>
                   <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(groupTotals.totSeguro)}</Th>
@@ -1880,17 +1899,22 @@ function BoletaTemplate({ emp, group, isPrint, companies }) {
   const otrosIngresos = emp.extras?.otrosIngresos || 0;
   const gross = emp.calculated?.gross || 0;
 
-  const igss = Number(emp.deductions?.igss) || 0;
-  const bancos = Number(emp.deductions?.bancos) || 0;
-  const isr = Number(emp.deductions?.isr) || 0;
-  const cell = Number(emp.deductions?.cell) || 0;
-  const otros_egresos = Number(emp.deductions?.otros_egresos) || 0;
+  const proDedBoleta = emp.calculated?.proratedDeductions || emp.deductions || {};
+  const igss = Number(proDedBoleta.igss) || 0;
+  const bancos = Number(proDedBoleta.bancos) || 0;
+  const prestamoBoleta = Number(proDedBoleta.prestamo_empresa) || 0;
+  const isr = Number(proDedBoleta.isr) || 0;
+  const cell = Number(proDedBoleta.cell) || 0;
+  const otros_egresos = Number(proDedBoleta.otros_egresos) || 0;
   const anticipo = Number(emp.anticipo1ra) || 0;
-  const otrosDesc = (Number(emp.deductions?.cafe) || 0) + (Number(emp.deductions?.uniform) || 0) +
-    (Number(emp.deductions?.shoes) || 0) + (Number(emp.deductions?.equipo) || 0) +
-    (Number(emp.deductions?.product) || 0) + (Number(emp.deductions?.otros) || 0) +
-    (Number(emp.deductions?.judiciales) || 0) + (Number(emp.deductions?.seguro) || 0) +
-    (Number(emp.deductions?.parqueo) || 0) + (Number(emp.deductions?.boleto_de_ornato) || 0);
+  const vacacionesBoleta = Number(emp.extras?.vacacionesVal) || 0;
+  const ventasBoleta = Number(emp.extras?.ventasEconomicas) || 0;
+  const otrosDesc = (Number(proDedBoleta.cafe) || 0) + (Number(proDedBoleta.uniform) || 0) +
+    (Number(proDedBoleta.shoes) || 0) + (Number(proDedBoleta.equipo) || 0) +
+    (Number(proDedBoleta.product) || 0) + (Number(proDedBoleta.otros) || 0) +
+    (Number(proDedBoleta.judiciales) || 0) + (Number(proDedBoleta.seguro) || 0) +
+    (Number(proDedBoleta.parqueo) || 0) + (Number(proDedBoleta.boleto_de_ornato) || 0) +
+    prestamoBoleta;
   const baseNet = emp.calculated?.net || 0;
   
   // En la 2da quincena, el líquido final debe restar el anticipo de la 1ra
@@ -1987,6 +2011,8 @@ function BoletaTemplate({ emp, group, isPrint, companies }) {
           <IRow label="Bonificación Incentivo Decrs. 37-2001 y 78-89" value={fmt(bonusLey + bonusDec + bonos)} />
           <IRow label={`Horas extras diurnas (${simplesQty} hrs)`} value={fmt(simplesVal)} />
           <IRow label={`Horas extras nocturnas (${doblesQty} hrs)`} value={fmt(doblesVal)} />
+          <IRow label="Vacaciones" value={fmt(vacacionesBoleta)} />
+          <IRow label="Ventas Económicas" value={fmt(ventasBoleta)} />
           <IRow label="Otros Ingresos Mensuales" value={fmt(otrosIngresos)} />
 
           <Flex justify="space-between" align="baseline" pt="2px" mt="2px" borderTop="1.5px solid black">
