@@ -241,6 +241,7 @@ const buildDetalleSheet = (wb, { payrollTitle, details }) => {
     'Bono Decreto',
     'Bono Incentivo',
     'Bonos Extras',
+    'Bonos Catálogo',
     'H. Extras y Otros',
     'Bruto Período',
     'IGSS Laboral',
@@ -254,6 +255,7 @@ const buildDetalleSheet = (wb, { payrollTitle, details }) => {
     'Asg. Bono Decreto',
     'Asg. Bono Incentivo',
     'Asg. Bonos Extras',
+    'Asg. Bonos Catálogo',
     'Asg. H. Extras',
     'Asg. Bruto',
     'Asg. IGSS Laboral',
@@ -265,9 +267,9 @@ const buildDetalleSheet = (wb, { payrollTitle, details }) => {
   const ws = wb.addWorksheet('Detalle', { views: [{ state: 'frozen', ySplit: 4, xSplit: 2 }] });
   setCols(ws, [
     8, 28, 22, 22, 10, 8, 10,
-    13, 12, 12, 12, 13, 12,
+    13, 12, 12, 12, 12, 13, 12,
     12, 10, 13, 13, 11, 12, 13,
-    11, 13, 13, 12, 11, 11, 12, 10, 12, 16
+    11, 13, 13, 12, 12, 11, 11, 12, 10, 12, 16
   ]);
 
   const title = ws.addRow(['Detalle por Empleado — Distribución de Costos (desglose de nómina)']);
@@ -293,7 +295,7 @@ const buildDetalleSheet = (wb, { payrollTitle, details }) => {
   const header = ws.addRow(headers);
   styleHeaderRow(header, cols);
 
-  const moneyCols = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30];
+  const moneyCols = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32];
   let sumAmount = 0;
 
   (details || []).forEach((d, idx) => {
@@ -317,6 +319,7 @@ const buildDetalleSheet = (wb, { payrollTitle, details }) => {
       Number(d.bonoDecreto) || 0,
       Number(d.bonoIncentivo) || 0,
       Number(d.bonosExtras) || 0,
+      Number(d.bonosAplicados) || 0,
       Number(d.horasExtrasOtros) || 0,
       Number(d.bruto) || 0,
       Number(d.igssLaboral) || 0,
@@ -330,6 +333,7 @@ const buildDetalleSheet = (wb, { payrollTitle, details }) => {
       Number(d.asgBonoDecreto) || 0,
       Number(d.asgBonoIncentivo) || 0,
       Number(d.asgBonosExtras) || 0,
+      Number(d.asgBonosAplicados) || 0,
       Number(d.asgHorasExtrasOtros) || 0,
       Number(d.asgBruto) || 0,
       Number(d.asgIgssLaboral) || 0,
@@ -340,7 +344,7 @@ const buildDetalleSheet = (wb, { payrollTitle, details }) => {
     styleDataRow(row, cols, idx % 2 === 1);
     applyPct(row.getCell(5));
     moneyCols.forEach((c) => applyMoney(row.getCell(c)));
-    row.getCell(30).font = { bold: true, size: 10, name: 'Calibri', color: { argb: '196F3D' } };
+    row.getCell(32).font = { bold: true, size: 10, name: 'Calibri', color: { argb: '196F3D' } };
     sumAmount += amount;
   });
 
@@ -353,7 +357,7 @@ const buildDetalleSheet = (wb, { payrollTitle, details }) => {
   } else {
     const totalValues = Array(cols).fill('');
     totalValues[1] = 'TOTALES';
-    totalValues[29] = sumAmount;
+    totalValues[31] = sumAmount;
     const total = ws.addRow(totalValues);
     styleDataRow(total, cols, false);
     for (let c = 1; c <= cols; c += 1) {
@@ -361,7 +365,7 @@ const buildDetalleSheet = (wb, { payrollTitle, details }) => {
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.totalBg } };
       cell.font = { bold: true, size: 10, name: 'Calibri' };
     }
-    applyMoney(total.getCell(30));
+    applyMoney(total.getCell(32));
   }
 
   return ws;

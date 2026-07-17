@@ -1,5 +1,8 @@
 const nodemailer = require('nodemailer');
 
+const FRONTEND_URL = (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '');
+const BACKEND_URL = (process.env.BACKEND_URL || 'http://localhost:3000').replace(/\/$/, '');
+
 const transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
@@ -9,7 +12,7 @@ const transporter = nodemailer.createTransport({
 });
 
 const sendReactivationEmail = async (gerenteName, recipientEmail, token, details) => {
-  const approvalLink = `http://localhost:3000/api/payrolls/reactivate-via-get?token=${token}`;
+  const approvalLink = `${BACKEND_URL}/api/payrolls/reactivate-via-get?token=${token}`;
   
   const now = new Date();
   const dateStr = now.toLocaleDateString('es-GT', { day: '2-digit', month: '2-digit', year: 'numeric' });
@@ -123,7 +126,7 @@ const sendReactivationEmail = async (gerenteName, recipientEmail, token, details
 };
 
 const buildOperationEmailHtml = (details) => {
-  const approvalLink = `http://localhost:5173/operations`;
+  const approvalLink = `${FRONTEND_URL}/operations`;
   const now = new Date();
   const dateStr = now.toLocaleDateString('es-GT', { day: '2-digit', month: '2-digit', year: 'numeric' });
   const timeStr = now.toLocaleTimeString('es-GT', { hour: '2-digit', minute: '2-digit' });

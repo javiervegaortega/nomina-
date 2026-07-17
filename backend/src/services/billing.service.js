@@ -113,6 +113,98 @@ const getEmployeeCompanyCost = (employee, periodType) => {
 const splitByPct = (value, pct) =>
   round4(new Decimal(value || 0).times(pct || 0).dividedBy(100));
 
+const SNAPSHOT_LOG_STATUSES = new Set(['APPROVED_MANAGER', 'PROCESSED_PAYROLL']);
+
+const verifyEmployeeSnapshotForBilling = (employee, warnings) => {
+  const name = getEmployeeName(employee);
+  const extras = employee.extras || {};
+  const appliedBonuses = employee.appliedBonuses || {};
+  const appliedBonusTotal = Object.values(appliedBonuses)
+    .reduce((sum, val) => sum + (Number(val) || 0), 0);
+  const operationLogs = Array.isArray(employee.operationLogs) ? employee.operationLogs : [];
+  const relevantLogs = operationLogs.filter((log) => SNAPSHOT_LOG_STATUSES.has(log.status));
+
+  if (!employee.extras && relevantLogs.length > 0) {
+    warnings.push(
+      `Empleado "${name}": tiene registros operativos en el snapshot pero falta el objeto extras.`
+    );
+  }
+
+  if (!employee.calculated) {
+    warnings.push(
+      `Empleado "${name}": sin campo calculated en el snapshot; se recalculará al facturar.`
+    );
+  }
+
+  const hasOvertimeLogs = relevantLogs.some((log) => log.type === 'HORA_EXTRA');
+  const hasBonusLogs = relevantLogs.some((log) => log.type === 'BONO');
+  const hasOvertimeValues = (Number(extras.simplesVal) || 0) > 0 || (Number(extras.doblesVal) || 0) > 0;
+  const hasExtrasBonos = (Number(extras.bonos) || 0) > 0;
+
+  if (hasOvertimeLogs && !hasOvertimeValues) {
+    warnings.push(
+      `Empleado "${name}": tiene horas extra en operation logs pero extras.simplesVal/doblesVal están en 0 en el snapshot.`
+    );
+  }
+
+  if (hasBonusLogs && !hasExtrasBonos) {
+    warnings.push(
+      `Empleado "${name}": tiene bonos en operation logs pero extras.bonos está en 0 en el snapshot.`
+    );
+  }
+
+  if (appliedBonusTotal > 0) {
+    const calcBonusesSum = Number(employee.calculated?.bonusesSum) || 0;
+    if (!employee.calculated || Math.abs(calcBonusesSum - appliedBonusTotal) > 0.02) {
+      warnings.push(
+        `Empleado "${name}": appliedBonuses suma Q${round2(appliedBonusTotal)} pero calculated.bonusesSum no coincide (Q${round2(calcBonusesSum)}).`
+      );
+    }
+  }
+
+  const hasVacacionesMaster = Number(employee.vacaciones || 0) > 0;
+  const hasVentasMaster = Number(employee.ventas_economicas || 0) > 0;
+  if (hasVacacionesMaster && !(Number(extras.vacacionesVal) || Number(employee.calculated?.vacacionesVal))) {
+    warnings.push(
+      `Empleado "${name}": tiene vacaciones en maestro pero vacacionesVal no está en el snapshot.`
+    );
+  }
+  if (hasVentasMaster && !(Number(extras.ventasEconomicas) || Number(employee.calculated?.ventasEconomicas))) {
+    warnings.push(
+      `Empleado "${name}": tiene ventas económicas en maestro pero ventasEconomicas no está en el snapshot.`
+    );
+  }
+};
+
+const validatePayrollSnapshotForBilling = (employees, warnings) => {
+  if (!Array.isArray(employees) || employees.length === 0) return;
+
+  let withExtras = 0;
+  let withAppliedBonuses = 0;
+  let withOvertime = 0;
+  let withCalculated = 0;
+
+  employees.forEach((employee) => {
+    verifyEmployeeSnapshotForBilling(employee, warnings);
+
+    if (employee.calculated) withCalculated += 1;
+    if (employee.extras) withExtras += 1;
+
+    const appliedBonusTotal = Object.values(employee.appliedBonuses || {})
+      .reduce((sum, val) => sum + (Number(val) || 0), 0);
+    if (appliedBonusTotal > 0) withAppliedBonuses += 1;
+
+    const extras = employee.extras || {};
+    if ((Number(extras.simplesVal) || 0) > 0 || (Number(extras.doblesVal) || 0) > 0) {
+      withOvertime += 1;
+    }
+  });
+
+  warnings.push(
+    `Integridad snapshot: ${withCalculated}/${employees.length} con calculated, ${withExtras}/${employees.length} con extras, ${withOvertime} con horas extra, ${withAppliedBonuses} con bonos de catálogo.`
+  );
+};
+
 const buildAllocations = (distObj, principalId, employeeName, warnings) => {
   const positiveEntries = Object.entries(distObj)
     .map(([id, pct]) => [Number(id), Number(pct) || 0])
@@ -141,6 +233,13 @@ const buildAllocations = (distObj, principalId, employeeName, warnings) => {
 const ensureMatrixCell = (matrix, fromId, toId) => {
   if (!matrix[fromId]) matrix[fromId] = {};
   if (!matrix[fromId][toId]) matrix[fromId][toId] = 0;
+};
+
+const resolveBillingFromId = (principalId, billingPayerIds) => {
+  if (!billingPayerIds || billingPayerIds.size === 0) return principalId;
+  if (principalId && billingPayerIds.has(principalId)) return principalId;
+  if (billingPayerIds.size === 1) return [...billingPayerIds][0];
+  return principalId;
 };
 
 class BillingService {
@@ -173,24 +272,55 @@ class BillingService {
     const details = [];
     const warnings = [];
 
+    const activeRules = await BillingRule.findAll({
+      where: { isActive: true },
+      include: [
+        { model: Company, as: 'fromCompanyData' },
+        { model: Company, as: 'toCompanyData' }
+      ]
+    });
+
+    const billingPayerIds = new Set(
+      activeRules.map((rule) => Number(rule.fromCompanyId)).filter((id) => id > 0)
+    );
+
     if (!Array.isArray(employees) || employees.length === 0) {
       warnings.push('La nómina no tiene empleados en el snapshot (campo data vacío).');
+    } else {
+      validatePayrollSnapshotForBilling(employees, warnings);
     }
 
+    let usedCentralPayer = false;
+
     employees.forEach((e) => {
-      const fromId = getPrincipalCompanyId(e);
-      if (!fromId) {
+      const principalId = getPrincipalCompanyId(e);
+      if (!principalId) {
         warnings.push(`Empleado "${getEmployeeName(e)}": sin empresa principal definida.`);
         return;
+      }
+
+      const fromId = resolveBillingFromId(principalId, billingPayerIds);
+      if (!fromId) {
+        warnings.push(`Empleado "${getEmployeeName(e)}": no se pudo determinar empresa pagadora para facturación.`);
+        return;
+      }
+      if (fromId !== principalId && billingPayerIds.size === 1) {
+        usedCentralPayer = true;
+      }
+      if (billingPayerIds.size > 1 && !billingPayerIds.has(principalId)) {
+        warnings.push(
+          `Empleado "${getEmployeeName(e)}": la empresa principal (${companyNames[principalId] || principalId}) no coincide con ninguna emisora en reglas activas.`
+        );
       }
 
       const payrollSnap = getEmployeePayrollSnapshot(e, payroll.periodType);
       const totalCost = payrollSnap.companyCost;
       const distObj = parseDist(e.dist);
-      const allocations = buildAllocations(distObj, fromId, getEmployeeName(e), warnings);
+      const allocations = buildAllocations(distObj, principalId, getEmployeeName(e), warnings);
       const areaId = getEmployeeAreaId(e);
 
       allocations.forEach(({ toId, pct }) => {
+        if (toId === fromId) return;
         const amount = splitByPct(totalCost, pct);
         ensureMatrixCell(matrix, fromId, toId);
         matrix[fromId][toId] = round4(new Decimal(matrix[fromId][toId]).plus(amount));
@@ -198,6 +328,7 @@ class BillingService {
         details.push({
           employeeId: e.id,
           employeeName: getEmployeeName(e),
+          principalCompanyId: principalId,
           fromCompanyId: fromId,
           toCompanyId: toId,
           fromCompany: companyNames[fromId] || String(fromId),
@@ -230,6 +361,7 @@ class BillingService {
           asgBonoDecreto: splitByPct(payrollSnap.bonusDec, pct),
           asgBonoIncentivo: splitByPct(payrollSnap.bonusLey, pct),
           asgBonosExtras: splitByPct(payrollSnap.bonos, pct),
+          asgBonosAplicados: splitByPct(payrollSnap.bonusesSum, pct),
           asgHorasExtrasOtros: splitByPct(payrollSnap.extrasTotal, pct),
           asgBruto: splitByPct(payrollSnap.gross, pct),
           asgIgssLaboral: splitByPct(payrollSnap.igssLaboral, pct),
@@ -240,13 +372,12 @@ class BillingService {
       });
     });
 
-    const activeRules = await BillingRule.findAll({
-      where: { isActive: true },
-      include: [
-        { model: Company, as: 'fromCompanyData' },
-        { model: Company, as: 'toCompanyData' }
-      ]
-    });
+    if (usedCentralPayer && billingPayerIds.size === 1) {
+      const hubId = [...billingPayerIds][0];
+      warnings.push(
+        `Facturación con empresa pagadora central: ${companyNames[hubId] || hubId}. Los montos se asignan según la distribución por empresa de cada empleado.`
+      );
+    }
 
     const nameToId = {};
     companies.forEach((c) => {
@@ -302,10 +433,32 @@ class BillingService {
       });
     });
 
+    if (lines.length === 0 && details.length > 0) {
+      const payersInMatrix = Object.keys(matrix).filter((fid) =>
+        Object.values(matrix[fid] || {}).some((v) => Number(v) > 0)
+      );
+      const receivers = new Set();
+      payersInMatrix.forEach((fid) => {
+        Object.entries(matrix[fid] || {}).forEach(([tid, amt]) => {
+          if (Number(amt) > 0) receivers.add(companyNames[tid] || tid);
+        });
+      });
+      if (payersInMatrix.length === 0 || receivers.size === 0) {
+        warnings.push(
+          'No se generaron facturas: la distribución por empresa de los empleados no genera cargos intercompañía (p. ej. 100% en la misma empresa pagadora).'
+        );
+      } else {
+        warnings.push(
+          `No se generaron facturas: revise «Reglas de Fact.» para las relaciones emisora→receptora (${payersInMatrix.map((id) => companyNames[id] || id).join(', ')} → ${[...receivers].join(', ')}).`
+        );
+      }
+    }
+
     return {
       payrollId: payroll.id,
       payrollTitle: payroll.title,
       payrollStatus: payroll.status,
+      employeeCount: employees.length,
       matrix,
       companyNames,
       lines,
@@ -325,6 +478,10 @@ class BillingService {
     }
 
     const preview = await this.buildPreview(payrollId);
+
+    if (!preview.lines || preview.lines.length === 0) {
+      throw new Error('No hay facturas para confirmar. Genere una vista previa con al menos una línea de factura.');
+    }
 
     const lastRun = await BillingRun.findOne({
       where: { payrollId },

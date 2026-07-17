@@ -21,7 +21,7 @@ export default function Bonuses() {
   const { bonuses, addBonus, updateBonus, deleteBonus, employees, isLoading } = useContext(DataContext);
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState(null);
-  const [form, setForm] = useState({ name: '', type: 'fijo', assignments: {} });
+  const [form, setForm] = useState({ name: '', type: 'fijo', date: '', assignments: {} });
   
   const pagination = usePagination(bonuses, 10);
 
@@ -31,7 +31,7 @@ export default function Bonuses() {
 
   const openAdd = () => {
     setEditingId(null);
-    setForm({ name: '', type: 'fijo', assignments: {} });
+    setForm({ name: '', type: 'fijo', date: '', assignments: {} });
     setSelectedEmp('');
     setAssignAmount('');
     setShowModal(true);
@@ -39,19 +39,24 @@ export default function Bonuses() {
 
   const openEdit = (b) => {
     setEditingId(b.id);
-    setForm({ name: b.name, type: b.type || 'fijo', assignments: b.assignments || {} });
+    setForm({ name: b.name, type: b.type || 'fijo', date: b.date || '', assignments: b.assignments || {} });
     setSelectedEmp('');
     setAssignAmount('');
     setShowModal(true);
   };
 
-  const handleSave = () => {
-    if (editingId) {
-      updateBonus(editingId, { ...form });
-    } else {
-      addBonus({ ...form });
+  const handleSave = async () => {
+    if (!form.date) return;
+    try {
+      if (editingId) {
+        await updateBonus(editingId, { ...form });
+      } else {
+        await addBonus({ ...form });
+      }
+      setShowModal(false);
+    } catch {
+      // error handled by caller context if needed
     }
-    setShowModal(false);
   };
 
   const handleAddAssignment = () => {
@@ -151,6 +156,11 @@ export default function Bonuses() {
                     <div>
                       <h3 style={{ fontSize: '1.1rem', margin: '0 0 0.15rem 0' }}>{b.name}</h3>
                       <span className="badge badge-info" style={{ fontSize: '0.65rem' }}>{b.type.toUpperCase()}</span>
+                      {b.date && (
+                        <div style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)', marginTop: '0.25rem' }}>
+                          Fecha: {b.date}
+                        </div>
+                      )}
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: '0.25rem' }}>
@@ -223,6 +233,20 @@ export default function Bonuses() {
                   </div>
                 </div>
 
+                <div className="form-group">
+                  <label className="form-label">Fecha de aplicación (quincena)</label>
+                  <input
+                    type="date"
+                    className="input-field"
+                    value={form.date}
+                    onChange={(e) => setForm({ ...form, date: e.target.value })}
+                    required
+                  />
+                  <p style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.35rem' }}>
+                    El bono se auto-aplica al crear borrador de nómina si la fecha cae en la quincena seleccionada.
+                  </p>
+                </div>
+
                 <div className="form-group" style={{ marginTop: '0.5rem' }}>
                   <label className="form-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
                     <span>Asignaciones por Empleado</span>
@@ -270,7 +294,7 @@ export default function Bonuses() {
             </div>
             <div className="modal-footer">
               <button className="btn btn-ghost" onClick={() => setShowModal(false)}>Cancelar</button>
-              <button className="btn btn-primary" onClick={handleSave} disabled={!form.name}><Check size={16} /> Guardar Configuración</button>
+              <button className="btn btn-primary" onClick={handleSave} disabled={!form.name || !form.date}><Check size={16} /> Guardar Configuración</button>
             </div>
           </div>
         </div>

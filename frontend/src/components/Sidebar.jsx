@@ -69,6 +69,8 @@ export default function Sidebar() {
     },
     { to: '/companies', label: 'Empresas', icon: Building2 },
     { to: '/operations', label: 'Reporte Operativo', icon: Gift },
+    { to: '/commissions', label: 'Comisiones', icon: Clock },
+    { to: '/bonuses', label: 'Catálogo de Bonos', icon: Gift },
     { 
       id: 'facturacion',
       label: 'Facturación', 
@@ -89,7 +91,8 @@ export default function Sidebar() {
     if (role === 'NOMINA') return true;
     if (role === 'AUDITOR') return item.to !== '/operations' && item.to !== '/users' && item.id !== 'facturacion';
     if (role === 'DIGITADOR') return item.to === '/employees' || item.to === '/users' || item.to === '/suspensions';
-    if (role === 'GERENTE' || role === 'SOLICITANTE') return item.to === '/operations';
+    if (role === 'GERENTE') return item.to === '/operations' || item.to === '/commissions' || item.to === '/bonuses';
+    if (role === 'SOLICITANTE') return item.to === '/operations';
     return false;
   });
 

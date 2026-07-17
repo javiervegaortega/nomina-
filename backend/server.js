@@ -16,6 +16,7 @@ const subdivisionRoutes = require('./src/routes/subdivision.routes');
 const dimension5Routes = require('./src/routes/dimension5.routes');
 const payrollDraftRoutes = require('./src/routes/payrollDraft.routes');
 const commissionRoutes = require('./src/routes/commissions.routes');
+const bonusRoutes = require('./src/routes/bonus.routes');
 const incidenceRoutes = require('./src/routes/incidence.routes');
 const operationLogRoutes = require('./src/routes/operationLog.routes');
 const operationBatchRoutes = require('./src/routes/operationBatch.routes');
@@ -43,6 +44,7 @@ app.use('/api/subdivisions', subdivisionRoutes);
 app.use('/api/dimension5', dimension5Routes);
 app.use('/api/payroll-drafts', payrollDraftRoutes);
 app.use('/api/commissions', commissionRoutes);
+app.use('/api/bonuses', bonusRoutes);
 app.use('/api/incidences', incidenceRoutes);
 app.use('/api/operation-logs', operationLogRoutes);
 app.use('/api/operation-batches', operationBatchRoutes);
@@ -77,6 +79,8 @@ const startServer = async () => {
 
     const { ensureBillingSchema } = require('./src/config/ensureBillingSchema');
     await ensureBillingSchema(sequelize);
+    const { ensurePayrollHistorySchema } = require('./src/config/ensurePayrollHistorySchema');
+    await ensurePayrollHistorySchema(sequelize);
     const { ensureEmployeeColumns } = require('./src/config/ensureEmployeeSchema');
     await ensureEmployeeColumns(sequelize);
 

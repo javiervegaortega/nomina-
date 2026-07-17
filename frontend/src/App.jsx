@@ -26,6 +26,8 @@ const Companies = lazy(() => import('./pages/Companies'));
 const Settings = lazy(() => import('./pages/Settings'));
 const OperationBatches = lazy(() => import('./pages/OperationBatches'));
 const OperationLogs = lazy(() => import('./pages/OperationLogs'));
+const Commissions = lazy(() => import('./pages/Commissions'));
+const Bonuses = lazy(() => import('./pages/Bonuses'));
 const Login = lazy(() => import('./pages/auth/Login'));
 const Users = lazy(() => import('./pages/Users'));
 const BillingDistribution = lazy(() => import('./pages/BillingDistribution'));
@@ -176,6 +178,12 @@ function AppContent() {
                   <Route element={<RoleProtectedRoute allowedRoles={['ADMIN', 'GERENTE GENERAL', 'NOMINA', 'AUDITOR', 'DIGITADOR']} />}>
                     <Route path="/employees" element={<Employees />} />
                     <Route path="/suspensions" element={<Suspensions />} />
+                  </Route>
+
+                  {/* ADMIN, GERENTE GENERAL, NOMINA, GERENTE */}
+                  <Route element={<RoleProtectedRoute allowedRoles={['ADMIN', 'GERENTE GENERAL', 'NOMINA', 'GERENTE']} />}>
+                    <Route path="/commissions" element={<Commissions />} />
+                    <Route path="/bonuses" element={<Bonuses />} />
                   </Route>
 
                   {/* ADMIN, GERENTE GENERAL, GERENTE, SOLICITANTE, NOMINA */}

@@ -1,4 +1,5 @@
 import { formatQ, CUOTA_PATRONAL_RATE } from '../data/mockData';
+import { calculateEmployeePayroll as calcPayroll, getCompanyCost } from './payrollCalculator';
 
 export const PERIOD_MODES = {
   LATEST: 'latest',
@@ -19,22 +20,25 @@ export const parseEmployeeList = (record) => {
 };
 
 export const computeEmployeePayroll = (e) => {
-  const baseFactor = (e.days || 30) / 30;
-  const sueldoOrd = Number(e.sueldo_ordinario) || 0;
-  const bonInc = Number(e.bon_incentivo) || 0;
-  const bonDec = Number(e.bon_dec_37_2001) || 0;
+  const withCalc = e.calculated ? e : calcPayroll(e, e.periodType || '1ra');
+  const calc = withCalc.calculated || {};
+  const ded = Object.values(withCalc.deductions || e.deductions || {})
+    .reduce((a, b) => a + Number(b), 0);
 
-  const baseSalary = sueldoOrd * baseFactor;
-  const bonusLey = bonInc * baseFactor;
-  const bonusDec = bonDec * baseFactor;
-  const bonos = Number(e.extras?.bonos) || 0;
-  const extrasTotal = (e.extras?.simplesVal || 0) + (e.extras?.doblesVal || 0)
-    + (e.extras?.comisiones || 0) + (e.extras?.otrosIngresos || 0);
-  const bonusesSum = Object.values(e.appliedBonuses || {}).reduce((a, b) => a + Number(b), 0);
-  const gross = baseSalary + bonusLey + bonusDec + bonos + extrasTotal + bonusesSum;
-  const ded = Object.values(e.deductions || {}).reduce((a, b) => a + Number(b), 0);
-
-  return { baseSalary, bonusLey, bonusDec, bonos, extrasTotal, bonusesSum, gross, ded, net: gross - ded };
+  return {
+    baseSalary: calc.baseSalary || 0,
+    bonusLey: calc.bonusLey || 0,
+    bonusDec: calc.bonusDec || 0,
+    bonos: calc.bonos || 0,
+    extrasTotal: calc.extrasTotal || 0,
+    bonusesSum: calc.bonusesSum || 0,
+    gross: calc.gross || 0,
+    patronal: calc.patronal || 0,
+    irtraIntecap: calc.irtraIntecap || 0,
+    companyCost: calc.companyCost || getCompanyCost(calc),
+    ded,
+    net: calc.net != null ? calc.net : (calc.gross || 0) - ded
+  };
 };
 
 export const computeHistoryTotals = (record) => {

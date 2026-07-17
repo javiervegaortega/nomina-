@@ -1,4 +1,4 @@
-import React, { useContext, useMemo, useState } from 'react';
+import React, { useContext, useMemo, useState, useEffect, useCallback } from 'react';
 import { DataContext } from '../context/DataContext';
 import { AppContext } from '../App';
 import usePagination from '../hooks/usePagination';
@@ -45,8 +45,15 @@ export const getEmployeeFullName = (e) => {
   return `${e.nombres || ''} ${e.apellidos || ''}`.trim() || 'Empleado';
 };
 
+/** ID de la nómina en historial (grupos se arman por título, no tienen id propio). */
+export const resolveGroupPayrollId = (group) => {
+  if (!group?.records?.length) return null;
+  const inAudit = group.records.find((r) => r.status === 'auditoria');
+  return (inAudit || group.records[0]).id;
+};
+
 export default function PayrollHistory() {
-  const { payrollHistory, deletePayroll, approvePayroll, companies, areas, activePayrolls, deleteOperationLog, addOperationLog, isLoading } = useContext(DataContext);
+  const { payrollHistory, deletePayroll, auditorApprovePayroll, companies, areas, activePayrolls, deleteOperationLog, addOperationLog, isLoading } = useContext(DataContext);
   const { confirmAction, showToast } = useContext(AppContext);
   const { user } = useContext(AuthContext);
   const isReadOnly = user?.role === 'AUDITOR';
@@ -79,7 +86,29 @@ export default function PayrollHistory() {
       
       groups[t].records.push(p);
       
-      // Calculate gross total
+      const summary = (() => {
+        const raw = p.summary;
+        if (!raw) return null;
+        if (typeof raw === 'string') {
+          try { return JSON.parse(raw); } catch { return null; }
+        }
+        return raw;
+      })();
+      const hasInlineData = (() => {
+        let emps = p.data || p.employees || [];
+        if (typeof emps === 'string') {
+          try { emps = JSON.parse(emps); } catch { emps = []; }
+        }
+        return Array.isArray(emps) && emps.length > 0;
+      })();
+
+      if (summary && summary.employeesCount > 0 && !hasInlineData) {
+        groups[t].employeesCount += summary.employeesCount || 0;
+        groups[t].grossTotal += summary.grossTotal || 0;
+        groups[t].netTotal += summary.netTotal || 0;
+        (summary.companies || []).forEach((c) => groups[t].companies.add(c));
+      } else if (hasInlineData) {
+      // Calculate gross total from employee snapshots
       let emps = p.data || p.employees || [];
       if (typeof emps === 'string') {
         try { emps = JSON.parse(emps); } catch(e) { emps = []; }
@@ -89,7 +118,15 @@ export default function PayrollHistory() {
 
       let grossSum = 0;
       let dedSum = 0;
+      let netSum = 0;
+      const periodType = p.periodType || groups[t].periodType || '1ra';
       emps.forEach(e => {
+        if (e.calculated?.gross != null) {
+          grossSum += Number(e.calculated.gross) || 0;
+          dedSum += Number(e.calculated.ded) || 0;
+          netSum += getNetPayable(e, periodType);
+          return;
+        }
         const baseFactor = (e.days || 30) / 30;
         const sueldoOrd = Number(e.sueldo_ordinario) || 0;
         const bonInc = Number(e.bon_incentivo) || 0;
@@ -108,25 +145,31 @@ export default function PayrollHistory() {
 
         const ded = Object.values(e.deductions || {}).reduce((a, b) => a + Number(b), 0);
         dedSum += ded;
+        netSum += getNetPayable({ ...e, calculated: { gross: eGross, ded, net: eGross - ded } }, periodType);
       });
       
       groups[t].grossTotal += grossSum;
-      groups[t].netTotal += (grossSum - dedSum);
+      groups[t].netTotal += netSum;
       
-      if (emps.length > 0 && emps[0].empresa_principal) {
-        const comp = companies.find(c => c.id === emps[0].empresa_principal);
-        if (comp && comp.nombre_comercial) {
-          groups[t].companies.add(comp.nombre_comercial);
-        }
+      emps.forEach(e => {
+        if (!e.empresa_principal) return;
+        const comp = companies.find(c => c.id === e.empresa_principal);
+        if (comp?.nombre_comercial) groups[t].companies.add(comp.nombre_comercial);
+      });
       }
       
       if (new Date(p.closedAt || new Date()) > new Date(groups[t].date)) {
         groups[t].date = p.closedAt || new Date().toISOString();
       }
+      if (p.status === 'auditoria') {
+        groups[t].status = 'auditoria';
+      } else if (groups[t].status !== 'auditoria') {
+        groups[t].status = p.status || 'cerrada';
+      }
     });
     
     return Object.values(groups).sort((a,b) => new Date(b.date) - new Date(a.date));
-  }, [payrollHistory]);
+  }, [payrollHistory, companies]);
 
   const filteredHistory = groupedHistory.filter(g => 
     g.title.toLowerCase().includes(searchTerm.toLowerCase())
@@ -134,10 +177,19 @@ export default function PayrollHistory() {
 
   const pagination = usePagination(filteredHistory, 10);
 
-  const handleApprovePayroll = (group) => {
-    if (window.confirm('¿Aprobar esta nómina y marcarla como Cerrada?')) {
-      approvePayroll(group.id);
-      toast.success('Nómina aprobada correctamente');
+  const handleApprovePayroll = async (group) => {
+    const payrollId = resolveGroupPayrollId(group);
+    if (!payrollId) {
+      showToast('No se encontró el ID de la nómina', 'error');
+      return;
+    }
+    if (window.confirm('¿Aprobar esta nómina y devolverla a borradores para su cierre final?')) {
+      try {
+        await auditorApprovePayroll(payrollId);
+        showToast('Nómina aprobada correctamente', 'success');
+      } catch {
+        showToast('Error al aprobar la nómina', 'error');
+      }
     }
   };
 
@@ -504,11 +556,60 @@ function calculateGroupTotals(groupData, periodType) {
 }
 
 function PayrollHistoryDetail({ group, onBack }) {
-  const { bonuses, areas, departments, divisions, subdivisions, companies, dimension5s, employees, approvePayroll, auditorApprovePayroll, auditorRejectPayroll } = useContext(DataContext);
+  const { bonuses, areas, departments, divisions, subdivisions, companies, dimension5s, approvePayroll, auditorApprovePayroll, auditorRejectPayroll } = useContext(DataContext);
   const { showToast } = useContext(AppContext);
   const { user } = useContext(AuthContext);
   const isReadOnly = user?.role === 'AUDITOR';
   const [selectedVoucherEmp, setSelectedVoucherEmp] = useState(null);
+  const [activeGroup, setActiveGroup] = useState(group);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+  const [printBoletas, setPrintBoletas] = useState(false);
+
+  useEffect(() => {
+    setActiveGroup(group);
+  }, [group]);
+
+  useEffect(() => {
+    const needsLoad = group.records.some((r) => {
+      const raw = r.data || r.employees;
+      if (!raw) return true;
+      if (typeof raw === 'string') return raw.length < 3;
+      return !Array.isArray(raw) || raw.length === 0;
+    });
+    if (!needsLoad) return;
+
+    let cancelled = false;
+    setLoadingDetail(true);
+    const token = localStorage.getItem('nomina-token');
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+    Promise.all(
+      group.records.map((r) =>
+        fetch(`http://localhost:3000/api/payrolls/${r.id}`, { headers })
+          .then((res) => (res.ok ? res.json() : r))
+          .catch(() => r)
+      )
+    ).then((records) => {
+      if (cancelled) return;
+      setActiveGroup({ ...group, records });
+      setLoadingDetail(false);
+    });
+
+    return () => { cancelled = true; };
+  }, [group]);
+
+  useEffect(() => {
+    const onAfterPrint = () => setPrintBoletas(false);
+    window.addEventListener('afterprint', onAfterPrint);
+    return () => window.removeEventListener('afterprint', onAfterPrint);
+  }, []);
+
+  const handlePrintBoletas = useCallback(() => {
+    setPrintBoletas(true);
+    requestAnimationFrame(() => {
+      setTimeout(() => window.print(), 150);
+    });
+  }, []);
 
   // Auditor reject states
   const [isRejectModalOpen, setIsRejectModalOpen] = useState(false);
@@ -521,7 +622,7 @@ function PayrollHistoryDetail({ group, onBack }) {
   const [filterDiv, setFilterDiv] = useState([]);
   const [filterSubdiv, setFilterSubdiv] = useState([]);
   const [filterDim5, setFilterDim5] = useState([]);
-  const [filterStatus, setFilterStatus] = useState('Activo');
+  const [filterStatus, setFilterStatus] = useState('ALL');
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState('detailed');
   const [previewReportType, setPreviewReportType] = useState(null);
@@ -534,20 +635,32 @@ function PayrollHistoryDetail({ group, onBack }) {
   };
 
   // Combine and calculate
+  const companyMap = useMemo(
+    () => new Map((companies || []).map((c) => [String(c.id), c.nombre_comercial])),
+    [companies]
+  );
+  const areaMap = useMemo(
+    () => new Map((areas || []).map((a) => [String(a.id), a.nombre || ''])),
+    [areas]
+  );
+
   const { data, totals } = useMemo(() => {
     const emps = [];
     let grossTotal = 0, dedTotal = 0, patronalTotal = 0;
     
-    group.records.forEach(r => {
+    activeGroup.records.forEach(r => {
       let list = r.data || r.employees || [];
       if (typeof list === 'string') {
         try { list = JSON.parse(list); } catch(e) { list = []; }
       }
       if (!Array.isArray(list)) list = [];
       
-      const companyName = group.companies.size > 0 ? Array.from(group.companies)[0] : 'Sin empresa';
+      const companyName = activeGroup.companies.size > 0 ? Array.from(activeGroup.companies)[0] : 'Sin empresa';
       
       list.forEach(e => {
+        const empCompany = companyMap.get(String(e.empresa_principal))
+          || e.company
+          || companyName;
         // Enforce backend calculated properties
         const gross = e.calculated?.gross || 0;
         const ded = e.calculated?.ded || 0;
@@ -559,7 +672,7 @@ function PayrollHistoryDetail({ group, onBack }) {
         
         emps.push({
           ...e,
-          company: companyName,
+          company: empCompany,
           // Ensure e.calculated is preserved, fallback if needed
           calculated: e.calculated || {
              baseSalary: 0, bonusLey: 0, bonusDec: 0, bonos: 0, extrasTotal: 0, bonusesSum: 0, gross, ded, net: gross - ded, patronal
@@ -570,17 +683,16 @@ function PayrollHistoryDetail({ group, onBack }) {
     
     // Apply filters
     const filteredEmps = emps.filter(e => {
-      if (filterStatus === 'Activo' && String(e.estado).toLowerCase() !== 'activo') return false;
-      if (filterStatus === 'De Baja' && String(e.estado).toLowerCase() !== 'de baja') return false;
-      
-      const liveEmp = employees?.find(emp => String(emp.dpi) === String(e.dpi)) || e;
-      const mergedEmp = { ...e, ...liveEmp, departmentId: liveEmp.departmentId ?? e.departmentId, departamento_laboral: liveEmp.departamento_laboral || e.departamento_laboral };
-      const area = liveEmp.areaId || e.areaId;
-      const div = liveEmp.divisionId || e.divisionId;
-      const subdiv = liveEmp.subdivisionId || e.subdivisionId;
-      const dim5 = liveEmp.nivel_5 || liveEmp.dimension_5 || e.nivel_5 || e.dimension_5;
+      const estadoNorm = String(e.estado || 'Activo').trim().toLowerCase();
+      if (filterStatus === 'Activo' && estadoNorm !== 'activo') return false;
+      if (filterStatus === 'De Baja' && estadoNorm !== 'de baja') return false;
 
-      if (!matchesDepartmentFilter(mergedEmp, filterDept, departments)) return false;
+      const area = e.areaId || e.id_area;
+      const div = e.divisionId || e.id_division;
+      const subdiv = e.subdivisionId || e.id_subdivision;
+      const dim5 = e.nivel_5 || e.dimension_5;
+
+      if (!matchesDepartmentFilter(e, filterDept, departments)) return false;
       if (filterArea.length > 0 && !filterArea.includes(String(area))) return false;
       if (filterDiv.length > 0 && !filterDiv.includes(String(div))) return false;
       if (filterSubdiv.length > 0 && !filterSubdiv.includes(String(subdiv))) return false;
@@ -594,8 +706,8 @@ function PayrollHistoryDetail({ group, onBack }) {
       }
       return true;
     }).sort((a, b) => {
-      const areaA = areas?.find(area => String(area.id) === String(a.areaId))?.nombre || '';
-      const areaB = areas?.find(area => String(area.id) === String(b.areaId))?.nombre || '';
+      const areaA = areaMap.get(String(a.areaId || a.id_area)) || '';
+      const areaB = areaMap.get(String(b.areaId || b.id_area)) || '';
       
       const compArea = areaA.localeCompare(areaB);
       if (compArea !== 0) return compArea;
@@ -606,17 +718,20 @@ function PayrollHistoryDetail({ group, onBack }) {
     });
 
     // Recalculate totals for filtered emps
-    let fGrossTotal = 0, fDedTotal = 0, fPatronalTotal = 0;
+    let fGrossTotal = 0, fDedTotal = 0, fPatronalTotal = 0, fNetTotal = 0;
     filteredEmps.forEach(e => {
       fGrossTotal += e.calculated.gross;
       fDedTotal += e.calculated.ded;
+      fNetTotal += getNetPayable(e, activeGroup.periodType);
       fPatronalTotal += e.calculated.patronal != null
         ? (e.calculated.patronal + (e.calculated.irtraIntecap || 0))
         : e.calculated.baseSalary * (CUOTA_PATRONAL_RATE + IRTRA_INTECAP_RATE);
     });
     
-    return { data: filteredEmps, totals: { grossTotal: fGrossTotal, dedTotal: fDedTotal, patronalTotal: fPatronalTotal, netTotal: fGrossTotal - fDedTotal } };
-  }, [group, filterStatus, filterDept, filterArea, filterDiv, filterSubdiv, filterDim5, searchQuery, areas, departments, employees]);
+    return { data: filteredEmps, totals: { grossTotal: fGrossTotal, dedTotal: fDedTotal, patronalTotal: fPatronalTotal, netTotal: fNetTotal } };
+  }, [activeGroup, filterStatus, filterDept, filterArea, filterDiv, filterSubdiv, filterDim5, searchQuery, areas, departments, companyMap, areaMap]);
+
+  const tablePagination = usePagination(data, 25);
 
   const groupedData = useMemo(() => {
     if (filterDept.length === 0 && filterArea.length === 0 && filterDiv.length === 0 && filterSubdiv.length === 0 && filterDim5.length === 0) {
@@ -625,16 +740,14 @@ function PayrollHistoryDetail({ group, onBack }) {
 
     const groups = {};
     data.forEach(e => {
-      const liveEmp = employees?.find(emp => String(emp.dpi) === String(e.dpi)) || e;
-      const mergedEmp = { ...e, ...liveEmp, departmentId: liveEmp.departmentId ?? e.departmentId, departamento_laboral: liveEmp.departamento_laboral || e.departamento_laboral };
-      const { name: deptName } = resolveEmployeeDepartment(mergedEmp, departments);
-      const area = liveEmp.areaId || e.areaId;
-      const div = liveEmp.divisionId || e.divisionId;
-      const subdiv = liveEmp.subdivisionId || e.subdivisionId;
-      const dim5 = liveEmp.nivel_5 || liveEmp.dimension_5 || e.nivel_5 || e.dimension_5;
+      const area = e.areaId || e.id_area;
+      const div = e.divisionId || e.id_division;
+      const subdiv = e.subdivisionId || e.id_subdivision;
+      const dim5 = e.nivel_5 || e.dimension_5;
 
       const keyParts = [];
       if (filterDept.length > 0) {
+        const { name: deptName } = resolveEmployeeDepartment(e, departments);
         keyParts.push(`Depto: ${deptName}`);
       }
       if (filterDiv.length > 0) {
@@ -664,7 +777,7 @@ function PayrollHistoryDetail({ group, onBack }) {
       title: key,
       data: groups[key]
     }));
-  }, [data, filterDept, filterArea, filterDiv, filterSubdiv, filterDim5, divisions, areas, departments, subdivisions, dimension5s, employees]);
+  }, [data, filterDept, filterArea, filterDiv, filterSubdiv, filterDim5, divisions, areas, departments, subdivisions, dimension5s]);
 
   const exportExcel = async () => {
     const XLSX = await getXLSX();
@@ -1038,7 +1151,7 @@ function PayrollHistoryDetail({ group, onBack }) {
         const otherDed = e.calculated?.deduction_other || 0;
         const totalDed = e.calculated?.totalDeductions || 0;
         const totalDev = e.calculated?.gross || 0;
-        const horasExtra = e.calculated?.extraHoursAmt || 0;
+        const horasExtra = (Number(e.extras?.simplesVal) || 0) + (Number(e.extras?.doblesVal) || 0);
         const days = e.calculated?.workedDays || 15;
 
         return {
@@ -1252,7 +1365,19 @@ function PayrollHistoryDetail({ group, onBack }) {
   const tdBg = useColorModeValue('white', 'gray.800');
   const hoverBg = useColorModeValue('gray.50', 'whiteAlpha.50');
 
+  if (loadingDetail) {
+    return (
+      <Box p={{ base: 3, md: 6, lg: 8 }}>
+        <Flex align="center" gap={4} mb={6}>
+          <IconButton aria-label="Back" icon={<ArrowLeft size={20} />} onClick={onBack} variant="ghost" />
+          <Text color="gray.500">Cargando detalle de nómina...</Text>
+        </Flex>
+        <Skeleton height="420px" borderRadius="xl" />
+      </Box>
+    );
+  }
 
+  const payrollGroup = activeGroup;
 
   return (
     <Box p={{ base: 3, md: 6, lg: 8 }} sx={{ '@media print': { p: 0 } }}>
@@ -1289,7 +1414,7 @@ function PayrollHistoryDetail({ group, onBack }) {
               <Button colorScheme="green" onClick={async () => {
                 if (window.confirm('¿Aprobar esta nómina y devolverla a borradores para su cierre final?')) {
                   try {
-                    await auditorApprovePayroll(group.id);
+                    await auditorApprovePayroll(resolveGroupPayrollId(group));
                     showToast('Nómina aprobada correctamente', 'success');
                     onBack();
                   } catch (e) {
@@ -1336,7 +1461,7 @@ function PayrollHistoryDetail({ group, onBack }) {
               <MenuItem onClick={() => handleOpenPreview('industrial')} color="blue.600" fontWeight="bold">Plantilla Banco Industrial</MenuItem>
             </MenuList>
           </Menu>
-          <Button colorScheme="purple" leftIcon={<FileText size={16} />} onClick={() => window.print()} size={{ base: 'sm', md: 'md' }}>
+          <Button colorScheme="purple" leftIcon={<FileText size={16} />} onClick={handlePrintBoletas} size={{ base: 'sm', md: 'md' }}>
             Imprimir Boletas (PDF)
           </Button>
         </Flex>
@@ -1506,7 +1631,10 @@ function PayrollHistoryDetail({ group, onBack }) {
       </Heading>
 
       {groupedData.map((groupData, gIdx) => {
-        const groupTotals = calculateGroupTotals(groupData.data, group.periodType);
+        const groupTotals = calculateGroupTotals(groupData.data, payrollGroup.periodType);
+        const usePagination = groupedData.length === 1 && !groupData.title;
+        const displayRows = usePagination ? tablePagination.paginatedData : groupData.data;
+        const rowOffset = usePagination ? (tablePagination.currentPage - 1) * tablePagination.limit : 0;
         return (
           <Box key={gIdx} mb={8}>
             {groupData.title && (
@@ -1575,13 +1703,13 @@ function PayrollHistoryDetail({ group, onBack }) {
             </Tr>
           </Thead>
           <Tbody>
-            {groupData.data.map((e, idx) => {
+            {displayRows.map((e, idx) => {
               const { baseSalary, bonusLey, bonusDec, bonos, bonusesSum, gross, ded, net } = e.calculated || {};
               const bonosTotal = (bonos || 0) + (bonusesSum || 0);
               const tDevengado = (baseSalary || 0) + (bonusLey || 0) + (bonusDec || 0) + bonosTotal;
               const proDed = e.calculated?.proratedDeductions || e.deductions || {};
               const anticipo = e.anticipo1ra || 0;
-              const is2da = group.periodType === '2da';
+              const is2da = payrollGroup.periodType === '2da';
               const q1 = is2da ? anticipo : net;
               const q2 = is2da ? net - anticipo : 0;
               const otrosIngresosShow = (Number(e.extras?.otrosIngresos) || 0)
@@ -1591,7 +1719,7 @@ function PayrollHistoryDetail({ group, onBack }) {
               return (
                 <Tr key={e.id + '-' + idx} _hover={{ bg: hoverBg }}>
                   <Td position="sticky" left={0} zIndex={5} bg={tdBg} borderRight="1px solid" borderColor={borderColor} fontWeight="bold" fontSize="xs">
-                    {idx + 1}
+                    {rowOffset + idx + 1}
                   </Td>
                   <Td position="sticky" left="60px" zIndex={5} bg={tdBg} borderRight="1px solid" borderColor={borderColor} fontWeight="600" color="brand.500" fontSize="xs" isTruncated maxW="200px">
                     {getEmployeeFullName(e)}
@@ -1738,6 +1866,19 @@ function PayrollHistoryDetail({ group, onBack }) {
           </Thead>
         </Table>
         </Box>
+        {usePagination && (
+          <Box mt={3}>
+            <Pagination
+              currentPage={tablePagination.currentPage}
+              totalPages={tablePagination.totalPages}
+              totalItems={tablePagination.totalItems}
+              limit={tablePagination.limit}
+              goToNextPage={tablePagination.goToNextPage}
+              goToPreviousPage={tablePagination.goToPreviousPage}
+              changeLimit={tablePagination.changeLimit}
+            />
+          </Box>
+        )}
           </Box>
         );
       })}
@@ -1774,9 +1915,10 @@ function PayrollHistoryDetail({ group, onBack }) {
           @page { size: letter portrait; margin: 6mm; }
         }
       `}</style>
+      {printBoletas && (
       <Box display="none" sx={{ '@media print': { display: 'block', bg: 'white', color: 'black' } }}>
         {(() => {
-          const allPrintableEmployees = groupedData.flatMap(g => g.data);
+          const allPrintableEmployees = data;
           if (allPrintableEmployees.length === 0) return null;
           const chunks = [];
           for (let i = 0; i < allPrintableEmployees.length; i += 2) {
@@ -1818,12 +1960,13 @@ function PayrollHistoryDetail({ group, onBack }) {
           ));
         })()}
       </Box>
+      )}
 
       <ReportPreviewModal 
         isOpen={isPreviewModalOpen}
         onClose={() => setIsPreviewModalOpen(false)}
         reportType={previewReportType}
-        group={group}
+        group={payrollGroup}
         data={data}
         companies={companies}
         areas={areas}
@@ -1831,8 +1974,9 @@ function PayrollHistoryDetail({ group, onBack }) {
       <EmployeeSummaryModal
         isOpen={!!selectedSummaryEmp}
         onClose={() => setSelectedSummaryEmp(null)}
-        emp={selectedSummaryEmp}
-        group={group}
+        employee={selectedSummaryEmp}
+        companies={companies}
+        periodType={payrollGroup?.periodType || '1ra'}
       />
 
       <Modal isOpen={isRejectModalOpen} onClose={() => setIsRejectModalOpen(false)}>
@@ -1857,7 +2001,7 @@ function PayrollHistoryDetail({ group, onBack }) {
               if (!rejectNote.trim()) return showToast('Debes ingresar una justificación', 'error');
               setIsRejecting(true);
               try {
-                await auditorRejectPayroll(group.id, rejectNote);
+                await auditorRejectPayroll(resolveGroupPayrollId(group), rejectNote);
                 showToast('Nómina rebotada a borradores exitosamente', 'success');
                 setIsRejectModalOpen(false);
                 onBack();

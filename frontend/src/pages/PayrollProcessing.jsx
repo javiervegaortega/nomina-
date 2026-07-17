@@ -8,6 +8,7 @@ import { AppContext } from '../App';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
 import { CUOTA_PATRONAL_RATE, CUOTA_LABORAL_RATE, IRTRA_INTECAP_RATE, formatQ, calculateMonthlyISR } from '../data/mockData';
+import { getEmployeePayrollSnapshot } from '../utils/payrollCalculator';
 import { getNetPayable } from '../utils/payrollPeriod';
 import EmployeeIncidences from '../components/EmployeeIncidences';
 import EmployeeDeductions from '../components/EmployeeDeductions';
@@ -847,7 +848,7 @@ function PayrollEditor({ draftId, onBack }) {
             companies={companies}
           />
         )}
-        {tab === 'distribution' && <DistributionTab data={data} />}
+        {tab === 'distribution' && <DistributionTab data={data} periodType={draft?.periodType || '1ra'} />}
         {tab === 'observations' && (
           <Box p={6} bg={useColorModeValue('white', 'gray.800')} borderRadius="xl" borderWidth="1px" borderColor={borderColor}>
             <Heading size="sm" mb={4}>Observaciones del periodo</Heading>
@@ -1851,7 +1852,7 @@ function ListadoPagosTab({
   );
 }
 
-function DistributionTab({ data }) {
+function DistributionTab({ data, periodType = '1ra' }) {
   const { companies: COMPANIES } = useContext(DataContext);
   const [expandedCompany, setExpandedCompany] = useState(null);
 
@@ -1862,16 +1863,11 @@ function DistributionTab({ data }) {
       const distData = typeof e.dist === 'string' ? JSON.parse(e.dist) : e.dist;
       const pct = (distData?.[c.id] || 0) / 100;
       if (pct > 0) {
-        const baseFactor = (e.days || 30) / 30;
-        const sueldoOrd = Number(e.sueldo_ordinario) || 0;
-        // Bono decreto 37-2001 + bono incentivo (el Excel los reparte juntos)
-        const bonInc = (Number(e.bon_dec_37_2001) || 0) + (Number(e.bon_incentivo) || 0);
-        
-        const eSalary = (sueldoOrd * baseFactor) * pct;
-        const eBonus = (bonInc * baseFactor) * pct;
-        const eExtras = ((e.extras?.simplesVal || 0) + (e.extras?.doblesVal || 0) + (e.extras?.comisiones || 0) + (e.extras?.otrosIngresos || 0)) * pct;
-        // Cuota patronal total como en el Excel: IGSS 10.67% + IRTRA/INTECAP 2% sobre base afecta
-        const ePatronal = ((sueldoOrd * baseFactor) * pct + eExtras) * (CUOTA_PATRONAL_RATE + IRTRA_INTECAP_RATE);
+        const snap = getEmployeePayrollSnapshot(e, periodType);
+        const eSalary = snap.baseSalary * pct;
+        const eBonus = (snap.bonusDec + snap.bonusLey) * pct;
+        const eExtras = (snap.bonos + snap.extrasTotal + snap.bonusesSum) * pct;
+        const ePatronal = (snap.patronal + snap.irtraIntecap) * pct;
         
         salary += eSalary;
         bonus += eBonus;
@@ -1888,7 +1884,7 @@ function DistributionTab({ data }) {
            eBonus,
            eExtras,
            ePatronal,
-           eTotal: eSalary + eBonus + eExtras + ePatronal
+           eTotal: snap.companyCost * pct
         });
       }
     });

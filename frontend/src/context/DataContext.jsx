@@ -77,7 +77,6 @@ export function DataProvider({ children }) {
         localStorage.setItem(CACHE_KEYS.divisions, JSON.stringify(snap.divisions));
         localStorage.setItem(CACHE_KEYS.subdivisions, JSON.stringify(snap.subdivisions));
         localStorage.setItem(CACHE_KEYS.dimension5s, JSON.stringify(snap.dimension5s));
-        localStorage.setItem(CACHE_KEYS.bonuses, JSON.stringify(snap.bonuses));
         localStorage.setItem(CACHE_KEYS.commissions, JSON.stringify(snap.commissions));
         // Limpiar historial gigante si quedó de versiones anteriores
         if (localStorage.getItem('nomina-history')) {
@@ -113,7 +112,7 @@ export function DataProvider({ children }) {
 
         // Carga crítica primero (sin historial/logs pesados ni SAP no usado)
         const [
-          compRes, empRes, deptRes, areaRes, divRes, subdivRes, dim5Res, draftsRes, commRes
+          compRes, empRes, deptRes, areaRes, divRes, subdivRes, dim5Res, draftsRes, commRes, bonusRes
         ] = await Promise.all([
           fetch('http://localhost:3000/api/companies', fetchOpts),
           fetch('http://localhost:3000/api/employees', fetchOpts),
@@ -124,13 +123,14 @@ export function DataProvider({ children }) {
           fetch('http://localhost:3000/api/dimension5', fetchOpts),
           fetch('http://localhost:3000/api/payroll-drafts', fetchOpts),
           fetch('http://localhost:3000/api/commissions', fetchOpts),
+          fetch('http://localhost:3000/api/bonuses', fetchOpts),
         ]);
 
         const [
-          apiCompanies, apiEmployees, apiDepts, apiAreas, apiDivs, apiSubdivs, apiDim5s, apiDrafts, apiCommissions
+          apiCompanies, apiEmployees, apiDepts, apiAreas, apiDivs, apiSubdivs, apiDim5s, apiDrafts, apiCommissions, apiBonuses
         ] = await Promise.all([
           safeJson(compRes), safeJson(empRes), safeJson(deptRes), safeJson(areaRes),
-          safeJson(divRes), safeJson(subdivRes), safeJson(dim5Res), safeJson(draftsRes), safeJson(commRes)
+          safeJson(divRes), safeJson(subdivRes), safeJson(dim5Res), safeJson(draftsRes), safeJson(commRes), safeJson(bonusRes)
         ]);
 
         if (cancelled) return;
@@ -145,13 +145,14 @@ export function DataProvider({ children }) {
         if (Array.isArray(apiDim5s)) setDimension5s(apiDim5s);
         if (Array.isArray(apiDrafts)) setActivePayrolls(parseDrafts(apiDrafts));
         if (Array.isArray(apiCommissions)) setCommissions(apiCommissions);
+        if (Array.isArray(apiBonuses)) setBonuses(apiBonuses);
         setIsLoading(false);
 
         // Historial y logs en segundo plano (payloads grandes)
         const deferHeavy = async () => {
           try {
             const [histRes, opLogsRes] = await Promise.all([
-              fetch('http://localhost:3000/api/payrolls', fetchOpts),
+              fetch('http://localhost:3000/api/payrolls?summary=1', fetchOpts),
               fetch('http://localhost:3000/api/operation-logs', fetchOpts),
             ]);
             const [apiHistory, apiOperationLogs] = await Promise.all([
@@ -190,6 +191,30 @@ export function DataProvider({ children }) {
   const getAuthHeader = () => {
     const token = localStorage.getItem('nomina-token');
     return token ? { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' };
+  };
+
+  const fetchPayrollHistory = async () => {
+    try {
+      const res = await fetch('http://localhost:3000/api/payrolls?summary=1', { headers: getAuthHeader() });
+      if (res.ok) {
+        const apiHistory = await res.json();
+        if (Array.isArray(apiHistory)) setPayrollHistory(apiHistory);
+      }
+    } catch (err) {
+      console.error('fetchPayrollHistory:', err);
+    }
+  };
+
+  const fetchActivePayrolls = async () => {
+    try {
+      const res = await fetch('http://localhost:3000/api/payroll-drafts', { headers: getAuthHeader() });
+      if (res.ok) {
+        const apiDrafts = await res.json();
+        if (Array.isArray(apiDrafts)) setActivePayrolls(parseDrafts(apiDrafts));
+      }
+    } catch (err) {
+      console.error('fetchActivePayrolls:', err);
+    }
   };
 
   // Companies
@@ -549,12 +574,10 @@ export function DataProvider({ children }) {
               const updatedDraftsToSave = [];
               setActivePayrolls(currentDrafts => {
                 const nextDrafts = currentDrafts.map(draft => {
-                  const draftMonth = new Date(draft.createdAt).getMonth();
-                  const draftYear = new Date(draft.createdAt).getFullYear();
-                  const logMonth = new Date(log.date).getMonth();
-                  const logYear = new Date(log.date).getFullYear();
-                  
-                  if (draftMonth === logMonth && draftYear === logYear) {
+                  const draftRefDate = draft.createdAt || draft.draftDate || new Date().toISOString();
+                  const periodType = draft.periodType || '1ra';
+
+                  if (isDateInQuincena(log.date, draftRefDate, periodType)) {
                     const draftCompanies = draft.companies || [];
                     const matchesCompany = draftCompanies.length === 0 || !log.companyId || draftCompanies.some(c => {
                       const strC = String(c);
@@ -573,7 +596,7 @@ export function DataProvider({ children }) {
                         let valSimples = 0, valDobles = 0, totalBonos = 0;
                         if (log.type === 'HORA_EXTRA') {
                           if (log.hourType === 'SIMPLE') valSimples = Number(log.hoursQty) * hourlyRate * 1.5;
-                          else valDobles = Number(log.hoursQty) * hourlyRate * 2;
+                          else if (log.hourType === 'DOBLE' || log.hourType === 'NOCTURNA') valDobles = Number(log.hoursQty) * hourlyRate * 2;
                         } else if (log.type === 'BONO') {
                           totalBonos = Number(log.bonusAmount);
                         }
@@ -776,10 +799,39 @@ export function DataProvider({ children }) {
     }
   };
 
-  // Bonuses
-  const addBonus = (bonus) => setBonuses([...bonuses, { ...bonus, id: Date.now().toString() }]);
-  const updateBonus = (id, data) => setBonuses(bonuses.map(b => b.id === id ? { ...b, ...data } : b));
-  const deleteBonus = (id) => setBonuses(bonuses.filter(b => b.id !== id));
+  // Bonuses (API)
+  const addBonus = async (bonus) => {
+    const res = await fetch('http://localhost:3000/api/bonuses', {
+      method: 'POST',
+      headers: getAuthHeader(),
+      body: JSON.stringify(bonus)
+    });
+    if (!res.ok) throw new Error('No se pudo crear el bono');
+    const created = await res.json();
+    setBonuses((prev) => [...prev, created]);
+    return created;
+  };
+
+  const updateBonus = async (id, data) => {
+    const res = await fetch(`http://localhost:3000/api/bonuses/${id}`, {
+      method: 'PUT',
+      headers: getAuthHeader(),
+      body: JSON.stringify(data)
+    });
+    if (!res.ok) throw new Error('No se pudo actualizar el bono');
+    const updated = await res.json();
+    setBonuses((prev) => prev.map((b) => (b.id === id ? updated : b)));
+    return updated;
+  };
+
+  const deleteBonus = async (id) => {
+    const res = await fetch(`http://localhost:3000/api/bonuses/${id}`, {
+      method: 'DELETE',
+      headers: getAuthHeader()
+    });
+    if (!res.ok) throw new Error('No se pudo eliminar el bono');
+    setBonuses((prev) => prev.filter((b) => b.id !== id));
+  };
 
   // Payroll
   const createActivePayroll = async (title, selectedCompanies, periodType = '1ra', draftDateStr = null) => {
@@ -827,7 +879,12 @@ export function DataProvider({ children }) {
         const hComps = parseCompanies(h);
         if (selectedCompanyIds.length === 0) return false;
         if (hComps.length === 0 || hComps.includes('ALL')) return false;
-        return selectedCompanyIds.some(id => hComps.some(hc => String(hc) === String(id)));
+        const selectedNames = selectedCompanyIds.map((id) => {
+          const c = companies.find((x) => String(x.id) === String(id));
+          return c ? (c.nombre_comercial || c.razon_social || String(id)) : String(id);
+        });
+        return selectedCompanyIds.some((id) => hComps.some((hc) => String(hc) === String(id)))
+          || selectedNames.some((name) => hComps.some((hc) => String(hc).trim() === String(name).trim()));
       };
 
       const matchesMonth = (h) => {
@@ -1196,13 +1253,14 @@ export function DataProvider({ children }) {
           throw new Error('Error al conectar con el servidor.');
         }
 
-        await res.json();
-        setPayrollHistory([historyRecord, ...payrollHistory]);
+        const saved = await res.json();
+        const { data: _fullData, ...listEntry } = saved;
+        setPayrollHistory([listEntry, ...payrollHistory.filter((p) => p.id !== saved.id)]);
         deleteActivePayroll(id);
 
         // Mark operation logs as PROCESSED_PAYROLL with periodAssigned
         if (logsToProcess.length > 0) {
-          const periodLabel = historyRecord.id;
+          const periodLabel = saved.id || historyRecord.id;
           await Promise.all(logsToProcess.map(logId => 
             updateOperationLogStatus(logId, 'PROCESSED_PAYROLL', periodLabel)
           ));
@@ -1307,7 +1365,7 @@ export function DataProvider({ children }) {
       addCommission, updateCommission, deleteCommission,
       operationLogs, addOperationLog, updateOperationLogStatus, deleteOperationLog, updateOperationLog,
       activePayrolls, createActivePayroll, updateActivePayroll, updateDraftMetadata, deleteActivePayroll, closePayroll,
-      savePayroll, deletePayroll, auditorApprovePayroll, auditorRejectPayroll
+      savePayroll, deletePayroll, auditorApprovePayroll, auditorRejectPayroll, fetchPayrollHistory, fetchActivePayrolls
   }), [
     companies, departments, employees, bonuses, commissions, payrollHistory,
     activeAreas, activeDivisions, activeSubdivisions, activeDimension5s, isLoading,

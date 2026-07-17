@@ -126,9 +126,12 @@ export default function BillingDistribution() {
             value={selectedPayroll}
             onChange={(e) => { setSelectedPayroll(e.target.value); setPreviewData(null); }}
           >
-            {closedPayrolls.map((p) => (
-              <option key={p.id} value={p.id}>{p.title}</option>
-            ))}
+            {closedPayrolls.map((p) => {
+              const empCount = Array.isArray(p.data) ? p.data.length : (typeof p.data === 'string' ? (() => { try { return JSON.parse(p.data).length; } catch { return 0; } })() : 0);
+              return (
+                <option key={p.id} value={p.id}>{p.title} ({empCount} empleado{empCount !== 1 ? 's' : ''})</option>
+              );
+            })}
           </Select>
           <Button leftIcon={<Calculator size={18} />} colorScheme="brand" onClick={handlePreview} isLoading={loading}>
             Vista Previa
@@ -160,7 +163,7 @@ export default function BillingDistribution() {
               <Box>
                 <Text fontSize="lg" fontWeight="bold">Facturas — {previewData.payrollTitle}</Text>
                 <Text fontSize="sm" color="gray.500">
-                  {(previewData.lines || []).length} factura(s) · {(previewData.details || []).length} fila(s) de detalle
+                  {(previewData.lines || []).length} factura(s) · {(previewData.details || []).length} asignación(es) · {previewData.employeeCount ?? new Set((previewData.details || []).map(d => d.employeeId)).size} empleado(s) en nómina
                 </Text>
               </Box>
               <HStack>
@@ -206,7 +209,10 @@ export default function BillingDistribution() {
                   {(!previewData.lines || previewData.lines.length === 0) && (
                     <Tr>
                       <Td colSpan={8} textAlign="center" py={8} color="gray.500">
-                        No se generaron facturas. Revise las reglas de facturación y la distribución de empleados.
+                        <VStack spacing={2}>
+                          <Text>No se generaron facturas para esta nómina.</Text>
+                          <Text fontSize="xs">Revise las reglas en «Reglas de Fact.» y que la distribución por empresa de cada empleado genere cargos a otras compañías.</Text>
+                        </VStack>
                       </Td>
                     </Tr>
                   )}
@@ -260,6 +266,10 @@ export default function BillingDistribution() {
                       <Th isNumeric whiteSpace="nowrap">Días</Th>
                       <Th isNumeric whiteSpace="nowrap">Sueldo</Th>
                       <Th isNumeric whiteSpace="nowrap">Bono Dec.</Th>
+                      <Th isNumeric whiteSpace="nowrap">Bono Inc.</Th>
+                      <Th isNumeric whiteSpace="nowrap">Bonos Ext.</Th>
+                      <Th isNumeric whiteSpace="nowrap">Bonos Cat.</Th>
+                      <Th isNumeric whiteSpace="nowrap">H. Extra</Th>
                       <Th isNumeric whiteSpace="nowrap">Bruto</Th>
                       <Th isNumeric whiteSpace="nowrap">IGSS Lab.</Th>
                       <Th isNumeric whiteSpace="nowrap">ISR</Th>
@@ -267,6 +277,7 @@ export default function BillingDistribution() {
                       <Th isNumeric whiteSpace="nowrap">IGSS Pat.</Th>
                       <Th isNumeric whiteSpace="nowrap">Costo Total</Th>
                       <Th isNumeric whiteSpace="nowrap">Asg. Bruto</Th>
+                      <Th isNumeric whiteSpace="nowrap">Asg. Bonos Cat.</Th>
                       <Th isNumeric whiteSpace="nowrap">Asg. IGSS</Th>
                       <Th isNumeric whiteSpace="nowrap">Asg. ISR</Th>
                       <Th isNumeric whiteSpace="nowrap">Asg. Costo</Th>
@@ -282,6 +293,10 @@ export default function BillingDistribution() {
                         <Td isNumeric>{d.days ?? '—'}</Td>
                         <Td isNumeric fontSize="xs">{formatCurrency(d.sueldoOrdinario)}</Td>
                         <Td isNumeric fontSize="xs">{formatCurrency(d.bonoDecreto)}</Td>
+                        <Td isNumeric fontSize="xs">{formatCurrency(d.bonoIncentivo)}</Td>
+                        <Td isNumeric fontSize="xs">{formatCurrency(d.bonosExtras)}</Td>
+                        <Td isNumeric fontSize="xs">{formatCurrency(d.bonosAplicados)}</Td>
+                        <Td isNumeric fontSize="xs">{formatCurrency(d.horasExtrasOtros)}</Td>
                         <Td isNumeric fontSize="xs">{formatCurrency(d.bruto)}</Td>
                         <Td isNumeric fontSize="xs">{formatCurrency(d.igssLaboral)}</Td>
                         <Td isNumeric fontSize="xs">{formatCurrency(d.isr)}</Td>
@@ -289,6 +304,7 @@ export default function BillingDistribution() {
                         <Td isNumeric fontSize="xs">{formatCurrency(d.igssPatronal)}</Td>
                         <Td isNumeric fontSize="xs" fontWeight="600">{formatCurrency(d.employeeCost)}</Td>
                         <Td isNumeric fontSize="xs">{formatCurrency(d.asgBruto)}</Td>
+                        <Td isNumeric fontSize="xs">{formatCurrency(d.asgBonosAplicados)}</Td>
                         <Td isNumeric fontSize="xs">{formatCurrency(d.asgIgssLaboral)}</Td>
                         <Td isNumeric fontSize="xs">{formatCurrency(d.asgIsr)}</Td>
                         <Td isNumeric fontWeight="700" color="brand.500">{formatCurrency(d.baseAmount)}</Td>

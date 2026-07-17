@@ -2,23 +2,60 @@ const { PayrollHistory, User, PayrollDraft, PayrollDraftEmployee, sequelize } = 
 const jwt = require('jsonwebtoken');
 const { sendReactivationEmail } = require('../services/email.service');
 const BillingService = require('../services/billing.service');
+const { computePayrollSummary, parsePayrollEmployees, parsePayrollSummary } = require('../services/payrollSummary.service');
+
+const { calculatePayrollBatch } = require('../services/payrollCalculator.service');
+
+const formatPayrollRecord = (payrollObj, { includeData = true } = {}) => {
+  const result = { ...payrollObj };
+  result.summary = parsePayrollSummary(result.summary);
+
+  if (!result.summary || !result.summary.employeesCount) {
+    const computed = computePayrollSummary(payrollObj);
+    if (computed.employeesCount > 0) {
+      result.summary = computed;
+    }
+  }
+
+  if (!includeData) {
+    delete result.data;
+    return result;
+  }
+
+  let emps = parsePayrollEmployees(payrollObj.data);
+  if (emps.length > 0 && !emps.every((e) => e && e.calculated)) {
+    emps = calculatePayrollBatch(emps, payrollObj.periodType);
+  }
+  result.data = emps;
+  return result;
+};
 
 const getPayrolls = async (req, res) => {
   try {
+    const summaryOnly = req.query.summary === '1' || req.query.summary === 'true';
     const payrolls = await PayrollHistory.findAll({
-      order: [['closedAt', 'DESC'], ['createdAt', 'DESC']]
+      order: [['closedAt', 'DESC'], ['createdAt', 'DESC']],
+      ...(summaryOnly ? { attributes: { exclude: ['data'] } } : {})
     });
-    
-    const formattedPayrolls = payrolls.map(p => {
-      const payrollObj = p.toJSON();
-      let emps = typeof payrollObj.data === 'string' ? JSON.parse(payrollObj.data) : payrollObj.data;
-      // Solo recalcular si faltan snapshots calculados (nóminas antiguas)
-      if (Array.isArray(emps) && emps.length > 0 && !emps.every(e => e && e.calculated)) {
-        emps = calculatePayrollBatch(emps, payrollObj.periodType);
-      }
-      payrollObj.data = emps;
-      return payrollObj;
-    });
+
+    const formattedPayrolls = await Promise.all(
+      payrolls.map(async (p) => {
+        let obj = p.toJSON();
+        if (summaryOnly && (!obj.summary || !parsePayrollSummary(obj.summary)?.employeesCount)) {
+          const full = await PayrollHistory.findByPk(p.id);
+          if (full) {
+            const fullObj = full.toJSON();
+            fullObj.summary = parsePayrollSummary(fullObj.summary);
+            const summary = computePayrollSummary(fullObj);
+            if (summary.employeesCount > 0) {
+              obj.summary = summary;
+              await PayrollHistory.update({ summary }, { where: { id: obj.id } });
+            }
+          }
+        }
+        return formatPayrollRecord(obj, { includeData: !summaryOnly });
+      })
+    );
 
     res.json(formattedPayrolls);
   } catch (err) {
@@ -26,7 +63,15 @@ const getPayrolls = async (req, res) => {
   }
 };
 
-const { calculatePayrollBatch } = require('../services/payrollCalculator.service');
+const getPayrollById = async (req, res) => {
+  try {
+    const payroll = await PayrollHistory.findByPk(req.params.id);
+    if (!payroll) return res.status(404).json({ error: 'Nómina no encontrada' });
+    res.json(formatPayrollRecord(payroll.toJSON(), { includeData: true }));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
 
 /** Exige exactamente una empresa concreta al cerrar/crear historial de nómina. */
 const requireSingleCompany = (companies) => {
@@ -60,6 +105,7 @@ const createPayroll = async (req, res) => {
     if (emps && emps.length > 0) {
       emps = calculatePayrollBatch(emps, payload.periodType);
       payload.data = typeof payload.data === 'string' ? JSON.stringify(emps) : emps;
+      payload.summary = computePayrollSummary({ ...payload, data: emps });
     }
 
     const newPayroll = await PayrollHistory.create(payload);
@@ -495,6 +541,7 @@ const updateStatus = async (req, res) => {
 
 module.exports = {
   getPayrolls,
+  getPayrollById,
   updateStatus,
   createPayroll,
   deletePayroll,

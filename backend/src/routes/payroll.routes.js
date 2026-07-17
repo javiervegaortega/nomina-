@@ -9,6 +9,7 @@ router.delete('/:id', authenticateToken, payrollController.deletePayroll);
 router.post('/request-reactivation', authenticateToken, payrollController.requestReactivation);
 router.post('/reactivate', authenticateToken, payrollController.reactivate);
 router.get('/reactivate-via-get', payrollController.reactivateViaGet);
+router.get('/:id', payrollController.getPayrollById);
 router.patch('/:id/status', authenticateToken, payrollController.updateStatus);
 router.post('/:id/auditor-approve', authenticateToken, payrollController.auditorApprove);
 router.post('/:id/auditor-reject', authenticateToken, payrollController.auditorReject);
