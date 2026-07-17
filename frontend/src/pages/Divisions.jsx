@@ -29,7 +29,7 @@ import {
   InputLeftElement,
 } from '@chakra-ui/react';
 
-export default function Divisions() {
+export function DivisionsPanel() {
   const { divisions, isSapConnected, addDivision, updateDivision, deleteDivision, isLoading } = useContext(DataContext);
   const { confirmAction } = useContext(AppContext);
   const { user } = useContext(AuthContext);
@@ -87,7 +87,7 @@ export default function Divisions() {
 
   if (isLoading) {
     return (
-      <Box p={{ base: 4, md: 6, lg: 8 }}>
+      <Box>
         <Flex justify="space-between" align="center" mb={6}>
           <Box>
             <Skeleton h="28px" w="220px" mb={2} />
@@ -122,57 +122,26 @@ export default function Divisions() {
   }
 
   return (
-    <Box p={{ base: 4, md: 6, lg: 8 }}>
-      {/* Header */}
-      <Flex
-        justify="space-between"
-        align={{ base: 'flex-start', md: 'center' }}
-        direction={{ base: 'column', md: 'row' }}
-        gap={4}
-        mb={6}
-      >
-        <Box>
-          <Heading
-            as="h1"
-            size={{ base: 'md', lg: 'lg' }}
-            fontWeight={800}
-            mb={1}
-            letterSpacing="-0.02em"
-          >
-            Directorio de Divisiones
-          </Heading>
-          
-          <Flex align="center" gap={2}>
-            <Text fontSize="sm" color={subtitleColor}>
-              Gestión de dimensión 3
-            </Text>
-            <Badge
-              bg={badgeBg}
-              color={badgeColor}
-              fontSize="xs"
-              fontWeight={600}
-              px={2}
-              py={0.5}
-              borderRadius="full"
-            >
-              {divisions.length} registros
-            </Badge>
-          </Flex>
-        </Box>
-        <Flex gap={3} align="center" flexWrap="wrap" justify="flex-end">
-          <InputGroup size="sm" w={{ base: '100%', sm: '250px' }}>
-            <InputLeftElement pointerEvents="none">
-              <Search size={14} color="gray.400" />
-            </InputLeftElement>
-            <Input
-              placeholder="Buscar división..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              bg={inputBgColor}
-              borderRadius="lg"
-            />
-          </InputGroup>
+    <>
+      <Flex justify="space-between" align="center" mb={4} flexWrap="wrap" gap={3}>
+        <Flex align="center" gap={2} flexWrap="wrap">
+          <Text fontSize="sm" color={subtitleColor}>Dimensión 3 · divisiones</Text>
+          <Badge bg={badgeBg} color={badgeColor} fontSize="xs" fontWeight={600} px={2} py={0.5} borderRadius="full">
+            {divisions.length} registros
+          </Badge>
         </Flex>
+        <InputGroup size="sm" w={{ base: '100%', sm: '250px' }}>
+          <InputLeftElement pointerEvents="none">
+            <Search size={14} color="gray.400" />
+          </InputLeftElement>
+          <Input
+            placeholder="Buscar división..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            bg={inputBgColor}
+            borderRadius="lg"
+          />
+        </InputGroup>
       </Flex>
 
       {/* Table Container */}
@@ -272,6 +241,8 @@ export default function Divisions() {
         onSave={handleSave}
         initialData={editingData}
       />
-    </Box>
+    </>
   );
 }
+
+export default DivisionsPanel;

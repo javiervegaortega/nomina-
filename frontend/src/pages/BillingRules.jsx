@@ -11,7 +11,7 @@ import { DataContext } from '../context/DataContext';
 
 const API = 'http://localhost:3000/api/billing';
 
-export default function BillingRules() {
+export function BillingRulesPanel() {
   const { showToast, confirmAction } = useContext(AppContext);
   const { token } = useContext(AuthContext);
   const { companies } = useContext(DataContext);
@@ -142,14 +142,13 @@ export default function BillingRules() {
   };
 
   return (
-    <Box p={6}>
-      <Flex justify="space-between" align="center" mb={6}>
-        <Box>
-          <Text fontSize="2xl" fontWeight="bold">Reglas de Facturación</Text>
-          <Text color="gray.500">Configura quién factura a quién y con qué márgenes.</Text>
-        </Box>
-        <Button leftIcon={<Plus size={18} />} colorScheme="brand" onClick={() => handleOpenModal()}>
-          Nueva Regla
+    <Box>
+      <Flex justify="space-between" align="center" mb={4} flexWrap="wrap" gap={3}>
+        <Text fontSize="sm" color="gray.500">
+          Configura quién factura a quién, márgenes e IVA.
+        </Text>
+        <Button leftIcon={<Plus size={18} />} colorScheme="brand" size="sm" onClick={() => handleOpenModal()}>
+          Nueva regla
         </Button>
       </Flex>
 
@@ -157,9 +156,9 @@ export default function BillingRules() {
         <Table variant="simple">
           <Thead bg={bgHeader}>
             <Tr>
-              <Th>Empresa Emisora (De)</Th>
+              <Th>Empresa emisora</Th>
               <Th w="50px" />
-              <Th>Empresa Receptora (A)</Th>
+              <Th>Empresa receptora</Th>
               <Th>Concepto</Th>
               <Th isNumeric>Margen %</Th>
               <Th>IVA</Th>
@@ -187,8 +186,8 @@ export default function BillingRules() {
                 </Td>
                 <Td textAlign="right">
                   <HStack justify="flex-end" spacing={2}>
-                    <IconButton icon={<Edit2 size={16} />} size="sm" variant="ghost" colorScheme="blue" onClick={() => handleOpenModal(rule)} />
-                    <IconButton icon={<Trash2 size={16} />} size="sm" variant="ghost" colorScheme="red" onClick={() => handleDelete(rule.id)} />
+                    <IconButton icon={<Edit2 size={16} />} size="sm" variant="ghost" colorScheme="blue" aria-label="Editar" onClick={() => handleOpenModal(rule)} />
+                    <IconButton icon={<Trash2 size={16} />} size="sm" variant="ghost" colorScheme="red" aria-label="Eliminar" onClick={() => handleDelete(rule.id)} />
                   </HStack>
                 </Td>
               </Tr>
@@ -205,12 +204,12 @@ export default function BillingRules() {
       <Modal isOpen={isOpen} onClose={onClose}>
         <ModalOverlay />
         <ModalContent as="form" onSubmit={handleSubmit}>
-          <ModalHeader>{formData.id ? 'Editar Regla' : 'Nueva Regla'}</ModalHeader>
+          <ModalHeader>{formData.id ? 'Editar regla' : 'Nueva regla'}</ModalHeader>
           <ModalCloseButton />
           <ModalBody>
             <VStack spacing={4}>
               <FormControl isRequired>
-                <FormLabel>Empresa Emisora (De)</FormLabel>
+                <FormLabel>Empresa emisora</FormLabel>
                 <Select
                   placeholder="Seleccionar empresa"
                   value={formData.fromCompanyId}
@@ -223,7 +222,7 @@ export default function BillingRules() {
               </FormControl>
 
               <FormControl isRequired>
-                <FormLabel>Empresa Receptora (A)</FormLabel>
+                <FormLabel>Empresa receptora</FormLabel>
                 <Select
                   placeholder="Seleccionar empresa"
                   value={formData.toCompanyId}
@@ -236,7 +235,7 @@ export default function BillingRules() {
               </FormControl>
 
               <FormControl>
-                <FormLabel>Concepto de Facturación</FormLabel>
+                <FormLabel>Concepto de facturación</FormLabel>
                 <Input value={formData.concept} onChange={(e) => setFormData({ ...formData, concept: e.target.value })} />
               </FormControl>
 
@@ -268,7 +267,7 @@ export default function BillingRules() {
                   <Switch colorScheme="brand" isChecked={formData.applyIva} onChange={(e) => setFormData({ ...formData, applyIva: e.target.checked })} />
                 </FormControl>
                 <FormControl display="flex" alignItems="center">
-                  <FormLabel mb="0" flex="1">Regla Activa</FormLabel>
+                  <FormLabel mb="0" flex="1">Regla activa</FormLabel>
                   <Switch colorScheme="brand" isChecked={formData.isActive} onChange={(e) => setFormData({ ...formData, isActive: e.target.checked })} />
                 </FormControl>
               </HStack>
@@ -283,3 +282,5 @@ export default function BillingRules() {
     </Box>
   );
 }
+
+export default BillingRulesPanel;

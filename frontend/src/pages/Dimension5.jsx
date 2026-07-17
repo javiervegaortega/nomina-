@@ -23,7 +23,7 @@ import {
   InputLeftElement,
 } from '@chakra-ui/react';
 
-export default function Dimension5() {
+export function Dimension5Panel() {
   const { dimension5s, isLoading } = useContext(DataContext);
   const { user } = useContext(AuthContext);
   const [searchQuery, setSearchQuery] = useState('');
@@ -49,7 +49,7 @@ export default function Dimension5() {
 
   if (isLoading) {
     return (
-      <Box p={{ base: 4, md: 6, lg: 8 }}>
+      <Box>
         <Flex justify="space-between" align="center" mb={6}>
           <Box>
             <Skeleton h="28px" w="240px" mb={2} />
@@ -81,57 +81,26 @@ export default function Dimension5() {
   }
 
   return (
-    <Box p={{ base: 4, md: 6, lg: 8 }}>
-      {/* Header */}
-      <Flex
-        justify="space-between"
-        align={{ base: 'flex-start', md: 'center' }}
-        direction={{ base: 'column', md: 'row' }}
-        gap={4}
-        mb={6}
-      >
-        <Box>
-          <Heading
-            as="h1"
-            size={{ base: 'md', lg: 'lg' }}
-            fontWeight={800}
-            mb={1}
-            letterSpacing="-0.02em"
-          >
-            Directorio de Dimensión 5
-          </Heading>
-          
-          <Flex align="center" gap={2}>
-            <Text fontSize="sm" color={subtitleColor}>
-              Gestión de dimensión 5
-            </Text>
-            <Badge
-              bg={badgeBg}
-              color={badgeColor}
-              fontSize="xs"
-              fontWeight={600}
-              px={2}
-              py={0.5}
-              borderRadius="full"
-            >
-              {(dimension5s || []).length} registros
-            </Badge>
-          </Flex>
-        </Box>
-        <Flex gap={3} align="center" flexWrap="wrap" justify="flex-end">
-          <InputGroup size="sm" w={{ base: '100%', sm: '250px' }}>
-            <InputLeftElement pointerEvents="none">
-              <Search size={14} color="gray.400" />
-            </InputLeftElement>
-            <Input
-              placeholder="Buscar dimensión..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              bg={inputBgColor}
-              borderRadius="lg"
-            />
-          </InputGroup>
+    <>
+      <Flex justify="space-between" align="center" mb={4} flexWrap="wrap" gap={3}>
+        <Flex align="center" gap={2} flexWrap="wrap">
+          <Text fontSize="sm" color={subtitleColor}>Dimensión 5 · catálogo SAP</Text>
+          <Badge bg={badgeBg} color={badgeColor} fontSize="xs" fontWeight={600} px={2} py={0.5} borderRadius="full">
+            {(dimension5s || []).length} registros
+          </Badge>
         </Flex>
+        <InputGroup size="sm" w={{ base: '100%', sm: '250px' }}>
+          <InputLeftElement pointerEvents="none">
+            <Search size={14} color="gray.400" />
+          </InputLeftElement>
+          <Input
+            placeholder="Buscar dimensión..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            bg={inputBgColor}
+            borderRadius="lg"
+          />
+        </InputGroup>
       </Flex>
 
       {/* Table Container */}
@@ -204,6 +173,8 @@ export default function Dimension5() {
         </Box>
         <Pagination {...pagination} />
       </Box>
-    </Box>
+    </>
   );
 }
+
+export default Dimension5Panel;

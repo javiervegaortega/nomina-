@@ -17,11 +17,7 @@ const Employees = lazy(() => import('./pages/Employees'));
 const PayrollProcessing = lazy(() => import('./pages/PayrollProcessing'));
 const PayrollHistory = lazy(() => import('./pages/PayrollHistory'));
 const ReactivatePayroll = lazy(() => import('./pages/ReactivatePayroll'));
-const Departments = lazy(() => import('./pages/Departments'));
-const Areas = lazy(() => import('./pages/Areas'));
-const Divisions = lazy(() => import('./pages/Divisions'));
-const Subdivisions = lazy(() => import('./pages/Subdivisions'));
-const Dimension5 = lazy(() => import('./pages/Dimension5'));
+const Dimensions = lazy(() => import('./pages/Dimensions'));
 const Companies = lazy(() => import('./pages/Companies'));
 const Settings = lazy(() => import('./pages/Settings'));
 const OperationBatches = lazy(() => import('./pages/OperationBatches'));
@@ -30,9 +26,7 @@ const Commissions = lazy(() => import('./pages/Commissions'));
 const Bonuses = lazy(() => import('./pages/Bonuses'));
 const Login = lazy(() => import('./pages/auth/Login'));
 const Users = lazy(() => import('./pages/Users'));
-const BillingDistribution = lazy(() => import('./pages/BillingDistribution'));
-const BillingRules = lazy(() => import('./pages/BillingRules'));
-const BillingHistory = lazy(() => import('./pages/BillingHistory'));
+const Billing = lazy(() => import('./pages/Billing'));
 const Suspensions = lazy(() => import('./pages/Suspensions'));
 const ForgotPassword = lazy(() => import('./pages/auth/ForgotPassword'));
 
@@ -162,16 +156,21 @@ function AppContent() {
                   <Route element={<RoleProtectedRoute allowedRoles={['ADMIN', 'GERENTE GENERAL', 'NOMINA', 'AUDITOR']} />}>
                     <Route path="/payroll" element={<PayrollProcessing />} />
                     <Route path="/history" element={<PayrollHistory />} />
-                    <Route path="/departments" element={<Departments />} />
-                    <Route path="/areas" element={<Areas />} />
-                    <Route path="/divisions" element={<Divisions />} />
-                    <Route path="/subdivisions" element={<Subdivisions />} />
-                    <Route path="/dimension5" element={<Dimension5 />} />
+                    <Route path="/dimensions" element={<Dimensions />} />
+                    <Route path="/dimensions/areas" element={<Dimensions />} />
+                    <Route path="/dimensions/divisions" element={<Dimensions />} />
+                    <Route path="/dimensions/subdivisions" element={<Dimensions />} />
+                    <Route path="/dimensions/dimension5" element={<Dimensions />} />
+                    <Route path="/departments" element={<Dimensions />} />
+                    <Route path="/areas" element={<Dimensions />} />
+                    <Route path="/divisions" element={<Dimensions />} />
+                    <Route path="/subdivisions" element={<Dimensions />} />
+                    <Route path="/dimension5" element={<Dimensions />} />
                     <Route path="/companies" element={<Companies />} />
                     <Route path="/settings" element={<Settings />} />
-                    <Route path="/billing" element={<BillingDistribution />} />
-                    <Route path="/billing/rules" element={<BillingRules />} />
-                    <Route path="/billing/history" element={<BillingHistory />} />
+                    <Route path="/billing" element={<Billing />} />
+                    <Route path="/billing/history" element={<Billing />} />
+                    <Route path="/billing/rules" element={<Billing />} />
                   </Route>
 
                   {/* ADMIN, GERENTE GENERAL, NOMINA, AUDITOR, DIGITADOR */}
