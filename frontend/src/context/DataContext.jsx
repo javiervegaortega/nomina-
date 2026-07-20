@@ -1,6 +1,6 @@
 import React, { createContext, useState, useEffect, useRef, useContext, useMemo } from 'react';
 import { AuthContext } from './AuthContext';
-import { isDateInQuincena, CUOTA_LABORAL_RATE } from '../utils/payrollPeriod';
+import { isDateInQuincena, findMatchingActiveDraft, CUOTA_LABORAL_RATE } from '../utils/payrollPeriod';
 import { calculateMonthlyISR } from '../data/mockData';
 
 export const DataContext = createContext();
@@ -31,11 +31,17 @@ const parseDrafts = (apiDrafts) => apiDrafts.map(d => {
   if (typeof comps === 'string') {
     try { comps = JSON.parse(comps); } catch { comps = []; }
   }
+  if (!Array.isArray(comps) && comps != null && typeof comps === 'object') {
+    comps = Object.values(comps);
+  }
+  if (!Array.isArray(comps)) comps = [];
   if (typeof emps === 'string') {
     try { emps = JSON.parse(emps); } catch { emps = []; }
   }
   if (Array.isArray(emps)) {
     emps = emps.map(emp => (typeof emp === 'string' ? JSON.parse(emp) : emp));
+  } else {
+    emps = [];
   }
   return { ...d, companies: comps, employees: emps };
 });
@@ -112,7 +118,7 @@ export function DataProvider({ children }) {
 
         // Carga crítica primero (sin historial/logs pesados ni SAP no usado)
         const [
-          compRes, empRes, deptRes, areaRes, divRes, subdivRes, dim5Res, draftsRes, commRes, bonusRes
+          compRes, empRes, deptRes, areaRes, divRes, subdivRes, dim5Res, draftsRes
         ] = await Promise.all([
           fetch('http://localhost:3000/api/companies', fetchOpts),
           fetch('http://localhost:3000/api/employees', fetchOpts),
@@ -122,15 +128,13 @@ export function DataProvider({ children }) {
           fetch('http://localhost:3000/api/subdivisions', fetchOpts),
           fetch('http://localhost:3000/api/dimension5', fetchOpts),
           fetch('http://localhost:3000/api/payroll-drafts', fetchOpts),
-          fetch('http://localhost:3000/api/commissions', fetchOpts),
-          fetch('http://localhost:3000/api/bonuses', fetchOpts),
         ]);
 
         const [
-          apiCompanies, apiEmployees, apiDepts, apiAreas, apiDivs, apiSubdivs, apiDim5s, apiDrafts, apiCommissions, apiBonuses
+          apiCompanies, apiEmployees, apiDepts, apiAreas, apiDivs, apiSubdivs, apiDim5s, apiDrafts
         ] = await Promise.all([
           safeJson(compRes), safeJson(empRes), safeJson(deptRes), safeJson(areaRes),
-          safeJson(divRes), safeJson(subdivRes), safeJson(dim5Res), safeJson(draftsRes), safeJson(commRes), safeJson(bonusRes)
+          safeJson(divRes), safeJson(subdivRes), safeJson(dim5Res), safeJson(draftsRes)
         ]);
 
         if (cancelled) return;
@@ -144,8 +148,8 @@ export function DataProvider({ children }) {
         if (Array.isArray(apiSubdivs)) setSubdivisions(apiSubdivs);
         if (Array.isArray(apiDim5s)) setDimension5s(apiDim5s);
         if (Array.isArray(apiDrafts)) setActivePayrolls(parseDrafts(apiDrafts));
-        if (Array.isArray(apiCommissions)) setCommissions(apiCommissions);
-        if (Array.isArray(apiBonuses)) setBonuses(apiBonuses);
+        setBonuses([]);
+        setCommissions([]);
         setIsLoading(false);
 
         // Historial y logs en segundo plano (payloads grandes)
@@ -539,132 +543,189 @@ export function DataProvider({ children }) {
     }
   };
 
-  
-  // Operation Logs
-  const addOperationLog = async (data) => {
-    try {
-      const res = await fetch('http://localhost:3000/api/operation-logs', {
-        method: 'POST',
-        headers: getAuthHeader(),
-        body: JSON.stringify(data)
-      });
-      if (res.ok) {
-        const newLog = await res.json();
-        const emp = employees.find(e => e.id === newLog.employeeId);
-        if (emp) newLog.Employee = { id: emp.id, primer_nombre: emp.primer_nombre, primer_apellido: emp.primer_apellido, empresa_principal: emp.empresa_principal };
-        setOperationLogs(prev => [...prev, newLog]);
+  // --- Operation Logs ↔ Active Payroll drafts ---
+  const computeLogMoney = (log, emp) => {
+    const baseSalary = Number(emp.sueldo_ordinario) || 0;
+    const hourlyRate = baseSalary / 30 / 8;
+    let valSimples = 0;
+    let valDobles = 0;
+    let totalBonos = 0;
+    let qtySimples = 0;
+    let qtyDobles = 0;
+    if (log.type === 'HORA_EXTRA') {
+      if (log.hourType === 'SIMPLE') {
+        qtySimples = Number(log.hoursQty) || 0;
+        valSimples = qtySimples * hourlyRate * 1.5;
+      } else if (log.hourType === 'DOBLE' || log.hourType === 'NOCTURNA') {
+        qtyDobles = Number(log.hoursQty) || 0;
+        valDobles = qtyDobles * hourlyRate * 2;
       }
-    } catch (e) {}
+    } else if (log.type === 'BONO') {
+      totalBonos = Number(log.bonusAmount) || 0;
+    }
+    return { valSimples, valDobles, totalBonos, qtySimples, qtyDobles };
   };
 
-  const updateOperationLogStatus = async (id, status, periodAssigned = null, justification = null, rejectionFromNomina = false) => {
-    try {
-      const res = await fetch(`http://localhost:3000/api/operation-logs/${id}/status`, {
-        method: 'PUT',
-        headers: getAuthHeader(),
-        body: JSON.stringify({ status, periodAssigned, justification, rejectionFromNomina })
+  const applyLogToDraftEmployee = (emp, log, mode) => {
+    const already = (emp.operationLogs || []).some((l) => String(l.id) === String(log.id));
+    if (mode === 'add' && already) return { emp, changed: false };
+    if (mode === 'remove' && !already) return { emp, changed: false };
+
+    const { valSimples, valDobles, totalBonos, qtySimples, qtyDobles } = computeLogMoney(log, emp);
+    const sign = mode === 'add' ? 1 : -1;
+    const next = { ...emp, extras: { ...(emp.extras || {}) } };
+
+    if (qtySimples || valSimples) {
+      next.extras.simplesQty = Math.max(0, (Number(next.extras.simplesQty) || 0) + sign * qtySimples);
+      next.extras.simplesVal = Math.max(0, (Number(next.extras.simplesVal) || 0) + sign * valSimples);
+    }
+    if (qtyDobles || valDobles) {
+      next.extras.doblesQty = Math.max(0, (Number(next.extras.doblesQty) || 0) + sign * qtyDobles);
+      next.extras.doblesVal = Math.max(0, (Number(next.extras.doblesVal) || 0) + sign * valDobles);
+    }
+    if (totalBonos) {
+      next.extras.bonos = Math.max(0, (Number(next.extras.bonos) || 0) + sign * totalBonos);
+    }
+    if (next.netTotal !== undefined) {
+      next.netTotal = (Number(next.netTotal) || 0) + sign * (valSimples + valDobles + totalBonos);
+    }
+    if (mode === 'add') {
+      next.operationLogs = [...(next.operationLogs || []), { ...log, status: 'APPROVED_MANAGER' }];
+    } else {
+      next.operationLogs = (next.operationLogs || []).filter((l) => String(l.id) !== String(log.id));
+    }
+    return { emp: next, changed: true };
+  };
+
+  const persistDraftPatch = (draft) => {
+    fetch(`http://localhost:3000/api/payroll-drafts/${draft.id}`, {
+      method: 'PUT',
+      headers: getAuthHeader(),
+      body: JSON.stringify(draft),
+    }).catch(() => {});
+  };
+
+  const syncLogWithActiveDrafts = (log, mode) => {
+    if (!log) return;
+    setActivePayrolls((currentDrafts) => {
+      const draftsToPersist = [];
+      const next = currentDrafts.map((draft) => {
+        const match = findMatchingActiveDraft([draft], log.date, log.companyId, companies);
+        if (!match) return draft;
+        const empIndex = (draft.employees || []).findIndex((e) => String(e.id) === String(log.employeeId));
+        if (empIndex < 0) return draft;
+        const { emp, changed } = applyLogToDraftEmployee(draft.employees[empIndex], log, mode);
+        if (!changed) return draft;
+        const newEmployees = [...draft.employees];
+        newEmployees[empIndex] = emp;
+        const newDraft = { ...draft, employees: newEmployees };
+        draftsToPersist.push(newDraft);
+        return newDraft;
       });
-      if (res.ok) {
-        setOperationLogs(prev => {
-          const updatedLogs = prev.map(l => l.id === id ? { ...l, status, periodAssigned, justification } : l);
-          
-          if (status === 'APPROVED_MANAGER') {
-            const log = prev.find(l => l.id === id);
-            if (log) {
-              const updatedDraftsToSave = [];
-              setActivePayrolls(currentDrafts => {
-                const nextDrafts = currentDrafts.map(draft => {
-                  const draftRefDate = draft.createdAt || draft.draftDate || new Date().toISOString();
-                  const periodType = draft.periodType || '1ra';
-
-                  if (isDateInQuincena(log.date, draftRefDate, periodType)) {
-                    const draftCompanies = draft.companies || [];
-                    const matchesCompany = draftCompanies.length === 0 || !log.companyId || draftCompanies.some(c => {
-                      const strC = String(c);
-                      if (strC === String(log.companyId)) return true;
-                      const compByName = companies.find(comp => comp.nombre_comercial === strC || comp.nit === strC);
-                      return compByName && String(compByName.id) === String(log.companyId);
-                    });
-                    
-                    if (matchesCompany) {
-                      const empIndex = draft.employees.findIndex(e => String(e.id) === String(log.employeeId));
-                      if (empIndex > -1) {
-                        const emp = { ...draft.employees[empIndex] };
-                        const baseSalary = Number(emp.sueldo_ordinario) || 0;
-                        const hourlyRate = baseSalary / 30 / 8;
-                        
-                        let valSimples = 0, valDobles = 0, totalBonos = 0;
-                        if (log.type === 'HORA_EXTRA') {
-                          if (log.hourType === 'SIMPLE') valSimples = Number(log.hoursQty) * hourlyRate * 1.5;
-                          else if (log.hourType === 'DOBLE' || log.hourType === 'NOCTURNA') valDobles = Number(log.hoursQty) * hourlyRate * 2;
-                        } else if (log.type === 'BONO') {
-                          totalBonos = Number(log.bonusAmount);
-                        }
-
-                        emp.extras = { ...emp.extras };
-                        if (valSimples) { emp.extras.simplesQty = (emp.extras.simplesQty || 0) + Number(log.hoursQty); emp.extras.simplesVal = (emp.extras.simplesVal || 0) + valSimples; }
-                        if (valDobles) { emp.extras.doblesQty = (emp.extras.doblesQty || 0) + Number(log.hoursQty); emp.extras.doblesVal = (emp.extras.doblesVal || 0) + valDobles; }
-                        if (totalBonos) { emp.extras.bonos = (emp.extras.bonos || 0) + totalBonos; }
-                        
-                        if (emp.netTotal !== undefined) {
-                           emp.netTotal += valSimples + valDobles + totalBonos;
-                        }
-                        
-                        emp.operationLogs = [...(emp.operationLogs || []), { ...log, status: 'APPROVED_MANAGER' }];
-
-                        const newEmployees = [...draft.employees];
-                        newEmployees[empIndex] = emp;
-                        const newDraft = { ...draft, employees: newEmployees };
-                        updatedDraftsToSave.push(newDraft);
-                        return newDraft;
-                      }
-                    }
-                  }
-                  return draft;
-                });
-                return nextDrafts;
-              });
-
-              // Persist changes to DB
-              updatedDraftsToSave.forEach(draft => {
-                fetch(`http://localhost:3000/api/payroll-drafts/${draft.id}`, {
-                  method: 'PUT',
-                  headers: getAuthHeader(),
-                  body: JSON.stringify(draft)
-                }).catch(() => {});
-              });
-            }
-          }
-          return updatedLogs;
-        });
+      if (draftsToPersist.length > 0) {
+        queueMicrotask(() => draftsToPersist.forEach(persistDraftPatch));
       }
-    } catch (e) {}
+      return next;
+    });
+  };
+
+  const injectApprovedLogIntoActiveDrafts = (log) => syncLogWithActiveDrafts(log, 'add');
+  const revertLogFromActiveDrafts = (log) => syncLogWithActiveDrafts(log, 'remove');
+
+  const addOperationLog = async (data) => {
+    const res = await fetch('http://localhost:3000/api/operation-logs', {
+      method: 'POST',
+      headers: getAuthHeader(),
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({}));
+      throw new Error(errBody.error || 'Error al crear el registro');
+    }
+    const newLog = await res.json();
+    const emp = employees.find((e) => e.id === newLog.employeeId);
+    if (emp) {
+      newLog.Employee = {
+        id: emp.id,
+        primer_nombre: emp.primer_nombre,
+        primer_apellido: emp.primer_apellido,
+        empresa_principal: emp.empresa_principal,
+      };
+    }
+    setOperationLogs((prev) => [...prev, newLog]);
+    if (newLog.status === 'APPROVED_MANAGER') {
+      injectApprovedLogIntoActiveDrafts(newLog);
+    }
+    return newLog;
+  };
+
+  const updateOperationLogStatus = async (id, status, periodAssigned = null, justification = null, rejectionFromNomina = false, logSnapshot = null) => {
+    const res = await fetch(`http://localhost:3000/api/operation-logs/${id}/status`, {
+      method: 'PUT',
+      headers: getAuthHeader(),
+      body: JSON.stringify({ status, periodAssigned, justification, rejectionFromNomina }),
+    });
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({}));
+      throw new Error(errBody.error || 'Error al actualizar estado');
+    }
+
+    let prevLog = logSnapshot;
+    setOperationLogs((prev) => {
+      if (!prevLog) prevLog = prev.find((l) => String(l.id) === String(id)) || null;
+      return prev.map((l) =>
+        String(l.id) === String(id) ? { ...l, status, periodAssigned, justification } : l
+      );
+    });
+    if (!prevLog && logSnapshot) prevLog = logSnapshot;
+
+    const logForSync = prevLog
+      ? { ...prevLog, status, periodAssigned, justification }
+      : { id, status, periodAssigned, justification };
+
+    if (status === 'APPROVED_MANAGER') {
+      injectApprovedLogIntoActiveDrafts(logForSync);
+    } else if (prevLog?.status === 'APPROVED_MANAGER' && status !== 'APPROVED_MANAGER' && status !== 'PROCESSED_PAYROLL') {
+      revertLogFromActiveDrafts(prevLog);
+    }
   };
 
   const deleteOperationLog = async (id) => {
-    try {
-      const res = await fetch(`http://localhost:3000/api/operation-logs/${id}`, {
-        method: 'DELETE',
-        headers: getAuthHeader()
-      });
-      if (res.ok) {
-        setOperationLogs(prev => prev.filter(l => l.id !== id));
-      }
-    } catch (e) {}
+    const prevLog = operationLogs.find((l) => String(l.id) === String(id));
+    const res = await fetch(`http://localhost:3000/api/operation-logs/${id}`, {
+      method: 'DELETE',
+      headers: getAuthHeader(),
+    });
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({}));
+      throw new Error(errBody.error || 'Error al eliminar');
+    }
+    if (prevLog?.status === 'APPROVED_MANAGER') {
+      revertLogFromActiveDrafts(prevLog);
+    }
+    setOperationLogs((prev) => prev.filter((l) => String(l.id) !== String(id)));
   };
 
   const updateOperationLog = async (id, data) => {
-    try {
-      const res = await fetch(`http://localhost:3000/api/operation-logs/${id}`, {
-        method: 'PUT',
-        headers: getAuthHeader(),
-        body: JSON.stringify(data)
-      });
-      if (res.ok) {
-        const updatedLog = await res.json();
-        setOperationLogs(prev => prev.map(l => l.id === id ? updatedLog : l));
-      }
-    } catch (e) {}
+    const prevLog = operationLogs.find((l) => String(l.id) === String(id));
+    const res = await fetch(`http://localhost:3000/api/operation-logs/${id}`, {
+      method: 'PUT',
+      headers: getAuthHeader(),
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({}));
+      throw new Error(errBody.error || 'Error al actualizar el registro');
+    }
+    const updatedLog = await res.json();
+    if (prevLog?.status === 'APPROVED_MANAGER') {
+      revertLogFromActiveDrafts(prevLog);
+    }
+    setOperationLogs((prev) => prev.map((l) => (String(l.id) === String(id) ? updatedLog : l)));
+    if (updatedLog.status === 'APPROVED_MANAGER') {
+      injectApprovedLogIntoActiveDrafts(updatedLog);
+    }
+    return updatedLog;
   };
 
   // Employees
@@ -862,29 +923,78 @@ export function DataProvider({ children }) {
     let firstQuincenaPayouts = {};
     let missingAnticipoWarning = false;
     if (periodType === '2da') {
+      // Refrescar historial para no perder 1ras recién cerradas
+      let historySource = payrollHistory;
+      try {
+        const histRes = await fetch('http://localhost:3000/api/payrolls?summary=1', { headers: getAuthHeader() });
+        if (histRes.ok) {
+          const apiHistory = await histRes.json();
+          if (Array.isArray(apiHistory)) {
+            historySource = apiHistory;
+            setPayrollHistory(apiHistory);
+          }
+        }
+      } catch (e) {
+        console.warn('No se pudo refrescar historial para anticipo 1ra:', e);
+      }
+
       const targetDate = new Date(draftRefDate);
       const month = targetDate.getMonth();
       const year = targetDate.getFullYear();
 
       const parseCompanies = (h) => {
-        let hComps = [];
-        if (Array.isArray(h.companies)) hComps = h.companies;
-        else if (typeof h.companies === 'string') {
-          try { hComps = JSON.parse(h.companies); } catch (e) { hComps = []; }
+        const set = new Set();
+        const addAll = (raw) => {
+          let comps = raw;
+          if (typeof comps === 'string') {
+            try { comps = JSON.parse(comps); } catch { comps = []; }
+          }
+          if (!Array.isArray(comps)) return;
+          comps.forEach((c) => {
+            if (c != null && String(c).trim()) set.add(String(c).trim());
+          });
+        };
+        addAll(h.companies);
+        let summary = h.summary;
+        if (typeof summary === 'string') {
+          try { summary = JSON.parse(summary); } catch { summary = null; }
         }
-        return hComps;
+        if (summary && typeof summary === 'object') addAll(summary.companies);
+        return Array.from(set);
       };
 
       const matchesCompanies = (h) => {
         const hComps = parseCompanies(h);
         if (selectedCompanyIds.length === 0) return false;
         if (hComps.length === 0 || hComps.includes('ALL')) return false;
+
+        // IDs originales si el API ya resolvió nombres en summary.companies
+        let summary = h.summary;
+        if (typeof summary === 'string') {
+          try { summary = JSON.parse(summary); } catch { summary = null; }
+        }
+        const companyIds = Array.isArray(summary?.companyIds) ? summary.companyIds.map(String) : [];
+
         const selectedNames = selectedCompanyIds.map((id) => {
           const c = companies.find((x) => String(x.id) === String(id));
           return c ? (c.nombre_comercial || c.razon_social || String(id)) : String(id);
         });
-        return selectedCompanyIds.some((id) => hComps.some((hc) => String(hc) === String(id)))
-          || selectedNames.some((name) => hComps.some((hc) => String(hc).trim() === String(name).trim()));
+        const selectedNits = selectedCompanyIds.map((id) => {
+          const c = companies.find((x) => String(x.id) === String(id));
+          return c?.nit ? String(c.nit).trim() : null;
+        }).filter(Boolean);
+
+        const idMatch = selectedCompanyIds.some((id) =>
+          hComps.some((hc) => String(hc) === String(id))
+          || companyIds.some((cid) => String(cid) === String(id))
+        );
+        const nameMatch = selectedNames.some((name) =>
+          hComps.some((hc) => String(hc).trim().toLowerCase() === String(name).trim().toLowerCase())
+        );
+        const nitMatch = selectedNits.some((nit) =>
+          hComps.some((hc) => String(hc).trim() === nit)
+        );
+        return idMatch || nameMatch || nitMatch;
       };
 
       const matchesMonth = (h) => {
@@ -892,8 +1002,16 @@ export function DataProvider({ children }) {
         return hDate.getMonth() === month && hDate.getFullYear() === year;
       };
 
-      let histories1ra = payrollHistory.filter(h =>
-        h.periodType === '1ra' && matchesMonth(h) && matchesCompanies(h)
+      const isFirstQuincena = (h) => {
+        const pt = String(h.periodType || '').toLowerCase();
+        return pt === '1ra' || pt.startsWith('1ra');
+      };
+
+      // Solo 1ra quincena del mismo mes; preferir cerrada
+      let histories1ra = historySource.filter(h =>
+        isFirstQuincena(h)
+        && matchesMonth(h)
+        && matchesCompanies(h)
       );
 
       // Prefer cerrada over auditoria; then most recent
@@ -917,23 +1035,40 @@ export function DataProvider({ children }) {
         } else if (Array.isArray(best.employees)) {
           emps = best.employees;
         }
+
+        // El listado del historial suele venir sin data (summary=1); cargar detalle
+        if (!Array.isArray(emps) || emps.length === 0) {
+          try {
+            const detailRes = await fetch(`http://localhost:3000/api/payrolls/${best.id}`, {
+              headers: getAuthHeader()
+            });
+            if (detailRes.ok) {
+              const full = await detailRes.json();
+              let fullEmps = full.data || full.employees || [];
+              if (typeof fullEmps === 'string') {
+                try { fullEmps = JSON.parse(fullEmps); } catch { fullEmps = []; }
+              }
+              if (Array.isArray(fullEmps)) emps = fullEmps;
+            }
+          } catch (e) {
+            console.error('No se pudo cargar detalle de 1ra quincena:', e);
+          }
+        }
+
         emps.forEach(emp => {
           const payout = emp.netTotal != null
             ? Number(emp.netTotal)
             : (Number(emp.calculated?.netPayable) || Number(emp.calculated?.net) || 0);
-          if (payout) firstQuincenaPayouts[emp.id] = payout;
+          if (payout) firstQuincenaPayouts[String(emp.id)] = payout;
         });
+
+        if (Object.keys(firstQuincenaPayouts).length === 0) {
+          missingAnticipoWarning = true;
+        }
       } else {
         missingAnticipoWarning = true;
       }
     }
-
-    const targetDateForCommissions = new Date(draftRefDate);
-    const monthNames = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
-    const currentMonth = monthNames[targetDateForCommissions.getMonth()];
-    
-    // Find un-applied commissions for this month
-    const currentCommissions = commissions.filter(c => c.mes === currentMonth && c.estado !== 'Aplicado');
 
     const frozenEmployees = employees
       .filter(e => selectedCompanyIds.some(id => String(id) === String(e.empresa_principal)))
@@ -943,19 +1078,11 @@ export function DataProvider({ children }) {
         const baseFactor = days / 30;
         const igssExempt = !!(e.jubilacion === true || e.jubilacion === 1);
 
-        // Calculate commissions
-        const empCommissions = currentCommissions.filter(c => c.employee_id === e.id);
+        // Solo Reporte Operativo (APPROVED_MANAGER) alimenta horas/bonos extras
         let qtySimples = 0;
         let qtyDobles = 0;
         let totalBonos = 0;
 
-        empCommissions.forEach(c => {
-          if (c.tipo_hora === 'D') qtySimples += Number(c.horas) || 0;
-          else if (c.tipo_hora === 'N') qtyDobles += Number(c.horas) || 0;
-          totalBonos += (Number(c.monto_bono) || 0);
-        });
-
-        // Operation logs APPROVED_MANAGER filtered by quincena date
         const empOpLogs = operationLogs.filter(l => {
           if (String(l.employeeId) !== String(e.id) || l.status !== 'APPROVED_MANAGER') return false;
           if (!isDateInQuincena(l.date, draftRefDate, periodType)) return false;
@@ -980,15 +1107,8 @@ export function DataProvider({ children }) {
         const valSimples = simplesQtyTotal * hourlyRate * 1.5;
         const valDobles = doblesQtyTotal * hourlyRate * 2;
 
-        // Catálogo de bonos: solo si date cae en la quincena (o sin date = no incluir en auto)
-        const appliedBonuses = bonuses.reduce((acc, b) => {
-          const amount = b.assignments?.[e.id] || 0;
-          if (!amount) return acc;
-          if (b.date && !isDateInQuincena(b.date, draftRefDate, periodType)) return acc;
-          if (!b.date) return acc; // sin fecha no se auto-aplica a cada nómina
-          acc[b.id] = amount;
-          return acc;
-        }, {});
+        // Catálogo de bonos / comisiones ya no se auto-aplican
+        const appliedBonuses = {};
 
         // Bantrab del maestro (campo bantrab) + bancos; ambos alimentan la columna Bancos/Bantrab
         const bantrabMensual = (Number(e.bantrab) || 0) + (Number(e.bancos) || 0);
@@ -1028,7 +1148,7 @@ export function DataProvider({ children }) {
             boleto_de_ornato: (Number(e.boleto_de_ornato) || 0) * baseFactor,
             otros_egresos: ((Number(e.otros_egresos) || 0) + (Number(e.otro_descuentos) || 0)) * baseFactor,
           },
-          anticipo1ra: firstQuincenaPayouts[e.id] || 0,
+          anticipo1ra: firstQuincenaPayouts[String(e.id)] || firstQuincenaPayouts[e.id] || 0,
           missingAnticipoWarning: periodType === '2da' && missingAnticipoWarning,
           extras: {
             bonos: totalBonos,
@@ -1082,6 +1202,7 @@ export function DataProvider({ children }) {
   const updateActivePayroll = async (id, newEmployeesData) => {
     try {
       const draftToUpdate = activePayrolls.find(p => p.id === id);
+      if (draftToUpdate?.isApproved) return;
       const periodType = draftToUpdate ? draftToUpdate.periodType : 'mensual';
       const oldEmployees = draftToUpdate ? draftToUpdate.employees : [];
 
@@ -1364,6 +1485,7 @@ export function DataProvider({ children }) {
       addBonus, updateBonus, deleteBonus,
       addCommission, updateCommission, deleteCommission,
       operationLogs, addOperationLog, updateOperationLogStatus, deleteOperationLog, updateOperationLog,
+      injectApprovedLogIntoActiveDrafts, revertLogFromActiveDrafts,
       activePayrolls, createActivePayroll, updateActivePayroll, updateDraftMetadata, deleteActivePayroll, closePayroll,
       savePayroll, deletePayroll, auditorApprovePayroll, auditorRejectPayroll, fetchPayrollHistory, fetchActivePayrolls
   }), [

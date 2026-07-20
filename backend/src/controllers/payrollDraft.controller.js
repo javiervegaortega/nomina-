@@ -60,6 +60,8 @@ const getAll = async (req, res) => {
         companies: draftObj.companies,
         periodType: draftObj.periodType,
         notes: draftObj.notes,
+        isApproved: !!draftObj.isApproved,
+        correctionNote: draftObj.correctionNote || null,
         employees: employeesArr,
         createdAt: draftObj.createdAt
       };
@@ -122,6 +124,13 @@ const update = async (req, res) => {
       return res.status(404).json({ error: 'Borrador no encontrado' });
     }
 
+    if (draft.isApproved) {
+      await t.rollback();
+      return res.status(403).json({
+        error: 'Esta nómina ya tiene visto bueno de auditoría y no puede editarse. Solo puede cerrarse definitivamente.'
+      });
+    }
+
     const { title, companies, employees, createdAt, periodType, notes } = req.body;
     const validatedCompanies = requireSingleCompany(
       companies !== undefined ? companies : draft.companies
@@ -161,7 +170,13 @@ const update = async (req, res) => {
     }
 
     await t.commit();
-    res.json({ ...req.body, companies: validatedCompanies, employees: calculatedEmployees });
+    res.json({
+      ...req.body,
+      companies: validatedCompanies,
+      employees: calculatedEmployees,
+      isApproved: !!draft.isApproved,
+      correctionNote: draft.correctionNote || null
+    });
   } catch (err) {
     await t.rollback();
     res.status(err.status || 400).json({ error: err.message });

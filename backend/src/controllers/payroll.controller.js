@@ -1,12 +1,118 @@
-const { PayrollHistory, User, PayrollDraft, PayrollDraftEmployee, sequelize } = require('../models');
+const { PayrollHistory, User, PayrollDraft, PayrollDraftEmployee, Company, sequelize } = require('../models');
 const jwt = require('jsonwebtoken');
-const { sendReactivationEmail } = require('../services/email.service');
+const { sendReactivationEmail, sendPayrollAuditDecisionEmail, sendPayrollSubmittedToAuditEmail } = require('../services/email.service');
 const BillingService = require('../services/billing.service');
 const { computePayrollSummary, parsePayrollEmployees, parsePayrollSummary } = require('../services/payrollSummary.service');
 
 const { calculatePayrollBatch } = require('../services/payrollCalculator.service');
 
-const formatPayrollRecord = (payrollObj, { includeData = true } = {}) => {
+const AUDIT_ROLES = ['AUDITOR', 'ADMIN', 'GERENTE GENERAL'];
+
+const resolveCompanyNames = async (companyIds = []) => {
+  const ids = (Array.isArray(companyIds) ? companyIds : [])
+    .map((c) => String(c).trim())
+    .filter(Boolean);
+  if (ids.length === 0) return [];
+
+  const numericIds = ids.filter((id) => /^\d+$/.test(id)).map((id) => Number(id));
+  let companies = [];
+  if (numericIds.length > 0) {
+    companies = await Company.findAll({
+      where: { id: numericIds },
+      attributes: ['id', 'nombre_comercial', 'razon_social', 'nit']
+    });
+  }
+
+  return ids.map((id) => {
+    const found = companies.find((c) => String(c.id) === String(id));
+    return found?.nombre_comercial || found?.razon_social || found?.nit || id;
+  });
+};
+
+const notifyAuditorsOfSubmission = async ({ historyRecord, companyNames, submitterName }) => {
+  const auditors = await User.findAll({
+    where: { role: 'AUDITOR' },
+    attributes: ['id', 'name', 'email']
+  });
+  const summary = parsePayrollSummary(historyRecord.summary) || {};
+  const details = {
+    title: historyRecord.title,
+    periodType: historyRecord.periodType,
+    companyName: (companyNames && companyNames[0]) || '—',
+    submitterName: submitterName || 'Nómina',
+    employeesCount: summary.employeesCount || null
+  };
+
+  for (const auditor of auditors) {
+    if (!auditor.email) continue;
+    try {
+      await sendPayrollSubmittedToAuditEmail(auditor.email, auditor.name, details);
+    } catch (err) {
+      console.error(`Fallo correo envío a auditoría (${auditor.email}):`, err.message);
+    }
+  }
+};
+
+const getCompaniesFromHistory = (historyRecord) => {
+  const summary = parsePayrollSummary(historyRecord.summary) || {};
+  if (Array.isArray(summary.companies) && summary.companies.length > 0) {
+    return summary.companies;
+  }
+  if (Array.isArray(historyRecord.companies) && historyRecord.companies.length > 0) {
+    return historyRecord.companies;
+  }
+  return [];
+};
+
+const notifyAuditDecisionRecipients = async ({ historyRecord, action, note, auditorName }) => {
+  const summary = parsePayrollSummary(historyRecord.summary) || {};
+  const submittedBy = summary.submittedBy || null;
+  const recipients = new Map();
+
+  const nominaUsers = await User.findAll({
+    where: { role: 'NOMINA' },
+    attributes: ['id', 'name', 'email']
+  });
+  for (const u of nominaUsers) {
+    if (u.email) recipients.set(u.email.toLowerCase(), { email: u.email, name: u.name });
+  }
+
+  if (submittedBy?.email) {
+    recipients.set(String(submittedBy.email).toLowerCase(), {
+      email: submittedBy.email,
+      name: submittedBy.name || 'Usuario'
+    });
+  } else if (submittedBy?.userId) {
+    const submitter = await User.findByPk(submittedBy.userId, { attributes: ['id', 'name', 'email'] });
+    if (submitter?.email) {
+      recipients.set(submitter.email.toLowerCase(), { email: submitter.email, name: submitter.name });
+    }
+  }
+
+  const details = {
+    title: historyRecord.title,
+    periodType: historyRecord.periodType,
+    action,
+    note: note || null,
+    auditorName: auditorName || 'Auditoría'
+  };
+
+  const errors = [];
+  for (const recipient of recipients.values()) {
+    try {
+      await sendPayrollAuditDecisionEmail(recipient.email, recipient.name, details);
+    } catch (err) {
+      console.error(`Fallo correo auditoría a ${recipient.email}:`, err.message);
+      errors.push(err.message);
+    }
+  }
+  if (recipients.size === 0) {
+    console.warn('Sin destinatarios para notificación de auditoría de nómina');
+  }
+  return errors;
+};
+
+const formatPayrollRecord = async (payrollObj, { includeData = true } = {}) => {
   const result = { ...payrollObj };
   result.summary = parsePayrollSummary(result.summary);
 
@@ -14,6 +120,16 @@ const formatPayrollRecord = (payrollObj, { includeData = true } = {}) => {
     const computed = computePayrollSummary(payrollObj);
     if (computed.employeesCount > 0) {
       result.summary = computed;
+    }
+  }
+
+  // Exponer nombres de empresa (summary suele guardar solo IDs)
+  const companyIds = getCompaniesFromHistory(result);
+  if (companyIds.length > 0) {
+    const names = await resolveCompanyNames(companyIds);
+    result.companies = names;
+    if (result.summary && typeof result.summary === 'object') {
+      result.summary = { ...result.summary, companies: names, companyIds };
     }
   }
 
@@ -53,7 +169,7 @@ const getPayrolls = async (req, res) => {
             }
           }
         }
-        return formatPayrollRecord(obj, { includeData: !summaryOnly });
+        return await formatPayrollRecord(obj, { includeData: !summaryOnly });
       })
     );
 
@@ -67,7 +183,7 @@ const getPayrollById = async (req, res) => {
   try {
     const payroll = await PayrollHistory.findByPk(req.params.id);
     if (!payroll) return res.status(404).json({ error: 'Nómina no encontrada' });
-    res.json(formatPayrollRecord(payroll.toJSON(), { includeData: true }));
+    res.json(await formatPayrollRecord(payroll.toJSON(), { includeData: true }));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -98,7 +214,8 @@ const requireSingleCompany = (companies) => {
 const createPayroll = async (req, res) => {
   try {
     const payload = req.body;
-    payload.companies = requireSingleCompany(payload.companies);
+    const validatedCompanies = requireSingleCompany(payload.companies);
+    payload.companies = validatedCompanies;
     
     // SERVER-SIDE CALCULATION ENFORCEMENT
     let emps = typeof payload.data === 'string' ? JSON.parse(payload.data) : payload.data;
@@ -106,9 +223,45 @@ const createPayroll = async (req, res) => {
       emps = calculatePayrollBatch(emps, payload.periodType);
       payload.data = typeof payload.data === 'string' ? JSON.stringify(emps) : emps;
       payload.summary = computePayrollSummary({ ...payload, data: emps });
+    } else if (!payload.summary) {
+      payload.summary = computePayrollSummary({ ...payload, data: [] });
     }
 
-    const newPayroll = await PayrollHistory.create(payload);
+    // Guardar emisor al enviar a auditoría (para notificaciones posteriores)
+    let submitterName = req.user?.name || 'Nómina';
+    if (payload.status === 'auditoria' && req.user) {
+      const summary = parsePayrollSummary(payload.summary) || {};
+      let submitterEmail = null;
+      try {
+        const dbUser = await User.findByPk(req.user.id, { attributes: ['id', 'name', 'email'] });
+        submitterEmail = dbUser?.email || null;
+        if (dbUser?.name) submitterName = dbUser.name;
+      } catch (_) { /* ignore */ }
+      summary.submittedBy = {
+        userId: req.user.id,
+        name: submitterName,
+        email: submitterEmail
+      };
+      payload.summary = summary;
+    }
+
+    // companies no es columna del modelo; vive en summary
+    const { companies: _companies, ...historyPayload } = payload;
+    const newPayroll = await PayrollHistory.create(historyPayload);
+
+    if (payload.status === 'auditoria') {
+      try {
+        const companyNames = await resolveCompanyNames(validatedCompanies);
+        await notifyAuditorsOfSubmission({
+          historyRecord: newPayroll,
+          companyNames,
+          submitterName
+        });
+      } catch (mailErr) {
+        console.error('Error notificando auditores al enviar nómina:', mailErr);
+      }
+    }
+
     res.status(201).json(newPayroll);
   } catch (err) {
     res.status(err.status || 400).json({ error: err.message });
@@ -449,23 +602,34 @@ const reactivateViaGet = async (req, res) => {
 const auditorApprove = async (req, res) => {
   const t = await sequelize.transaction();
   try {
+    if (!req.user || !AUDIT_ROLES.includes(req.user.role)) {
+      await t.rollback();
+      return res.status(403).json({ error: 'No tienes permiso para aprobar nóminas en auditoría.' });
+    }
+
     const historyRecord = await PayrollHistory.findByPk(req.params.id, { transaction: t });
     if (!historyRecord) {
       await t.rollback();
       return res.status(404).json({ error: 'Nómina no encontrada' });
     }
+    if (historyRecord.status !== 'auditoria') {
+      await t.rollback();
+      return res.status(400).json({ error: 'Solo se pueden aprobar nóminas en estado de auditoría.' });
+    }
 
     const data = typeof historyRecord.data === 'string' ? JSON.parse(historyRecord.data) : historyRecord.data;
+    const companies = getCompaniesFromHistory(historyRecord);
 
     const draftId = `draft_${Date.now()}_${Math.floor(Math.random()*1000)}`;
     await PayrollDraft.create({
       id: draftId,
       title: historyRecord.title,
       periodType: historyRecord.periodType,
-      companies: historyRecord.companies,
+      companies,
       employeesCount: data ? data.length : 0,
       notes: historyRecord.notes,
       isApproved: true,
+      correctionNote: null,
       createdAt: new Date()
     }, { transaction: t });
 
@@ -475,8 +639,21 @@ const auditorApprove = async (req, res) => {
     }
 
     await BillingService.markRunsStaleForPayroll(historyRecord.id);
+    const historySnapshot = historyRecord.toJSON();
     await historyRecord.destroy({ transaction: t });
     await t.commit();
+
+    // Correos fuera de la transacción
+    try {
+      await notifyAuditDecisionRecipients({
+        historyRecord: historySnapshot,
+        action: 'approved',
+        auditorName: req.user.name
+      });
+    } catch (mailErr) {
+      console.error('Error notificando aprobación de auditoría:', mailErr);
+    }
+
     res.json({ message: 'Nómina devuelta a borradores como aprobada.' });
   } catch (err) {
     await t.rollback();
@@ -487,21 +664,31 @@ const auditorApprove = async (req, res) => {
 const auditorReject = async (req, res) => {
   const t = await sequelize.transaction();
   try {
+    if (!req.user || !AUDIT_ROLES.includes(req.user.role)) {
+      await t.rollback();
+      return res.status(403).json({ error: 'No tienes permiso para rechazar nóminas en auditoría.' });
+    }
+
     const { note } = req.body;
     const historyRecord = await PayrollHistory.findByPk(req.params.id, { transaction: t });
     if (!historyRecord) {
       await t.rollback();
       return res.status(404).json({ error: 'Nómina no encontrada' });
     }
+    if (historyRecord.status !== 'auditoria') {
+      await t.rollback();
+      return res.status(400).json({ error: 'Solo se pueden rechazar nóminas en estado de auditoría.' });
+    }
 
     const data = typeof historyRecord.data === 'string' ? JSON.parse(historyRecord.data) : historyRecord.data;
+    const companies = getCompaniesFromHistory(historyRecord);
 
     const draftId = `draft_${Date.now()}_${Math.floor(Math.random()*1000)}`;
     await PayrollDraft.create({
       id: draftId,
       title: historyRecord.title,
       periodType: historyRecord.periodType,
-      companies: historyRecord.companies,
+      companies,
       employeesCount: data ? data.length : 0,
       notes: historyRecord.notes,
       isApproved: false,
@@ -515,8 +702,21 @@ const auditorReject = async (req, res) => {
     }
 
     await BillingService.markRunsStaleForPayroll(historyRecord.id);
+    const historySnapshot = historyRecord.toJSON();
     await historyRecord.destroy({ transaction: t });
     await t.commit();
+
+    try {
+      await notifyAuditDecisionRecipients({
+        historyRecord: historySnapshot,
+        action: 'rejected',
+        note: note || 'Requiere correcciones',
+        auditorName: req.user.name
+      });
+    } catch (mailErr) {
+      console.error('Error notificando rechazo de auditoría:', mailErr);
+    }
+
     res.json({ message: 'Nómina rebotada a borradores para corrección.' });
   } catch (err) {
     await t.rollback();

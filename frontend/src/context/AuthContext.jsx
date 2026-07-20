@@ -40,7 +40,7 @@ export function AuthProvider({ children }) {
       localStorage.setItem('nomina-token', data.token);
       localStorage.setItem('nomina-user', JSON.stringify(data.user));
       
-      return { success: true };
+      return { success: true, user: data.user };
     } catch (err) {
       return { success: false, error: err.message };
     }

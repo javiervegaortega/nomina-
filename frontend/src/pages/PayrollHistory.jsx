@@ -4,7 +4,7 @@ import { AppContext } from '../App';
 import usePagination from '../hooks/usePagination';
 import Pagination from '../components/Pagination';
 import { AuthContext } from '../context/AuthContext';
-import { History, Calendar, Trash2, Eye, Download, FileText, CheckCircle2, ArrowLeft, Building2, X, Search, ChevronDown, LayoutGrid, RotateCcw } from 'lucide-react';
+import { History, Calendar, Trash2, Eye, Download, FileText, ArrowLeft, Building2, X, Search, ChevronDown, LayoutGrid, RotateCcw } from 'lucide-react';
 import { formatQ, CUOTA_LABORAL_RATE, CUOTA_PATRONAL_RATE, IRTRA_INTECAP_RATE } from '../data/mockData';
 import { getNetPayable } from '../utils/payrollPeriod';
 import { exportPayrollReportExcel } from '../utils/payrollReports';
@@ -17,7 +17,7 @@ import {
   IconButton, Badge, Avatar, HStack, VStack,
   InputGroup, InputLeftElement, useColorModeValue,
   Modal, ModalOverlay, ModalContent, ModalHeader, ModalBody,
-  ModalFooter, ModalCloseButton, Divider, SimpleGrid, Center,
+  ModalFooter, ModalCloseButton, Divider, SimpleGrid,
   Menu, MenuButton, MenuList, MenuItem, MenuItemOption, MenuOptionGroup,
   Skeleton, SkeletonText, ButtonGroup, Tooltip
 } from '@chakra-ui/react';
@@ -26,9 +26,30 @@ const getHtml2Canvas = () => import('html2canvas').then(m => m.default);
 const getJsPDF = () => import('jspdf').then(m => m.default);
 const getXLSX = () => import('xlsx');
 
+const canAuditPayroll = (role) =>
+  role === 'AUDITOR' || role === 'ADMIN' || role === 'GERENTE GENERAL';
 
+const MONTH_NAMES_ES = [
+  'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+  'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
+];
 
+/** Clave de sección: YYYY-MM|1ra|2da */
+export const getPeriodKey = (group) => {
+  const d = new Date(group?.date || Date.now());
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const pt = group?.periodType === '2da' ? '2da' : '1ra';
+  return `${y}-${m}|${pt}`;
+};
 
+export const formatPeriodLabel = (key) => {
+  const [ym, pt] = String(key || '').split('|');
+  const [y, m] = (ym || '').split('-');
+  const monthName = MONTH_NAMES_ES[Number(m) - 1] || m || '';
+  const periodLabel = pt === '2da' ? '2da Quincena' : '1ra Quincena';
+  return `${monthName} ${y} · ${periodLabel}`.trim();
+};
 
 export const getEmployeeFullName = (e) => {
   if (!e) return '';
@@ -52,18 +73,48 @@ export const resolveGroupPayrollId = (group) => {
   return (inAudit || group.records[0]).id;
 };
 
+/** Resuelve ID o nombre crudo de empresa a nombre comercial. */
+const resolveCompanyLabel = (raw, companiesCatalog = []) => {
+  if (raw == null || raw === '') return null;
+  const str = String(raw).trim();
+  if (!str) return null;
+  const found = companiesCatalog.find(
+    (c) =>
+      String(c.id) === str ||
+      c.nombre_comercial === str ||
+      c.razon_social === str ||
+      c.nit === str
+  );
+  return found?.nombre_comercial || found?.razon_social || found?.nit || str;
+};
+
 export default function PayrollHistory() {
-  const { payrollHistory, deletePayroll, auditorApprovePayroll, companies, areas, activePayrolls, deleteOperationLog, addOperationLog, isLoading } = useContext(DataContext);
+  const { payrollHistory, deletePayroll, auditorApprovePayroll, auditorRejectPayroll, companies, areas, activePayrolls, deleteOperationLog, addOperationLog, isLoading } = useContext(DataContext);
   const { confirmAction, showToast } = useContext(AppContext);
   const { user } = useContext(AuthContext);
   const isReadOnly = user?.role === 'AUDITOR';
   const [selectedGroup, setSelectedGroup] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [periodFilter, setPeriodFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [companyFilter, setCompanyFilter] = useState('all');
   
   // Reactivation Modal State
   const [reactivationGroup, setReactivationGroup] = useState(null);
   const [conceptoReactivacion, setConceptoReactivacion] = useState('');
   const [isReactivating, setIsReactivating] = useState(false);
+
+  // Reject Modal State (list view)
+  const [rejectGroup, setRejectGroup] = useState(null);
+  const [rejectNote, setRejectNote] = useState('');
+  const [isRejecting, setIsRejecting] = useState(false);
+
+  // Approve Modal State (list view)
+  const [approveGroup, setApproveGroup] = useState(null);
+  const [isApproving, setIsApproving] = useState(false);
+  const mutedText = useColorModeValue('gray.600', 'gray.400');
+  const strongText = useColorModeValue('gray.800', 'white');
+  const softText = useColorModeValue('gray.500', 'gray.500');
 
   // Group by title
   const groupedHistory = useMemo(() => {
@@ -106,7 +157,10 @@ export default function PayrollHistory() {
         groups[t].employeesCount += summary.employeesCount || 0;
         groups[t].grossTotal += summary.grossTotal || 0;
         groups[t].netTotal += summary.netTotal || 0;
-        (summary.companies || []).forEach((c) => groups[t].companies.add(c));
+        (summary.companies || []).forEach((c) => {
+          const label = resolveCompanyLabel(c, companies);
+          if (label) groups[t].companies.add(label);
+        });
       } else if (hasInlineData) {
       // Calculate gross total from employee snapshots
       let emps = p.data || p.employees || [];
@@ -153,9 +207,26 @@ export default function PayrollHistory() {
       
       emps.forEach(e => {
         if (!e.empresa_principal) return;
-        const comp = companies.find(c => c.id === e.empresa_principal);
-        if (comp?.nombre_comercial) groups[t].companies.add(comp.nombre_comercial);
+        const label = resolveCompanyLabel(e.empresa_principal, companies);
+        if (label) groups[t].companies.add(label);
       });
+      }
+
+      // Fallback si aún no hay empresa resuelta
+      if (groups[t].companies.size === 0) {
+        let rawComps = p.companies;
+        if (typeof rawComps === 'string') {
+          try { rawComps = JSON.parse(rawComps); } catch { rawComps = []; }
+        }
+        if (!Array.isArray(rawComps) || rawComps.length === 0) {
+          rawComps = summary?.companies || [];
+        }
+        if (Array.isArray(rawComps)) {
+          rawComps.forEach((c) => {
+            const label = resolveCompanyLabel(c, companies);
+            if (label) groups[t].companies.add(label);
+          });
+        }
       }
       
       if (new Date(p.closedAt || new Date()) > new Date(groups[t].date)) {
@@ -171,25 +242,108 @@ export default function PayrollHistory() {
     return Object.values(groups).sort((a,b) => new Date(b.date) - new Date(a.date));
   }, [payrollHistory, companies]);
 
-  const filteredHistory = groupedHistory.filter(g => 
-    g.title.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const companyFilterOptions = useMemo(() => {
+    const names = new Set();
+    groupedHistory.forEach((g) => {
+      Array.from(g.companies || []).forEach((c) => names.add(c));
+    });
+    return Array.from(names).sort((a, b) => a.localeCompare(b, 'es'));
+  }, [groupedHistory]);
+
+  const filteredHistory = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    return groupedHistory.filter((g) => {
+      const companiesArr = Array.from(g.companies || []);
+      const companiesStr = companiesArr.join(' ').toLowerCase();
+      const matchesSearch = !q
+        || g.title.toLowerCase().includes(q)
+        || companiesStr.includes(q);
+      if (!matchesSearch) return false;
+      if (periodFilter !== 'all' && (g.periodType || '1ra') !== periodFilter) return false;
+      if (statusFilter !== 'all' && g.status !== statusFilter) return false;
+      if (companyFilter !== 'all' && !companiesArr.includes(companyFilter)) return false;
+      return true;
+    });
+  }, [groupedHistory, searchTerm, periodFilter, statusFilter, companyFilter]);
 
   const pagination = usePagination(filteredHistory, 10);
 
-  const handleApprovePayroll = async (group) => {
+  const periodSections = useMemo(() => {
+    const sections = {};
+    pagination.paginatedData.forEach((g) => {
+      const key = getPeriodKey(g);
+      if (!sections[key]) {
+        sections[key] = {
+          key,
+          label: formatPeriodLabel(key),
+          periodType: g.periodType === '2da' ? '2da' : '1ra',
+          groups: [],
+          employeesCount: 0,
+          grossTotal: 0,
+          netTotal: 0,
+          sortDate: g.date
+        };
+      }
+      sections[key].groups.push(g);
+      sections[key].employeesCount += g.employeesCount || 0;
+      sections[key].grossTotal += g.grossTotal || 0;
+      sections[key].netTotal += g.netTotal || 0;
+      if (new Date(g.date) > new Date(sections[key].sortDate)) {
+        sections[key].sortDate = g.date;
+      }
+    });
+    return Object.values(sections).sort((a, b) => new Date(b.sortDate) - new Date(a.sortDate));
+  }, [pagination.paginatedData]);
+
+  const handleApprovePayroll = (group) => {
     const payrollId = resolveGroupPayrollId(group);
     if (!payrollId) {
       showToast('No se encontró el ID de la nómina', 'error');
       return;
     }
-    if (window.confirm('¿Aprobar esta nómina y devolverla a borradores para su cierre final?')) {
-      try {
-        await auditorApprovePayroll(payrollId);
-        showToast('Nómina aprobada correctamente', 'success');
-      } catch {
-        showToast('Error al aprobar la nómina', 'error');
-      }
+    setApproveGroup(group);
+  };
+
+  const handleConfirmApprove = async () => {
+    if (!approveGroup) return;
+    const payrollId = resolveGroupPayrollId(approveGroup);
+    if (!payrollId) {
+      showToast('No se encontró el ID de la nómina', 'error');
+      return;
+    }
+    setIsApproving(true);
+    try {
+      await auditorApprovePayroll(payrollId);
+      showToast('Nómina aprobada con visto bueno. Ya está en borradores para cierre definitivo.', 'success');
+      setApproveGroup(null);
+    } catch {
+      showToast('Error al aprobar la nómina', 'error');
+    } finally {
+      setIsApproving(false);
+    }
+  };
+
+  const handleConfirmReject = async () => {
+    if (!rejectGroup) return;
+    if (!rejectNote.trim()) {
+      showToast('Debes indicar qué debe corregirse', 'error');
+      return;
+    }
+    const payrollId = resolveGroupPayrollId(rejectGroup);
+    if (!payrollId) {
+      showToast('No se encontró el ID de la nómina', 'error');
+      return;
+    }
+    setIsRejecting(true);
+    try {
+      await auditorRejectPayroll(payrollId, rejectNote);
+      showToast('Nómina enviada a corrección. Nómina podrá editarla y volver a mandarla a auditoría.', 'success');
+      setRejectGroup(null);
+      setRejectNote('');
+    } catch {
+      showToast('Error al enviar a corrección', 'error');
+    } finally {
+      setIsRejecting(false);
     }
   };
 
@@ -241,6 +395,9 @@ export default function PayrollHistory() {
 
   const cardBg = useColorModeValue('white', 'gray.800');
   const borderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
+  const toolbarBg = useColorModeValue('gray.50', 'whiteAlpha.50');
+  const headerBg = useColorModeValue('gray.50', 'whiteAlpha.50');
+  const selectBg = useColorModeValue('white', 'gray.800');
 
   if (selectedGroup) {
     return <PayrollHistoryDetail group={selectedGroup} onBack={() => setSelectedGroup(null)} />;
@@ -249,177 +406,279 @@ export default function PayrollHistory() {
   if (isLoading) {
     return (
       <Box p={{ base: 3, md: 6, lg: 8 }}>
-        <Flex justify="space-between" align={{ base: 'stretch', md: 'center' }} direction={{ base: 'column', md: 'row' }} mb={6} wrap="wrap" gap={4}>
-          <Box>
-            <Skeleton height="28px" width="240px" mb={2} borderRadius="md" />
-            <Skeleton height="16px" width="420px" borderRadius="md" />
-          </Box>
-          <Skeleton height="32px" width="300px" borderRadius="md" />
-        </Flex>
-        <Box maxW="800px" mx="auto">
-          <VStack spacing={8} align="stretch">
-            {[1, 2, 3, 4, 5].map(i => (
-              <Flex key={i} gap={{ base: 3, md: 6 }} align="start">
-                <Skeleton boxSize={{ base: '36px', md: '48px' }} borderRadius="full" flexShrink={0} display={{ base: 'none', sm: 'block' }} />
-                <Box flex="1" p={{ base: 4, md: 6 }} bg={cardBg} borderRadius="xl" border="1px solid" borderColor={borderColor}>
-                  <Flex justify="space-between" align="start" mb={4} wrap="wrap" gap={2}>
-                    <Box flex="1">
-                      <Skeleton height="16px" width="200px" mb={2} borderRadius="md" />
-                      <Skeleton height="12px" width="100px" mb={2} borderRadius="md" />
-                      <Skeleton height="10px" width="260px" borderRadius="md" />
-                    </Box>
-                    <HStack spacing={1}>
-                      <Skeleton boxSize="32px" borderRadius="md" />
-                      <Skeleton boxSize="32px" borderRadius="md" />
-                    </HStack>
-                  </Flex>
-                  <SimpleGrid columns={{ base: 1, sm: 3 }} spacing={4} p={4} bg={useColorModeValue('gray.50', 'whiteAlpha.50')} borderRadius="lg" border="1px solid" borderColor={borderColor}>
-                    {[1, 2, 3].map(j => (
-                      <Box key={j}>
-                        <Skeleton height="10px" width="90px" mb={2} borderRadius="md" />
-                        <Skeleton height="16px" width="120px" borderRadius="md" />
-                      </Box>
-                    ))}
-                  </SimpleGrid>
-                </Box>
-              </Flex>
-            ))}
-          </VStack>
+        <Box mb={6}>
+          <Skeleton height="28px" width="240px" mb={2} borderRadius="md" />
+          <Skeleton height="16px" width="420px" borderRadius="md" />
         </Box>
+        <Skeleton height="72px" mb={5} borderRadius="xl" />
+        <VStack spacing={5} align="stretch">
+          {[1, 2, 3].map((i) => (
+            <Box key={i} bg={cardBg} borderRadius="xl" border="1px solid" borderColor={borderColor} overflow="hidden">
+              <Box p={4} borderBottomWidth="1px" borderColor={borderColor}>
+                <Skeleton height="18px" width="220px" mb={3} borderRadius="md" />
+                <HStack spacing={4}>
+                  <Skeleton height="14px" width="100px" borderRadius="md" />
+                  <Skeleton height="14px" width="120px" borderRadius="md" />
+                  <Skeleton height="14px" width="120px" borderRadius="md" />
+                </HStack>
+              </Box>
+              <Box p={3}>
+                {[1, 2, 3].map((j) => (
+                  <Skeleton key={j} height="36px" mb={2} borderRadius="md" />
+                ))}
+              </Box>
+            </Box>
+          ))}
+        </VStack>
       </Box>
     );
   }
 
   return (
     <Box p={{ base: 3, md: 6, lg: 8 }}>
-      <Flex justify="space-between" align={{ base: 'stretch', md: 'center' }} direction={{ base: 'column', md: 'row' }} mb={6} wrap="wrap" gap={4}>
-        <Box>
-          <Heading size="lg" fontWeight={800} mb={1}>
-            Historial de Nóminas
-          </Heading>
-          <Text color="gray.500">
-            Registro inmutable de procesos de nómina cerrados y agrupados por periodo
-          </Text>
-        </Box>
-        <InputGroup maxW={{ base: '100%', md: '300px' }} size="sm">
+      <Box mb={6}>
+        <Heading size="lg" fontWeight={800} mb={1}>
+          Historial de Nóminas
+        </Heading>
+        <Text color="gray.500">
+          Registro inmutable de procesos de nómina cerrados y agrupados por periodo
+        </Text>
+      </Box>
+
+      <Flex
+        gap={3}
+        flexWrap="wrap"
+        align="center"
+        bg={toolbarBg}
+        p={4}
+        borderRadius="xl"
+        borderWidth="1px"
+        borderColor={borderColor}
+        mb={5}
+      >
+        <InputGroup flex="1" minW="200px" maxW="360px" size="sm">
           <InputLeftElement pointerEvents="none">
-            <Search size={16} color="gray.400" />
+            <Search size={16} color="gray" />
           </InputLeftElement>
-          <Input 
-            placeholder="Buscar por título..." 
+          <Input
+            placeholder="Buscar por título o empresa..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
+            bg={selectBg}
             borderRadius="md"
           />
         </InputGroup>
+
+        <Select
+          size="sm"
+          w={{ base: '100%', sm: '160px' }}
+          bg={selectBg}
+          value={periodFilter}
+          onChange={(e) => setPeriodFilter(e.target.value)}
+        >
+          <option value="all">Todas las quincenas</option>
+          <option value="1ra">1ra Quincena</option>
+          <option value="2da">2da Quincena</option>
+        </Select>
+
+        <Select
+          size="sm"
+          w={{ base: '100%', sm: '160px' }}
+          bg={selectBg}
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+        >
+          <option value="all">Todos los estados</option>
+          <option value="cerrada">Cerrada</option>
+          <option value="auditoria">En Auditoría</option>
+        </Select>
+
+        <Select
+          size="sm"
+          w={{ base: '100%', sm: '200px' }}
+          bg={selectBg}
+          value={companyFilter}
+          onChange={(e) => setCompanyFilter(e.target.value)}
+        >
+          <option value="all">Todas las empresas</option>
+          {companyFilterOptions.map((name) => (
+            <option key={name} value={name}>{name}</option>
+          ))}
+        </Select>
       </Flex>
 
-      <Box maxW="800px" mx="auto" position="relative" px={{ base: 0, md: 0 }}>
-        {pagination.paginatedData.length > 0 && (
-          <Box 
-            position="absolute" 
-            top="20px" 
-            bottom="20px" 
-            left="23px" 
-            w="2px" 
-            bg="linear-gradient(to bottom, var(--chakra-colors-brand-500) 0%, var(--chakra-colors-gray-200) 100%)"
-            zIndex={0} 
-          />
-        )}
+      <Text fontSize="sm" color="gray.500" mb={4}>
+        {filteredHistory.length} nómina{filteredHistory.length !== 1 ? 's' : ''} · agrupadas por periodo
+      </Text>
 
-        <VStack spacing={8} align="stretch">
-          {pagination.paginatedData.map((group, i) => (
-            <Flex key={group.title} gap={{ base: 3, md: 6 }} position="relative" zIndex={1} align="start">
-              <Center 
-                w={{ base: '36px', md: '48px' }} 
-                h={{ base: '36px', md: '48px' }} 
-                borderRadius="full" 
-                bg={cardBg} 
-                border="2px solid" 
-                borderColor="brand.500" 
-                color="brand.500" 
-                flexShrink={0} 
-                boxShadow="lg"
-                display={{ base: 'none', sm: 'flex' }}
-              >
-                <CheckCircle2 size={24} />
-              </Center>
-              
-              <Box 
-                flex="1" 
-                p={{ base: 4, md: 6 }} 
-                bg={cardBg} 
-                borderRadius="xl" 
-                border="1px solid" 
-                borderColor={borderColor}
-                boxShadow="md"
-              >
-                <Flex justify="space-between" align="start" mb={4} wrap="wrap" gap={2}>
-                  <Box>
-                    <Heading size="sm" fontWeight={800} mb={1}>{group.title}</Heading>
-                    <Badge colorScheme={group.periodType === '2da' ? 'purple' : 'teal'} mb={2}>
-                      {group.periodType === '2da' ? '2da Quincena' : '1ra Quincena'}
+      <VStack spacing={5} align="stretch">
+        {periodSections.map((section) => (
+          <Box
+            key={section.key}
+            bg={cardBg}
+            borderRadius="xl"
+            borderWidth="1px"
+            borderColor={borderColor}
+            shadow="sm"
+            overflow="hidden"
+          >
+            <Box p={{ base: 4, md: 5 }} borderBottomWidth="1px" borderColor={borderColor} bg={headerBg}>
+              <Flex justify="space-between" align="start" gap={3} flexWrap="wrap">
+                <Box>
+                  <HStack spacing={2} mb={1} flexWrap="wrap">
+                    <Flex align="center" gap={1.5} color="brand.400">
+                      <Calendar size={16} />
+                      <Text fontSize="md" fontWeight={800}>{section.label}</Text>
+                    </Flex>
+                    <Badge colorScheme={section.periodType === '2da' ? 'purple' : 'teal'}>
+                      {section.periodType === '2da' ? '2da Quincena' : '1ra Quincena'}
                     </Badge>
-                    <HStack spacing={{ base: 2, md: 4 }} color="gray.500" fontSize="xs" flexWrap="wrap">
-                      <Flex align="center" gap={1}>
-                        <Calendar size={14} /> 
-                        {new Date(group.date).toLocaleDateString()}
-                      </Flex>
-                      <Badge colorScheme={group.status === 'auditoria' ? 'orange' : 'gray'}>
-                        {group.status === 'auditoria' ? 'En Auditoría' : 'Cerrada'}
-                      </Badge>
-                      <Flex align="center" gap={1}>
-                        <Building2 size={14} /> 
-                        {group.companies.size === 0 ? 'Sin empresa' : Array.from(group.companies).join(', ')}
-                      </Flex>
-                    </HStack>
-                  </Box>
-                  <HStack spacing={1}>
-                    <IconButton aria-label="Ver Detalle" icon={<Eye size={18} />} onClick={() => setSelectedGroup(group)} variant="ghost" />
-                    {!isReadOnly && group.status === 'auditoria' && (user?.role === 'ADMIN' || user?.role === 'GERENTE GENERAL') && (
-                      <Tooltip label="Aprobar Nómina">
-                        <Button size="sm" colorScheme="green" variant="ghost" onClick={() => handleApprovePayroll(group)}>Aprobar</Button>
-                      </Tooltip>
-                    )}
-                    {!isReadOnly && group.periodType === '2da' && (user?.role === 'ADMIN' || user?.role === 'NOMINA' || user?.role === 'GERENTE GENERAL') && (
-                      <Tooltip label="Solicitar Reactivación">
-                        <IconButton aria-label="Reactivar Nómina" icon={<RotateCcw size={18} />} colorScheme="blue" variant="ghost" onClick={() => handleRequestReactivation(group)} />
-                      </Tooltip>
-                    )}
-                    {!isReadOnly && <IconButton aria-label="Eliminar Registro" icon={<Trash2 size={18} />} colorScheme="red" variant="ghost" onClick={() => handleDeleteGroup(group.title, group.records)} />}
                   </HStack>
-                </Flex>
-
-                <SimpleGrid columns={{ base: 1, sm: 3 }} spacing={4} p={4} bg={useColorModeValue('gray.50', 'whiteAlpha.50')} borderRadius="lg" border="1px solid" borderColor={borderColor}>
+                  <Text fontSize="xs" color="gray.500">
+                    {section.groups.length} nómina{section.groups.length !== 1 ? 's' : ''} en este periodo
+                  </Text>
+                </Box>
+                <SimpleGrid columns={{ base: 1, sm: 3 }} spacing={3} minW={{ base: '100%', sm: '360px' }}>
                   <Box>
-                    <Text fontSize="xxs" color="gray.500" textTransform="uppercase" fontWeight={700}>Total Empleados</Text>
-                    <Text fontSize="md" fontWeight={700}>{group.employeesCount} liquidaciones</Text>
+                    <Text fontSize="xxs" color="gray.500" textTransform="uppercase" fontWeight={700}>Empleados</Text>
+                    <Text fontWeight="bold">{section.employeesCount}</Text>
                   </Box>
                   <Box>
-                    <Text fontSize="xxs" color="gray.500" textTransform="uppercase" fontWeight={700}>Total Bruto</Text>
-                    <Text fontSize="md" fontWeight={700} fontFamily="mono">{formatQ(group.grossTotal)}</Text>
+                    <Text fontSize="xxs" color="gray.500" textTransform="uppercase" fontWeight={700}>Bruto</Text>
+                    <Text fontWeight="bold" fontFamily="mono">{formatQ(section.grossTotal)}</Text>
                   </Box>
                   <Box>
-                    <Text fontSize="xxs" color="gray.500" textTransform="uppercase" fontWeight={700}>Desembolso Neto</Text>
-                    <Text fontSize="md" fontWeight={800} fontFamily="mono" color="gold.500">{formatQ(group.netTotal)}</Text>
+                    <Text fontSize="xxs" color="gray.500" textTransform="uppercase" fontWeight={700}>Neto</Text>
+                    <Text fontWeight="bold" fontFamily="mono" color="gold.500">{formatQ(section.netTotal)}</Text>
                   </Box>
                 </SimpleGrid>
-              </Box>
-            </Flex>
-          ))}
+              </Flex>
+            </Box>
 
-          {filteredHistory.length === 0 && (
-            <VStack spacing={4} py={12} align="center" color="gray.500">
-              <History size={48} opacity={0.3} />
-              <Heading size="sm">Historial Vacío</Heading>
-              <Text fontSize="sm">Aún no hay nóminas procesadas en el sistema.</Text>
-            </VStack>
-          )}
-        </VStack>
-      </Box>
+            <TableContainer overflowX="auto">
+              <Table variant="simple" size="sm">
+                <Thead bg={headerBg}>
+                  <Tr>
+                    <Th>Título</Th>
+                    <Th>Empresa</Th>
+                    <Th>Fecha</Th>
+                    <Th>Estado</Th>
+                    <Th isNumeric>Empleados</Th>
+                    <Th isNumeric>Bruto</Th>
+                    <Th isNumeric>Neto</Th>
+                    <Th textAlign="right">Acciones</Th>
+                  </Tr>
+                </Thead>
+                <Tbody>
+                  {section.groups.map((group) => {
+                    const companiesLabel = group.companies.size === 0
+                      ? 'Sin empresa'
+                      : Array.from(group.companies).join(', ');
+                    return (
+                      <Tr key={group.title} _hover={{ bg: toolbarBg }}>
+                        <Td maxW="280px">
+                          <Text fontWeight={700} noOfLines={2}>{group.title}</Text>
+                        </Td>
+                        <Td maxW="200px">
+                          <Flex align="center" gap={1}>
+                            <Building2 size={14} />
+                            <Text fontSize="sm" noOfLines={2}>{companiesLabel}</Text>
+                          </Flex>
+                        </Td>
+                        <Td whiteSpace="nowrap">{new Date(group.date).toLocaleDateString()}</Td>
+                        <Td>
+                          <Badge colorScheme={group.status === 'auditoria' ? 'orange' : 'gray'}>
+                            {group.status === 'auditoria' ? 'En Auditoría' : 'Cerrada'}
+                          </Badge>
+                        </Td>
+                        <Td isNumeric>{group.employeesCount}</Td>
+                        <Td isNumeric fontFamily="mono">{formatQ(group.grossTotal)}</Td>
+                        <Td isNumeric fontFamily="mono" fontWeight={800} color="gold.500">{formatQ(group.netTotal)}</Td>
+                        <Td textAlign="right">
+                          <HStack spacing={1} justify="flex-end">
+                            <Tooltip label="Ver detalle">
+                              <IconButton
+                                aria-label="Ver Detalle"
+                                icon={<Eye size={16} />}
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => setSelectedGroup(group)}
+                              />
+                            </Tooltip>
+                            {group.status === 'auditoria' && canAuditPayroll(user?.role) && (
+                              <>
+                                <Tooltip label="Aprobar Nómina">
+                                  <Button size="sm" colorScheme="green" variant="ghost" onClick={() => handleApprovePayroll(group)}>
+                                    Aprobar
+                                  </Button>
+                                </Tooltip>
+                                <Tooltip label="Corregir Nómina">
+                                  <Button
+                                    size="sm"
+                                    colorScheme="red"
+                                    variant="ghost"
+                                    onClick={() => {
+                                      setRejectGroup(group);
+                                      setRejectNote('');
+                                    }}
+                                  >
+                                    Corregir
+                                  </Button>
+                                </Tooltip>
+                              </>
+                            )}
+                            {!isReadOnly && group.periodType === '2da' && (user?.role === 'ADMIN' || user?.role === 'NOMINA' || user?.role === 'GERENTE GENERAL') && (
+                              <Tooltip label="Solicitar Reactivación">
+                                <IconButton
+                                  aria-label="Reactivar Nómina"
+                                  icon={<RotateCcw size={16} />}
+                                  size="sm"
+                                  colorScheme="blue"
+                                  variant="ghost"
+                                  onClick={() => handleRequestReactivation(group)}
+                                />
+                              </Tooltip>
+                            )}
+                            {!isReadOnly && (
+                              <Tooltip label="Eliminar registro">
+                                <IconButton
+                                  aria-label="Eliminar Registro"
+                                  icon={<Trash2 size={16} />}
+                                  size="sm"
+                                  colorScheme="red"
+                                  variant="ghost"
+                                  onClick={() => handleDeleteGroup(group.title, group.records)}
+                                />
+                              </Tooltip>
+                            )}
+                          </HStack>
+                        </Td>
+                      </Tr>
+                    );
+                  })}
+                </Tbody>
+              </Table>
+            </TableContainer>
+          </Box>
+        ))}
+
+        {filteredHistory.length === 0 && (
+          <VStack spacing={4} py={12} align="center" color="gray.500">
+            <History size={48} opacity={0.3} />
+            <Heading size="sm">
+              {groupedHistory.length === 0 ? 'Historial Vacío' : 'Sin resultados'}
+            </Heading>
+            <Text fontSize="sm">
+              {groupedHistory.length === 0
+                ? 'Aún no hay nóminas procesadas en el sistema.'
+                : 'No hay nóminas que coincidan con los filtros actuales.'}
+            </Text>
+          </VStack>
+        )}
+      </VStack>
 
       {pagination.paginatedData.length > 0 && (
-        <Box mt={8} maxW="800px" mx="auto">
+        <Box mt={8}>
           <Pagination {...pagination} />
         </Box>
       )}
@@ -450,6 +709,71 @@ export default function PayrollHistory() {
             </Button>
             <Button colorScheme="blue" onClick={submitReactivation} isLoading={isReactivating} loadingText="Enviando...">
               Solicitar Reactivación
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* Approve Modal (list view) */}
+      <Modal isOpen={!!approveGroup} onClose={() => !isApproving && setApproveGroup(null)} isCentered>
+        <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(4px)" />
+        <ModalContent borderRadius="xl" mx={4}>
+          <ModalHeader color="green.500" pb={2}>Aprobar nómina</ModalHeader>
+          <ModalCloseButton isDisabled={isApproving} />
+          <ModalBody>
+            <Text mb={3} fontSize="sm" color={mutedText}>
+              ¿Confirmas el visto bueno de{' '}
+              <Text as="span" fontWeight="700" color={strongText}>{approveGroup?.title}</Text>?
+            </Text>
+            <Text fontSize="sm" color={softText} mb={2}>Al aprobar:</Text>
+            <Text fontSize="sm" color={softText} pl={3} as="div">
+              • La nómina pasa a borradores con <Text as="span" fontWeight="600">visto bueno de auditoría</Text>.
+              <br />
+              • Nómina solo podrá <Text as="span" fontWeight="600">cerrarla definitivamente</Text>.
+              <br />
+              • Ya no se podrán editar montos ni empleados.
+            </Text>
+          </ModalBody>
+          <ModalFooter gap={2}>
+            <Button variant="ghost" onClick={() => setApproveGroup(null)} isDisabled={isApproving} borderRadius="lg">
+              Cancelar
+            </Button>
+            <Button colorScheme="green" isLoading={isApproving} loadingText="Aprobando..." onClick={handleConfirmApprove} borderRadius="lg">
+              Sí, aprobar
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* Reject / Correct Modal (list view) */}
+      <Modal isOpen={!!rejectGroup} onClose={() => { if (!isRejecting) { setRejectGroup(null); setRejectNote(''); } }} isCentered>
+        <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(4px)" />
+        <ModalContent borderRadius="xl" mx={4}>
+          <ModalHeader color="red.500" pb={2}>Solicitar corrección</ModalHeader>
+          <ModalCloseButton isDisabled={isRejecting} />
+          <ModalBody>
+            <Text mb={3} fontSize="sm" color={mutedText}>
+              Vas a devolver{' '}
+              <Text as="span" fontWeight="700" color={strongText}>{rejectGroup?.title}</Text>
+              {' '}a borradores para que Nómina la corrija y la envíe de nuevo a auditoría.
+            </Text>
+            <Text mb={3} fontSize="sm" color={softText}>
+              Indica qué debe corregirse (obligatorio):
+            </Text>
+            <Textarea
+              placeholder="Ej. El bono del empleado X está mal calculado..."
+              value={rejectNote}
+              onChange={(e) => setRejectNote(e.target.value)}
+              rows={4}
+              borderRadius="lg"
+            />
+          </ModalBody>
+          <ModalFooter gap={2}>
+            <Button variant="ghost" onClick={() => { setRejectGroup(null); setRejectNote(''); }} isDisabled={isRejecting} borderRadius="lg">
+              Cancelar
+            </Button>
+            <Button colorScheme="red" isLoading={isRejecting} loadingText="Enviando..." onClick={handleConfirmReject} borderRadius="lg">
+              Enviar a corrección
             </Button>
           </ModalFooter>
         </ModalContent>
@@ -562,6 +886,11 @@ function PayrollHistoryDetail({ group, onBack }) {
   const isReadOnly = user?.role === 'AUDITOR';
   const [selectedVoucherEmp, setSelectedVoucherEmp] = useState(null);
   const [activeGroup, setActiveGroup] = useState(group);
+  const [isApproveModalOpen, setIsApproveModalOpen] = useState(false);
+  const [isApprovingDetail, setIsApprovingDetail] = useState(false);
+  const mutedTextDetail = useColorModeValue('gray.600', 'gray.400');
+  const strongTextDetail = useColorModeValue('gray.800', 'white');
+  const softTextDetail = useColorModeValue('gray.500', 'gray.500');
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [printBoletas, setPrintBoletas] = useState(false);
 
@@ -1409,19 +1738,9 @@ function PayrollHistoryDetail({ group, onBack }) {
           </Box>
         </Flex>
         <Flex gap={2} wrap="wrap">
-          {!isReadOnly && group.status === 'auditoria' && (user?.role === 'ADMIN' || user?.role === 'GERENTE GENERAL') && (
+          {group.status === 'auditoria' && canAuditPayroll(user?.role) && (
             <>
-              <Button colorScheme="green" onClick={async () => {
-                if (window.confirm('¿Aprobar esta nómina y devolverla a borradores para su cierre final?')) {
-                  try {
-                    await auditorApprovePayroll(resolveGroupPayrollId(group));
-                    showToast('Nómina aprobada correctamente', 'success');
-                    onBack();
-                  } catch (e) {
-                    showToast('Error al aprobar', 'error');
-                  }
-                }
-              }} size={{ base: 'sm', md: 'md' }}>
+              <Button colorScheme="green" onClick={() => setIsApproveModalOpen(true)} size={{ base: 'sm', md: 'md' }}>
                 Aprobar Nómina
               </Button>
               <Button colorScheme="red" variant="outline" onClick={() => setIsRejectModalOpen(true)} size={{ base: 'sm', md: 'md' }}>
@@ -1979,30 +2298,84 @@ function PayrollHistoryDetail({ group, onBack }) {
         periodType={payrollGroup?.periodType || '1ra'}
       />
 
-      <Modal isOpen={isRejectModalOpen} onClose={() => setIsRejectModalOpen(false)}>
-        <ModalOverlay />
-        <ModalContent>
-          <ModalHeader color="red.500">Enviar a Corrección</ModalHeader>
-          <ModalCloseButton />
+      <Modal isOpen={isApproveModalOpen} onClose={() => !isApprovingDetail && setIsApproveModalOpen(false)} isCentered>
+        <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(4px)" />
+        <ModalContent borderRadius="xl" mx={4}>
+          <ModalHeader color="green.500" pb={2}>Aprobar nómina</ModalHeader>
+          <ModalCloseButton isDisabled={isApprovingDetail} />
           <ModalBody>
-            <Text mb={4} fontSize="sm" color="gray.600">
-              Por favor, detalla qué es lo que está incorrecto en esta nómina. El operador de nóminas verá esta justificación y podrá editarla.
+            <Text mb={3} fontSize="sm" color={mutedTextDetail}>
+              ¿Confirmas el visto bueno de{' '}
+              <Text as="span" fontWeight="700" color={strongTextDetail}>{group.title}</Text>?
+            </Text>
+            <Text fontSize="sm" color={softTextDetail} mb={2}>Al aprobar:</Text>
+            <Text fontSize="sm" color={softTextDetail} pl={3} as="div">
+              • La nómina pasa a borradores con <Text as="span" fontWeight="600">visto bueno de auditoría</Text>.
+              <br />
+              • Nómina solo podrá <Text as="span" fontWeight="600">cerrarla definitivamente</Text>.
+              <br />
+              • Ya no se podrán editar montos ni empleados.
+            </Text>
+          </ModalBody>
+          <ModalFooter gap={2}>
+            <Button variant="ghost" onClick={() => setIsApproveModalOpen(false)} isDisabled={isApprovingDetail} borderRadius="lg">
+              Cancelar
+            </Button>
+            <Button
+              colorScheme="green"
+              isLoading={isApprovingDetail}
+              loadingText="Aprobando..."
+              borderRadius="lg"
+              onClick={async () => {
+                setIsApprovingDetail(true);
+                try {
+                  await auditorApprovePayroll(resolveGroupPayrollId(group));
+                  showToast('Nómina aprobada con visto bueno. Ya está en borradores para cierre definitivo.', 'success');
+                  setIsApproveModalOpen(false);
+                  onBack();
+                } catch (e) {
+                  showToast('Error al aprobar', 'error');
+                } finally {
+                  setIsApprovingDetail(false);
+                }
+              }}
+            >
+              Sí, aprobar
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      <Modal isOpen={isRejectModalOpen} onClose={() => !isRejecting && setIsRejectModalOpen(false)} isCentered>
+        <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(4px)" />
+        <ModalContent borderRadius="xl" mx={4}>
+          <ModalHeader color="red.500" pb={2}>Solicitar corrección</ModalHeader>
+          <ModalCloseButton isDisabled={isRejecting} />
+          <ModalBody>
+            <Text mb={3} fontSize="sm" color={mutedTextDetail}>
+              Vas a devolver{' '}
+              <Text as="span" fontWeight="700" color={strongTextDetail}>{group.title}</Text>
+              {' '}a borradores para que Nómina la corrija y la envíe de nuevo a auditoría.
+            </Text>
+            <Text mb={3} fontSize="sm" color={softTextDetail}>
+              Indica qué debe corregirse (obligatorio):
             </Text>
             <Textarea 
               placeholder="Ej. El bono del empleado X está mal calculado..." 
               value={rejectNote} 
               onChange={e => setRejectNote(e.target.value)} 
               rows={4}
+              borderRadius="lg"
             />
           </ModalBody>
-          <ModalFooter>
-            <Button variant="ghost" onClick={() => setIsRejectModalOpen(false)} mr={3}>Cancelar</Button>
-            <Button colorScheme="red" isLoading={isRejecting} onClick={async () => {
-              if (!rejectNote.trim()) return showToast('Debes ingresar una justificación', 'error');
+          <ModalFooter gap={2}>
+            <Button variant="ghost" onClick={() => setIsRejectModalOpen(false)} isDisabled={isRejecting} borderRadius="lg">Cancelar</Button>
+            <Button colorScheme="red" isLoading={isRejecting} loadingText="Enviando..." borderRadius="lg" onClick={async () => {
+              if (!rejectNote.trim()) return showToast('Debes indicar qué debe corregirse', 'error');
               setIsRejecting(true);
               try {
                 await auditorRejectPayroll(resolveGroupPayrollId(group), rejectNote);
-                showToast('Nómina rebotada a borradores exitosamente', 'success');
+                showToast('Nómina enviada a corrección. Nómina podrá editarla y volver a mandarla a auditoría.', 'success');
                 setIsRejectModalOpen(false);
                 onBack();
               } catch (e) {
@@ -2011,7 +2384,7 @@ function PayrollHistoryDetail({ group, onBack }) {
                 setIsRejecting(false);
               }
             }}>
-              Confirmar Rechazo
+              Enviar a corrección
             </Button>
           </ModalFooter>
         </ModalContent>

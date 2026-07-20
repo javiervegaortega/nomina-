@@ -15,11 +15,16 @@ import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
 import usePagination from '../hooks/usePagination';
 import Pagination from '../components/Pagination';
+import { formatQuincenaLabel, findMatchingActiveDraft } from '../utils/payrollPeriod';
 
 export default function OperationLogs() {
   const { id: batchId } = useParams();
   const navigate = useNavigate();
-  const { employees, departments, areas, divisions, subdivisions, dimension5s, companies, addOperationLog, updateOperationLogStatus, deleteOperationLog, updateOperationLog, isLoading } = useContext(DataContext);
+  const {
+    employees, departments, areas, divisions, subdivisions, dimension5s, companies,
+    addOperationLog, updateOperationLogStatus, deleteOperationLog, updateOperationLog,
+    activePayrolls, injectApprovedLogIntoActiveDrafts, revertLogFromActiveDrafts, isLoading
+  } = useContext(DataContext);
   const { user } = useContext(AuthContext);
 
   const [batch, setBatch] = useState(null);
@@ -73,6 +78,8 @@ export default function OperationLogs() {
     setEditFormData({
       id: log.id,
       employeeId: log.employeeId || log.Employee?.id || '',
+      companyId: log.companyId || log.companyData?.id || '',
+      date: log.date || new Date().toISOString().slice(0, 10),
       type: log.type,
       hoursQty: log.hoursQty,
       hourType: log.hourType || 'SIMPLE',
@@ -82,14 +89,30 @@ export default function OperationLogs() {
     onEditOpen();
   };
 
+  const getMissingPayrollMessage = (date, companyId) => {
+    const company = companies.find((c) => String(c.id) === String(companyId));
+    const companyName = company?.nombre_comercial || 'la empresa seleccionada';
+    const quincena = formatQuincenaLabel(date) || 'esa quincena';
+    return `No hay nómina activa para ${companyName} en ${quincena}`;
+  };
+
+  const hasMatchingActivePayroll = (date, companyId) =>
+    !!findMatchingActiveDraft(activePayrolls, date, companyId, companies);
+
   const handleEditSave = async () => {
-    if (!editFormData.taskDescription || !editFormData.employeeId) {
-      toast.warning('Completa la descripción y el empleado');
+    if (!editFormData.taskDescription || !editFormData.employeeId || !editFormData.date || !editFormData.companyId) {
+      toast.warning('Completa la descripción, empleado, fecha y empresa');
+      return;
+    }
+    if (!hasMatchingActivePayroll(editFormData.date, editFormData.companyId)) {
+      toast.error(getMissingPayrollMessage(editFormData.date, editFormData.companyId));
       return;
     }
     try {
       await updateOperationLog(editFormData.id, {
         employeeId: Number(editFormData.employeeId),
+        companyId: Number(editFormData.companyId),
+        date: editFormData.date,
         hoursQty: editFormData.type === 'HORA_EXTRA' ? Number(editFormData.hoursQty) : 0,
         hourType: editFormData.hourType,
         bonusAmount: editFormData.type === 'BONO' ? Number(editFormData.bonusAmount) : 0,
@@ -98,8 +121,8 @@ export default function OperationLogs() {
       await fetchBatch();
       toast.success('Registro corregido exitosamente');
       onEditClose();
-    } catch(e) {
-      toast.error('Error al guardar');
+    } catch (e) {
+      toast.error(e.message || 'Error al guardar');
     }
   };
 
@@ -248,16 +271,20 @@ export default function OperationLogs() {
 
   const filteredLogs = useMemo(() => {
     return operationLogs.filter(log => {
-      if (filterMonth && !log.date.startsWith(filterMonth)) return false;
+      if (filterMonth && (!log.date || !String(log.date).startsWith(filterMonth))) return false;
       if (filterType !== 'ALL' && log.type !== filterType) return false;
       if (filterStatus !== 'ALL' && log.status !== filterStatus) return false;
       return true;
-    }).sort((a, b) => new Date(b.date) - new Date(a.date));
+    }).sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
   }, [operationLogs, filterMonth, filterType, filterStatus]);
 
   const handleSave = () => {
     if (formData.employeeIds.length === 0 || !formData.date || !formData.taskDescription || !formData.companyId) {
       toast.warning('Selecciona al menos un empleado, la empresa y completa los campos requeridos');
+      return;
+    }
+    if (!hasMatchingActivePayroll(formData.date, formData.companyId)) {
+      toast.error(getMissingPayrollMessage(formData.date, formData.companyId));
       return;
     }
     setConfirmState({ isOpen: true, action: 'SAVE', data: null });
@@ -300,31 +327,43 @@ export default function OperationLogs() {
         setModalAreaFilter([]);
         toast.success(`Se agregaron ${formData.employeeIds.length} registros al lote`);
       } else if (action === 'APPROVE') {
-        await updateOperationLogStatus(data, 'APPROVED_MANAGER');
+        const log = operationLogs.find((l) => String(l.id) === String(data));
+        await updateOperationLogStatus(data, 'APPROVED_MANAGER', null, null, false, log);
         await fetchBatch();
         toast.success('Solicitud aprobada');
       } else if (action === 'REJECT') {
-        await updateOperationLogStatus(data, 'RETURNED', null, justification);
+        const log = operationLogs.find((l) => String(l.id) === String(data));
+        await updateOperationLogStatus(data, 'RETURNED', null, justification, false, log);
         await fetchBatch();
         toast.success('Solicitud devuelta al solicitante');
       } else if (action === 'REJECT_TO_MANAGER') {
-        await updateOperationLogStatus(data, 'PENDING_MANAGER', null, justification, true);
+        const log = operationLogs.find((l) => String(l.id) === String(data));
+        await updateOperationLogStatus(data, 'PENDING_MANAGER', null, justification, true, log);
         await fetchBatch();
         toast.success('Solicitud devuelta al gerente');
       } else if (action === 'BULK_APPROVE') {
-        const promises = selectedRowIds.map(id => updateOperationLogStatus(id, 'APPROVED_MANAGER'));
+        const promises = selectedRowIds.map((id) => {
+          const log = operationLogs.find((l) => String(l.id) === String(id));
+          return updateOperationLogStatus(id, 'APPROVED_MANAGER', null, null, false, log);
+        });
         await Promise.all(promises);
         await fetchBatch();
         setSelectedRowIds([]);
         toast.success(`${selectedRowIds.length} solicitudes aprobadas`);
       } else if (action === 'BULK_REJECT') {
-        const promises = selectedRowIds.map(id => updateOperationLogStatus(id, 'RETURNED', null, justification));
+        const promises = selectedRowIds.map((id) => {
+          const log = operationLogs.find((l) => String(l.id) === String(id));
+          return updateOperationLogStatus(id, 'RETURNED', null, justification, false, log);
+        });
         await Promise.all(promises);
         await fetchBatch();
         setSelectedRowIds([]);
         toast.success(`${selectedRowIds.length} solicitudes devueltas`);
       } else if (action === 'BULK_REJECT_TO_MANAGER') {
-        const promises = selectedRowIds.map(id => updateOperationLogStatus(id, 'PENDING_MANAGER', null, justification, true));
+        const promises = selectedRowIds.map((id) => {
+          const log = operationLogs.find((l) => String(l.id) === String(id));
+          return updateOperationLogStatus(id, 'PENDING_MANAGER', null, justification, true, log);
+        });
         await Promise.all(promises);
         await fetchBatch();
         setSelectedRowIds([]);
@@ -335,7 +374,7 @@ export default function OperationLogs() {
         toast.success('Registro eliminado');
       }
     } catch (e) {
-      toast.error('Hubo un error al procesar la acción');
+      toast.error(e.message || 'Hubo un error al procesar la acción');
     }
   };
 
@@ -424,6 +463,10 @@ export default function OperationLogs() {
   }
 
   const handleSendToManager = async () => {
+    if (!operationLogs || operationLogs.length === 0) {
+      toast.warning('Agrega al menos un registro (bono o horas extra) antes de enviar el lote a gerencia');
+      return;
+    }
     try {
       const token = localStorage.getItem('nomina-token');
       const res = await fetch(`http://localhost:3000/api/operation-batches/${batchId}/status`, {
@@ -437,6 +480,9 @@ export default function OperationLogs() {
       if (res.ok) {
         toast.success('Lote enviado a gerencia exitosamente');
         navigate('/operations');
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error || 'Error al enviar');
       }
     } catch (e) {
       toast.error('Error al enviar');
@@ -444,6 +490,10 @@ export default function OperationLogs() {
   };
 
   const handleApproveBatch = async () => {
+    if (!operationLogs || operationLogs.length === 0) {
+      toast.warning('No se puede aprobar un lote sin registros');
+      return;
+    }
     try {
       const token = localStorage.getItem('nomina-token');
       const res = await fetch(`http://localhost:3000/api/operation-batches/${batchId}/status`, {
@@ -455,8 +505,13 @@ export default function OperationLogs() {
         body: JSON.stringify({ status: 'APPROVED_MANAGER' })
       });
       if (res.ok) {
+        const logsToInject = operationLogs.filter((l) => l.status !== 'PROCESSED_PAYROLL');
+        logsToInject.forEach((log) => injectApprovedLogIntoActiveDrafts({ ...log, status: 'APPROVED_MANAGER' }));
         toast.success('Lote aprobado');
         navigate('/operations');
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error || 'Error al aprobar');
       }
     } catch (e) {
       toast.error('Error al aprobar');
@@ -477,6 +532,9 @@ export default function OperationLogs() {
         body: JSON.stringify({ status: 'RETURNED', justification: note })
       });
       if (res.ok) {
+        operationLogs
+          .filter((l) => l.status === 'APPROVED_MANAGER')
+          .forEach((log) => revertLogFromActiveDrafts(log));
         toast.success('Lote rechazado');
         navigate('/operations');
       }
@@ -499,6 +557,9 @@ export default function OperationLogs() {
         body: JSON.stringify({ status: 'PENDING_MANAGER', justification: note, rejectionFromNomina: true })
       });
       if (res.ok) {
+        operationLogs
+          .filter((l) => l.status === 'APPROVED_MANAGER')
+          .forEach((log) => revertLogFromActiveDrafts(log));
         toast.success('Lote devuelto al gerente');
         await fetchBatch();
       } else {
@@ -624,6 +685,8 @@ export default function OperationLogs() {
                 colorScheme="brand" 
                 leftIcon={<Send size={16} />} 
                 onClick={handleSendToManager}
+                isDisabled={!operationLogs || operationLogs.length === 0}
+                title={!operationLogs || operationLogs.length === 0 ? 'Agrega al menos un registro antes de enviar' : undefined}
                 borderRadius="lg" 
                 transition="all 0.3s"
                 _hover={{ shadow: 'lg' }}
@@ -632,11 +695,26 @@ export default function OperationLogs() {
               </Button>
             </>
           )}
+          {canEdit && (!operationLogs || operationLogs.length === 0) && (
+            <Text fontSize="sm" color="orange.400" alignSelf="center">
+              Agrega al menos un registro para poder enviar el lote
+            </Text>
+          )}
 
           {isManagerOrAdmin && batch.status === 'PENDING_MANAGER' && (
             <>
               <Button colorScheme="red" variant="outline" leftIcon={<X size={16} />} onClick={handleRejectBatch} borderRadius="lg" transition="all 0.3s" _hover={{ shadow: 'lg' }}>Devolver a Solicitante</Button>
-              <Button colorScheme="green" leftIcon={<Check size={16} />} onClick={handleApproveBatch} borderRadius="lg" transition="all 0.3s" _hover={{ shadow: 'lg' }}>Aprobar Lote Completo</Button>
+              <Button
+                colorScheme="green"
+                leftIcon={<Check size={16} />}
+                onClick={handleApproveBatch}
+                isDisabled={!operationLogs || operationLogs.length === 0}
+                borderRadius="lg"
+                transition="all 0.3s"
+                _hover={{ shadow: 'lg' }}
+              >
+                Aprobar Lote Completo
+              </Button>
             </>
           )}
 
@@ -660,6 +738,16 @@ export default function OperationLogs() {
             <option value="ALL">Todos</option>
             <option value="HORA_EXTRA">Horas Extras</option>
             <option value="BONO">Bonos</option>
+          </Select>
+        </FormControl>
+        <FormControl w="180px">
+          <FormLabel fontSize="xs" color={mutedTextColor}>Estado</FormLabel>
+          <Select size="sm" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
+            <option value="ALL">Todos</option>
+            <option value="PENDING_MANAGER">Pdte. Gerente</option>
+            <option value="APPROVED_MANAGER">Aprobado</option>
+            <option value="RETURNED">Devuelto</option>
+            <option value="PROCESSED_PAYROLL">En Nómina</option>
           </Select>
         </FormControl>
 
@@ -693,12 +781,13 @@ export default function OperationLogs() {
                 </Th>
               )}
               <Th color={theadTextColor}>Fecha</Th>
+              <Th color={theadTextColor}>Quincena</Th>
               <Th color={theadTextColor}>Empresa</Th>
               <Th color={theadTextColor}>Empleado</Th>
               <Th color={theadTextColor}>Tipo</Th>
               <Th color={theadTextColor}>Detalle (Horas/Monto)</Th>
               <Th color={theadTextColor}>Tarea</Th>
-
+              <Th color={theadTextColor}>Estado</Th>
               <Th color={theadTextColor}>Acciones</Th>
             </Tr>
           </Thead>
@@ -722,6 +811,7 @@ export default function OperationLogs() {
                     {new Date(log.createdAt).toLocaleTimeString('es-GT', { hour: '2-digit', minute: '2-digit' })}
                   </Text>
                 </Td>
+                <Td whiteSpace="nowrap">{formatQuincenaLabel(log.date)}</Td>
                 <Td>{log.companyData ? log.companyData.nombre_comercial : 'S/E'}</Td>
                 <Td>{log.Employee ? [log.Employee.primer_nombre, log.Employee.segundo_nombre, log.Employee.otro_nombre, log.Employee.primer_apellido, log.Employee.segundo_apellido].filter(Boolean).join(' ') : 'Desconocido'}</Td>
                 <Td>{log.type === 'HORA_EXTRA' ? 'Hrs Extras' : 'Bono'}</Td>
@@ -732,6 +822,7 @@ export default function OperationLogs() {
                   }
                 </Td>
                 <Td maxW="200px" isTruncated>{log.taskDescription}</Td>
+                <Td>{getStatusBadge(log.status)}</Td>
 
                 <Td>
                   <HStack spacing={2}>
@@ -947,6 +1038,20 @@ export default function OperationLogs() {
                 </Select>
               </FormControl>
 
+              {formData.date && formData.companyId && !hasMatchingActivePayroll(formData.date, formData.companyId) && (
+                <Box w="100%" p={3} borderRadius="md" bg="orange.50" borderWidth="1px" borderColor="orange.200">
+                  <Text fontSize="sm" color="orange.700">
+                    {getMissingPayrollMessage(formData.date, formData.companyId)}. No se puede guardar hasta que exista una nómina abierta para esa empresa y quincena.
+                  </Text>
+                </Box>
+              )}
+
+              {formData.date && formData.companyId && hasMatchingActivePayroll(formData.date, formData.companyId) && (
+                <Text fontSize="sm" color={mutedTextColor}>
+                  Quincena: {formatQuincenaLabel(formData.date)}
+                </Text>
+              )}
+
               <HStack w="full" spacing={4}>
                 <FormControl isRequired flex={1}>
                   <FormLabel fontSize="sm">Fecha</FormLabel>
@@ -1013,7 +1118,13 @@ export default function OperationLogs() {
           </ModalBody>
           <ModalFooter>
             <Button variant="ghost" mr={3} onClick={onClose}>Cancelar</Button>
-            <Button colorScheme="brand" onClick={handleSave}>Guardar Registro</Button>
+            <Button
+              colorScheme="brand"
+              onClick={handleSave}
+              isDisabled={formData.date && formData.companyId && !hasMatchingActivePayroll(formData.date, formData.companyId)}
+            >
+              Guardar Registro
+            </Button>
           </ModalFooter>
         </ModalContent>
       </Modal>
@@ -1050,8 +1161,16 @@ export default function OperationLogs() {
                     <Text fontSize="md">{selectedLog.date}</Text>
                   </GridItem>
                   <GridItem>
+                    <Text fontSize="xs" color={mutedTextColor} textTransform="uppercase" fontWeight="bold">Quincena</Text>
+                    <Text fontSize="md">{formatQuincenaLabel(selectedLog.date)}</Text>
+                  </GridItem>
+                  <GridItem>
                     <Text fontSize="xs" color={mutedTextColor} textTransform="uppercase" fontWeight="bold">Tipo</Text>
                     <Text fontSize="md">{selectedLog.type === 'HORA_EXTRA' ? 'Horas Extras' : 'Bono'}</Text>
+                  </GridItem>
+                  <GridItem>
+                    <Text fontSize="xs" color={mutedTextColor} textTransform="uppercase" fontWeight="bold">Estado</Text>
+                    <Box mt={1}>{getStatusBadge(selectedLog.status)}</Box>
                   </GridItem>
                 </Grid>
                 
@@ -1316,6 +1435,44 @@ export default function OperationLogs() {
                     </RadioGroup>
                   </Box>
                 </FormControl>
+
+                <FormControl isRequired>
+                  <FormLabel fontSize="sm">Empresa a cargar</FormLabel>
+                  <Select
+                    size="sm"
+                    value={editFormData.companyId || ''}
+                    onChange={(e) => setEditFormData({ ...editFormData, companyId: e.target.value })}
+                  >
+                    <option value="" disabled>Selecciona una empresa</option>
+                    {companies.map((c) => (
+                      <option key={c.id} value={c.id}>{c.nombre_comercial}</option>
+                    ))}
+                  </Select>
+                </FormControl>
+
+                <FormControl isRequired>
+                  <FormLabel fontSize="sm">Fecha</FormLabel>
+                  <Input
+                    type="date"
+                    value={editFormData.date || ''}
+                    onChange={(e) => setEditFormData({ ...editFormData, date: e.target.value })}
+                  />
+                </FormControl>
+
+                {editFormData.date && editFormData.companyId && !hasMatchingActivePayroll(editFormData.date, editFormData.companyId) && (
+                  <Box w="100%" p={3} borderRadius="md" bg="orange.50" borderWidth="1px" borderColor="orange.200">
+                    <Text fontSize="sm" color="orange.700">
+                      {getMissingPayrollMessage(editFormData.date, editFormData.companyId)}
+                    </Text>
+                  </Box>
+                )}
+
+                {editFormData.date && (
+                  <Text fontSize="sm" color={mutedTextColor}>
+                    Quincena: {formatQuincenaLabel(editFormData.date)}
+                  </Text>
+                )}
+
                 {editFormData.type === 'HORA_EXTRA' ? (
                   <>
                     <FormControl isRequired>
@@ -1371,7 +1528,18 @@ export default function OperationLogs() {
               </Text>
             )}
             <Button variant="ghost" mr={3} onClick={onEditClose}>Cancelar</Button>
-            <Button colorScheme="blue" onClick={handleEditSave}>Guardar y Reenviar</Button>
+            <Button
+              colorScheme="blue"
+              onClick={handleEditSave}
+              isDisabled={
+                !editFormData ||
+                (editFormData.date &&
+                  editFormData.companyId &&
+                  !hasMatchingActivePayroll(editFormData.date, editFormData.companyId))
+              }
+            >
+              Guardar y Reenviar
+            </Button>
           </ModalFooter>
         </ModalContent>
       </Modal>

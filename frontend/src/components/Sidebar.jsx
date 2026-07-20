@@ -2,9 +2,9 @@ import React, { useContext, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Users, Calculator, History,
-  Building2, Gift, Sun, Moon, LogOut,
-  ChevronLeft, ChevronRight, Network, Clock,
-  Menu as MenuIcon, Shield, Settings, User, Ban, Receipt
+  Building2, Sun, Moon, LogOut,
+  ChevronLeft, ChevronRight, Network,
+  Menu as MenuIcon, Shield, Settings, Ban, Receipt, ClipboardList
 } from 'lucide-react';
 import { AppContext } from '../App';
 import { AuthContext } from '../context/AuthContext';
@@ -14,6 +14,60 @@ import {
   Drawer, DrawerOverlay, DrawerContent, DrawerCloseButton,
   Menu, MenuButton, MenuList, MenuItem
 } from '@chakra-ui/react';
+
+const ALL_NAV_SECTIONS = [
+  {
+    title: 'Principal',
+    items: [
+      { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    ],
+  },
+  {
+    title: 'Nómina',
+    items: [
+      { to: '/employees', label: 'Empleados', icon: Users },
+      { to: '/payroll', label: 'Nómina', icon: Calculator },
+      { to: '/history', label: 'Historial', icon: History },
+      { to: '/suspensions', label: 'Suspensiones', icon: Ban },
+    ],
+  },
+  {
+    title: 'Operaciones',
+    items: [
+      { to: '/operations', label: 'Reporte Operativo', icon: ClipboardList },
+    ],
+  },
+  {
+    title: 'Administración',
+    items: [
+      { to: '/users', label: 'Usuarios', icon: Shield },
+      { to: '/dimensions', label: 'Dimensiones', icon: Network },
+      { to: '/companies', label: 'Empresas', icon: Building2 },
+      { to: '/billing', label: 'Facturación', icon: Receipt },
+    ],
+  },
+];
+
+function isNavItemVisible(item, user) {
+  if (!user) return false;
+  const role = user.role;
+  if (role === 'ADMIN' || role === 'GERENTE GENERAL') return true;
+  if (role === 'NOMINA') return true;
+  if (role === 'AUDITOR') {
+    return (
+      item.to !== '/operations' &&
+      item.to !== '/users' &&
+      item.to !== '/billing' &&
+      item.to !== '/payroll'
+    );
+  }
+  if (role === 'DIGITADOR') {
+    return item.to === '/employees' || item.to === '/users' || item.to === '/suspensions' || item.to === '/dashboard';
+  }
+  if (role === 'GERENTE') return item.to === '/operations';
+  if (role === 'SOLICITANTE') return item.to === '/operations';
+  return false;
+}
 
 export default function Sidebar() {
   const { theme: themeMode, toggleTheme, confirmAction } = useContext(AppContext);
@@ -46,33 +100,12 @@ export default function Sidebar() {
     });
   };
 
-  const ALL_NAV_ITEMS = [
-    { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { to: '/employees', label: 'Empleados', icon: Users },
-    { to: '/payroll', label: 'Nómina', icon: Calculator },
-    { to: '/history', label: 'Historial', icon: History },
-    { to: '/suspensions', label: 'Suspensiones', icon: Ban },
-    { to: '/users', label: 'Usuarios', icon: Shield },
-    { to: '/dimensions', label: 'Dimensiones', icon: Network },
-    { to: '/companies', label: 'Empresas', icon: Building2 },
-    { to: '/operations', label: 'Reporte Operativo', icon: Gift },
-    { to: '/commissions', label: 'Comisiones', icon: Clock },
-    { to: '/bonuses', label: 'Catálogo de Bonos', icon: Gift },
-    { to: '/billing', label: 'Facturación', icon: Receipt },
-  ];
-
-  const NAV_ITEMS = ALL_NAV_ITEMS.filter(item => {
-    if (!user) return false;
-    if (item.to === '/dashboard') return true;
-    const role = user.role;
-    if (role === 'ADMIN' || role === 'GERENTE GENERAL') return true;
-    if (role === 'NOMINA') return true;
-    if (role === 'AUDITOR') return item.to !== '/operations' && item.to !== '/users' && item.to !== '/billing';
-    if (role === 'DIGITADOR') return item.to === '/employees' || item.to === '/users' || item.to === '/suspensions';
-    if (role === 'GERENTE') return item.to === '/operations' || item.to === '/commissions' || item.to === '/bonuses';
-    if (role === 'SOLICITANTE') return item.to === '/operations';
-    return false;
-  });
+  const NAV_SECTIONS = ALL_NAV_SECTIONS
+    .map((section) => ({
+      ...section,
+      items: section.items.filter((item) => isNavItemVisible(item, user)),
+    }))
+    .filter((section) => section.items.length > 0);
 
   // Shared nav content renderer (used by both mobile drawer and desktop sidebar)
   const renderNavContent = (mobile = false) => (
@@ -130,86 +163,97 @@ export default function Sidebar() {
 
       {/* Navigation */}
       <Box flex={1} overflowY="auto" overflowX="hidden" px={!mobile && isCollapsed ? 2 : 3} py={2} css={{ '&::-webkit-scrollbar': { width: '4px' } }}>
-        <Text
-          px={!mobile && isCollapsed ? 0 : 3}
-          mb={2}
-          fontSize="0.65rem"
-          fontWeight={700}
-          letterSpacing="0.1em"
-          textTransform="uppercase"
-          color={textSecondary}
-          textAlign={!mobile && isCollapsed ? 'center' : 'left'}
-          whiteSpace="nowrap"
-        >
-          {!mobile && isCollapsed ? '—' : 'Menú Principal'}
-        </Text>
-        <VStack spacing="2px" align="stretch">
-          {NAV_ITEMS.map((item) => {
-            const { to, label, icon: Icon } = item;
-            const showLabel = mobile || !isCollapsed;
+        <VStack spacing={4} align="stretch">
+          {NAV_SECTIONS.map((section) => {
+            const showSectionTitle = mobile || !isCollapsed;
 
-            const linkContent = (
-              <Box
-                key={to}
-                as={NavLink}
-                to={to}
-                end={to !== '/billing' && to !== '/dimensions'}
-                display="flex"
-                alignItems="center"
-                justifyContent={!mobile && isCollapsed ? 'center' : 'flex-start'}
-                gap={!mobile && isCollapsed ? 0 : 3}
-                px={!mobile && isCollapsed ? 0 : 3}
-                py="9px"
-                borderRadius="lg"
-                position="relative"
-                transition="all 0.2s ease"
-                textDecoration="none"
-                color={textSecondary}
-                fontWeight={600}
-                fontSize="0.875rem"
-                _hover={{
-                  bg: hoverBg,
-                  color: textPrimary,
-                  textDecoration: 'none',
-                }}
-                _activeLink={{
-                  bg: activeBg,
-                  color: activeColor,
-                  _before: {
-                    content: '""',
-                    position: 'absolute',
-                    left: 0,
-                    top: 0,
-                    bottom: 0,
-                    w: '3px',
-                    borderRadius: '0 4px 4px 0',
-                    bg: activeColor,
-                  },
-                }}
-                sx={{
-                  '& svg': {
-                    transition: 'color 0.2s',
-                  },
-                }}
-                onClick={mobile ? () => setMobileOpen(false) : undefined}
-              >
-                <Box as="span" display="flex" alignItems="center" minW="20px" justifyContent="center">
-                  <Icon size={20} />
-                </Box>
-                {showLabel && (
-                  <Text as="span" fontSize="0.875rem" fontWeight={600} whiteSpace="nowrap">
-                    {label}
+            return (
+              <Box key={section.title}>
+                {showSectionTitle && (
+                  <Text
+                    px={3}
+                    mb={2}
+                    fontSize="0.65rem"
+                    fontWeight={700}
+                    letterSpacing="0.1em"
+                    textTransform="uppercase"
+                    color={textSecondary}
+                    whiteSpace="nowrap"
+                  >
+                    {section.title}
                   </Text>
                 )}
-              </Box>
-            );
+                <VStack spacing="2px" align="stretch">
+                  {section.items.map((item) => {
+                    const { to, label, icon: Icon } = item;
+                    const showLabel = mobile || !isCollapsed;
 
-            return !mobile && isCollapsed ? (
-              <Tooltip key={to} label={label} placement="right" hasArrow>
-                {linkContent}
-              </Tooltip>
-            ) : (
-              linkContent
+                    const linkContent = (
+                      <Box
+                        key={to}
+                        as={NavLink}
+                        to={to}
+                        end={to !== '/billing' && to !== '/dimensions'}
+                        display="flex"
+                        alignItems="center"
+                        justifyContent={!mobile && isCollapsed ? 'center' : 'flex-start'}
+                        gap={!mobile && isCollapsed ? 0 : 3}
+                        px={!mobile && isCollapsed ? 0 : 3}
+                        py="9px"
+                        borderRadius="lg"
+                        position="relative"
+                        transition="all 0.2s ease"
+                        textDecoration="none"
+                        color={textSecondary}
+                        fontWeight={600}
+                        fontSize="0.875rem"
+                        _hover={{
+                          bg: hoverBg,
+                          color: textPrimary,
+                          textDecoration: 'none',
+                        }}
+                        _activeLink={{
+                          bg: activeBg,
+                          color: activeColor,
+                          _before: {
+                            content: '""',
+                            position: 'absolute',
+                            left: 0,
+                            top: 0,
+                            bottom: 0,
+                            w: '3px',
+                            borderRadius: '0 4px 4px 0',
+                            bg: activeColor,
+                          },
+                        }}
+                        sx={{
+                          '& svg': {
+                            transition: 'color 0.2s',
+                          },
+                        }}
+                        onClick={mobile ? () => setMobileOpen(false) : undefined}
+                      >
+                        <Box as="span" display="flex" alignItems="center" minW="20px" justifyContent="center">
+                          <Icon size={20} />
+                        </Box>
+                        {showLabel && (
+                          <Text as="span" fontSize="0.875rem" fontWeight={600} whiteSpace="nowrap">
+                            {label}
+                          </Text>
+                        )}
+                      </Box>
+                    );
+
+                    return !mobile && isCollapsed ? (
+                      <Tooltip key={to} label={label} placement="right" hasArrow>
+                        {linkContent}
+                      </Tooltip>
+                    ) : (
+                      linkContent
+                    );
+                  })}
+                </VStack>
+              </Box>
             );
           })}
         </VStack>

@@ -3,10 +3,12 @@ import { Box, Button, Flex, Heading, Text, Table, Thead, Tbody, Tr, Th, Td, Badg
 import { Plus, Eye, Trash2, CheckCircle2, XCircle, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { AuthContext } from '../context/AuthContext';
+import { DataContext } from '../context/DataContext';
 import { toast } from 'sonner';
 
 export default function OperationBatches() {
   const { user } = useContext(AuthContext);
+  const { operationLogs, revertLogFromActiveDrafts } = useContext(DataContext);
   const navigate = useNavigate();
   const { isOpen, onOpen, onClose } = useDisclosure();
   const [batches, setBatches] = useState([]);
@@ -95,6 +97,17 @@ export default function OperationBatches() {
         body: JSON.stringify({ status: 'PENDING_MANAGER', justification: note, rejectionFromNomina: true })
       });
       if (res.ok) {
+        const detailRes = await fetch(`http://localhost:3000/api/operation-batches/${batchId}`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (detailRes.ok) {
+          const detail = await detailRes.json();
+          (detail.logs || []).forEach((log) => revertLogFromActiveDrafts(log));
+        } else {
+          (operationLogs || [])
+            .filter((l) => String(l.batchId) === String(batchId))
+            .forEach((log) => revertLogFromActiveDrafts(log));
+        }
         toast.success('Lote devuelto al gerente');
         fetchBatches();
       } else {

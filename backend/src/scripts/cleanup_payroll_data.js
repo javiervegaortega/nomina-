@@ -15,7 +15,8 @@ const {
   PayrollHistory,
   OperationLog,
   OperationBatch,
-  Commission
+  Commission,
+  Bonus
 } = require('../models');
 
 const isDryRun = process.argv.includes('--dry-run');
@@ -30,7 +31,8 @@ const TABLES = [
   { name: 'payrollhistories', model: PayrollHistory },
   { name: 'operation_logs', model: OperationLog },
   { name: 'operation_batches', model: OperationBatch },
-  { name: 'commissions', model: Commission }
+  { name: 'commissions', model: Commission },
+  { name: 'bonuses', model: Bonus }
 ];
 
 async function countAll() {

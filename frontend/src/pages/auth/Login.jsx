@@ -4,6 +4,7 @@ import { Mail, Lock, ArrowRight } from 'lucide-react';
 import AuthSidePanel from './AuthSidePanel';
 import { AuthContext } from '../../context/AuthContext';
 import { AppContext } from '../../App';
+import { getHomePathForRole } from '../../utils/roleHome';
 import {
   Box,
   Flex,
@@ -38,7 +39,7 @@ export default function Login() {
     const result = await login(email, password);
     if (result.success) {
       showToast('Sesión iniciada correctamente', 'success');
-      navigate('/dashboard');
+      navigate(getHomePathForRole(result.user?.role));
     } else {
       showToast(result.error, 'error');
     }

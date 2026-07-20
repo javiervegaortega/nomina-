@@ -10,6 +10,7 @@ import {
 import theme from './theme';
 import { Toaster, toast } from 'sonner';
 import Sidebar from './components/Sidebar';
+import { getHomePathForRole } from './utils/roleHome';
 import './index.css';
 
 const Dashboard = lazy(() => import('./pages/Dashboard'));
@@ -22,8 +23,6 @@ const Companies = lazy(() => import('./pages/Companies'));
 const Settings = lazy(() => import('./pages/Settings'));
 const OperationBatches = lazy(() => import('./pages/OperationBatches'));
 const OperationLogs = lazy(() => import('./pages/OperationLogs'));
-const Commissions = lazy(() => import('./pages/Commissions'));
-const Bonuses = lazy(() => import('./pages/Bonuses'));
 const Login = lazy(() => import('./pages/auth/Login'));
 const Users = lazy(() => import('./pages/Users'));
 const Billing = lazy(() => import('./pages/Billing'));
@@ -76,10 +75,17 @@ function RoleProtectedRoute({ allowedRoles }) {
   if (!user) return <Navigate to="/login" replace />;
   
   if (!allowedRoles.includes(user.role)) {
-    return <Navigate to="/dashboard" replace />;
+    return <Navigate to={getHomePathForRole(user.role)} replace />;
   }
   
   return <Outlet />;
+}
+
+function HomeRedirect() {
+  const { user, loading } = useContext(AuthContext);
+  if (loading) return <Flex h="100vh" align="center" justify="center">Cargando...</Flex>;
+  if (!user) return <Navigate to="/login" replace />;
+  return <Navigate to={getHomePathForRole(user.role)} replace />;
 }
 
 // Layout without Sidebar for auth pages
@@ -87,7 +93,7 @@ function AuthLayout() {
   const { user, loading } = useContext(AuthContext);
   if (loading) return null;
   if (user) {
-    return <Navigate to="/dashboard" replace />;
+    return <Navigate to={getHomePathForRole(user.role)} replace />;
   }
   return (
     <Flex className="app-layout" justify="center" align="center">
@@ -140,10 +146,10 @@ function AppContent() {
               {/* Main App Routes (Protected) */}
               <Route element={<ProtectedRoute />}>
                 <Route element={<MainLayout />}>
-                  <Route path="/" element={<Navigate to="/dashboard" replace />} />
+                  <Route path="/" element={<HomeRedirect />} />
                   
-                  {/* ALL ROLES */}
-                  <Route element={<RoleProtectedRoute allowedRoles={['ADMIN', 'GERENTE GENERAL', 'NOMINA', 'AUDITOR', 'GERENTE', 'SOLICITANTE', 'DIGITADOR']} />}>
+                  {/* Roles con acceso al Dashboard (sin SOLICITANTE ni GERENTE) */}
+                  <Route element={<RoleProtectedRoute allowedRoles={['ADMIN', 'GERENTE GENERAL', 'NOMINA', 'AUDITOR', 'DIGITADOR']} />}>
                     <Route path="/dashboard" element={<Dashboard />} />
                   </Route>
 
@@ -152,9 +158,13 @@ function AppContent() {
                     <Route path="/reactivate" element={<ReactivatePayroll />} />
                   </Route>
 
+                  {/* ADMIN, GERENTE GENERAL, NOMINA — borradores (sin AUDITOR) */}
+                  <Route element={<RoleProtectedRoute allowedRoles={['ADMIN', 'GERENTE GENERAL', 'NOMINA']} />}>
+                    <Route path="/payroll" element={<PayrollProcessing />} />
+                  </Route>
+
                   {/* ADMIN, GERENTE GENERAL, NOMINA, AUDITOR */}
                   <Route element={<RoleProtectedRoute allowedRoles={['ADMIN', 'GERENTE GENERAL', 'NOMINA', 'AUDITOR']} />}>
-                    <Route path="/payroll" element={<PayrollProcessing />} />
                     <Route path="/history" element={<PayrollHistory />} />
                     <Route path="/dimensions" element={<Dimensions />} />
                     <Route path="/dimensions/areas" element={<Dimensions />} />
@@ -177,12 +187,6 @@ function AppContent() {
                   <Route element={<RoleProtectedRoute allowedRoles={['ADMIN', 'GERENTE GENERAL', 'NOMINA', 'AUDITOR', 'DIGITADOR']} />}>
                     <Route path="/employees" element={<Employees />} />
                     <Route path="/suspensions" element={<Suspensions />} />
-                  </Route>
-
-                  {/* ADMIN, GERENTE GENERAL, NOMINA, GERENTE */}
-                  <Route element={<RoleProtectedRoute allowedRoles={['ADMIN', 'GERENTE GENERAL', 'NOMINA', 'GERENTE']} />}>
-                    <Route path="/commissions" element={<Commissions />} />
-                    <Route path="/bonuses" element={<Bonuses />} />
                   </Route>
 
                   {/* ADMIN, GERENTE GENERAL, GERENTE, SOLICITANTE, NOMINA */}

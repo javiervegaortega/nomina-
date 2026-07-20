@@ -5,6 +5,84 @@
 export const CUOTA_PATRONAL_RATE = 0.1067;
 export const CUOTA_LABORAL_RATE = 0.0483;
 
+const MONTH_NAMES_ES = [
+  'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+  'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
+];
+
+function parseLocalDate(dateStr) {
+  if (!dateStr) return new Date();
+  const parts = String(dateStr).slice(0, 10).split('-');
+  if (parts.length >= 3) {
+    return new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+  }
+  return new Date(dateStr);
+}
+
+/** Infere '1ra' o '2da' según el día del mes (1–15 → 1ra, 16–fin → 2da). */
+export function inferPeriodTypeFromDate(dateStr) {
+  const d = parseLocalDate(dateStr);
+  return d.getDate() <= 15 ? '1ra' : '2da';
+}
+
+/** Normaliza companies del draft (array, JSON string u objeto) a un array. */
+export function normalizeDraftCompanies(draftCompanies) {
+  if (Array.isArray(draftCompanies)) return draftCompanies;
+  if (typeof draftCompanies === 'string') {
+    try {
+      const parsed = JSON.parse(draftCompanies);
+      return Array.isArray(parsed) ? parsed : (parsed != null ? [parsed] : []);
+    } catch {
+      return draftCompanies.trim() ? [draftCompanies] : [];
+    }
+  }
+  if (draftCompanies != null && typeof draftCompanies === 'object') {
+    return Object.values(draftCompanies);
+  }
+  return [];
+}
+
+/** Etiqueta corta: "1ra · Julio 2026" / "2da · Julio 2026". */
+export function formatQuincenaLabel(dateStr) {
+  if (!dateStr) return '';
+  const d = parseLocalDate(dateStr);
+  const period = inferPeriodTypeFromDate(dateStr);
+  const monthName = MONTH_NAMES_ES[d.getMonth()] || '';
+  return `${period} · ${monthName} ${d.getFullYear()}`;
+}
+
+/**
+ * Busca un draft activo que coincida con empresa + quincena de la fecha.
+ * companiesList: catálogo de empresas para resolver nombre/NIT → id.
+ */
+export function findMatchingActiveDraft(activePayrolls, dateStr, companyId, companiesList = []) {
+  if (!dateStr || !companyId) return null;
+  const drafts = Array.isArray(activePayrolls) ? activePayrolls : [];
+  return drafts.find((draft) => {
+    const draftRefDate = draft.createdAt || draft.draftDate || new Date().toISOString();
+    const periodType = draft.periodType || '1ra';
+    if (!isDateInQuincena(dateStr, draftRefDate, periodType)) return false;
+    const draftCompanies = normalizeDraftCompanies(draft.companies);
+    if (draftCompanies.length === 0) return false;
+    return draftCompanies.some((c) => {
+      const strC = String(c);
+      if (strC === String(companyId)) return true;
+      const compByName = companiesList.find(
+        (comp) => comp.nombre_comercial === strC || comp.nit === strC || String(comp.id) === strC
+      );
+      return compByName && String(compByName.id) === String(companyId);
+    });
+  }) || null;
+}
+
+/** Título editable sugerido: "Segunda Quincena del mes de Julio 2026". */
+export function buildPayrollDraftTitle(dateStr, periodType) {
+  const d = parseLocalDate(dateStr);
+  const periodLabel = periodType === '2da' ? 'Segunda' : 'Primera';
+  const monthName = MONTH_NAMES_ES[d.getMonth()] || '';
+  return `${periodLabel} Quincena del mes de ${monthName} ${d.getFullYear()}`;
+}
+
 export function getQuincenaDateRange(draftDateStr, periodType) {
   const d = draftDateStr ? new Date(draftDateStr) : new Date();
   const year = d.getFullYear();

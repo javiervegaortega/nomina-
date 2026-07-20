@@ -236,10 +236,168 @@ const sendOperationRejectToManagerEmail = async (gerenteName, recipientEmail, de
   }
 };
 
+const buildPayrollAuditEmailHtml = ({ recipientName, title, periodType, action, note, auditorName }) => {
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('es-GT', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  const timeStr = now.toLocaleTimeString('es-GT', { hour: '2-digit', minute: '2-digit' });
+  const isApproved = action === 'approved';
+  const bannerTitle = isApproved ? 'Nómina Aprobada por Auditoría' : 'Nómina Devuelta a Corrección';
+  const bannerColor = isApproved ? '#15803d' : '#b91c1c';
+  const actionLabel = isApproved
+    ? 'La nómina fue aprobada por auditoría y quedó disponible en borradores para su cierre definitivo (sin edición de montos).'
+    : 'La nómina fue rechazada por auditoría y regresó a borradores para que pueda corregirla y enviarla de nuevo.';
+
+  return `
+    <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f3f4f6; padding: 40px 20px; min-height: 100vh;">
+      <div style="max-width: 600px; margin: 0 auto; background-color: white; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+        <div style="padding: 20px 30px; font-weight: bold; color: #1e3a8a; font-size: 14px; letter-spacing: 0.5px;">
+          GRUPO ECONSA
+        </div>
+        <div style="background-color: ${bannerColor}; padding: 25px 30px; display: flex; justify-content: center; align-items: center; color: white;">
+          <h2 style="margin: 0; font-size: 20px; font-weight: 600;">${bannerTitle}</h2>
+        </div>
+        <div style="padding: 30px;">
+          <div style="color: #a0aec0; font-size: 12px; margin-bottom: 25px;">
+            ${dateStr} a las ${timeStr}
+          </div>
+          <p style="color: #4a5568; font-size: 14px; margin-bottom: 20px;">
+            Estimado(a) <strong>${recipientName || 'Usuario'}</strong>,
+          </p>
+          <p style="color: #4a5568; font-size: 14px; margin-bottom: 30px;">
+            ${actionLabel}
+          </p>
+          <div style="font-size: 11px; font-weight: bold; color: #a0aec0; letter-spacing: 1px; margin-bottom: 10px;">DETALLE</div>
+          <div style="border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 30px;">
+            <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+              <tr>
+                <td style="padding: 12px 15px; color: #718096; width: 35%; border-bottom: 1px solid #e2e8f0;">Nómina</td>
+                <td style="padding: 12px 15px; font-weight: 600; color: #2d3748; border-bottom: 1px solid #e2e8f0;">${title || '—'}</td>
+              </tr>
+              <tr>
+                <td style="padding: 12px 15px; color: #718096; border-bottom: 1px solid #e2e8f0;">Periodo</td>
+                <td style="padding: 12px 15px; font-weight: 600; color: #2d3748; border-bottom: 1px solid #e2e8f0;">${periodType === '2da' ? '2da Quincena' : '1ra Quincena'}</td>
+              </tr>
+              <tr>
+                <td style="padding: 12px 15px; color: #718096; ${note ? 'border-bottom: 1px solid #e2e8f0;' : ''}">Auditor</td>
+                <td style="padding: 12px 15px; font-weight: 600; color: #2d3748; ${note ? 'border-bottom: 1px solid #e2e8f0;' : ''}">${auditorName || 'Auditoría'}</td>
+              </tr>
+              ${note ? `
+              <tr>
+                <td style="padding: 12px 15px; color: #718096;">Nota de corrección</td>
+                <td style="padding: 12px 15px; color: #4a5568; white-space: pre-wrap;">${note}</td>
+              </tr>` : ''}
+            </table>
+          </div>
+          <p style="color: #718096; font-size: 12px; margin: 0;">
+            Puede revisar el estado en el Sistema de Nómina.
+          </p>
+        </div>
+      </div>
+    </div>
+  `;
+};
+
+const sendPayrollAuditDecisionEmail = async (recipientEmail, recipientName, details) => {
+  const isApproved = details.action === 'approved';
+  const mailOptions = {
+    from: `"Sistema Nómina" <${process.env.GMAIL_USER || 'notificacioneseconsa@gmail.com'}>`,
+    to: recipientEmail,
+    subject: isApproved
+      ? `Nómina aprobada: ${details.title}`
+      : `Nómina requiere corrección: ${details.title}`,
+    html: buildPayrollAuditEmailHtml({ ...details, recipientName })
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`Email de auditoría (${details.action}) enviado a ${recipientEmail}`);
+  } catch (error) {
+    console.error('Error enviando correo de decisión de auditoría:', error);
+    throw new Error('No se pudo enviar el correo de auditoría.');
+  }
+};
+
+const buildPayrollSubmittedToAuditEmailHtml = ({ recipientName, title, periodType, companyName, submitterName, employeesCount }) => {
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('es-GT', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  const timeStr = now.toLocaleTimeString('es-GT', { hour: '2-digit', minute: '2-digit' });
+
+  return `
+    <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f3f4f6; padding: 40px 20px; min-height: 100vh;">
+      <div style="max-width: 600px; margin: 0 auto; background-color: white; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+        <div style="padding: 20px 30px; font-weight: bold; color: #1e3a8a; font-size: 14px; letter-spacing: 0.5px;">
+          GRUPO ECONSA
+        </div>
+        <div style="background-color: #c2410c; padding: 25px 30px; display: flex; justify-content: center; align-items: center; color: white;">
+          <h2 style="margin: 0; font-size: 20px; font-weight: 600;">Nómina Pendiente de Auditoría</h2>
+        </div>
+        <div style="padding: 30px;">
+          <div style="color: #a0aec0; font-size: 12px; margin-bottom: 25px;">
+            ${dateStr} a las ${timeStr}
+          </div>
+          <p style="color: #4a5568; font-size: 14px; margin-bottom: 20px;">
+            Estimado(a) <strong>${recipientName || 'Auditor'}</strong>,
+          </p>
+          <p style="color: #4a5568; font-size: 14px; margin-bottom: 30px;">
+            Se ha enviado una nómina a auditoría para su revisión. Empresa: <strong>${companyName || '—'}</strong>.
+          </p>
+          <div style="font-size: 11px; font-weight: bold; color: #a0aec0; letter-spacing: 1px; margin-bottom: 10px;">DETALLE</div>
+          <div style="border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 30px;">
+            <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+              <tr>
+                <td style="padding: 12px 15px; color: #718096; width: 35%; border-bottom: 1px solid #e2e8f0;">Nómina</td>
+                <td style="padding: 12px 15px; font-weight: 600; color: #2d3748; border-bottom: 1px solid #e2e8f0;">${title || '—'}</td>
+              </tr>
+              <tr>
+                <td style="padding: 12px 15px; color: #718096; border-bottom: 1px solid #e2e8f0;">Empresa</td>
+                <td style="padding: 12px 15px; font-weight: 600; color: #2d3748; border-bottom: 1px solid #e2e8f0;">${companyName || '—'}</td>
+              </tr>
+              <tr>
+                <td style="padding: 12px 15px; color: #718096; border-bottom: 1px solid #e2e8f0;">Periodo</td>
+                <td style="padding: 12px 15px; font-weight: 600; color: #2d3748; border-bottom: 1px solid #e2e8f0;">${periodType === '2da' ? '2da Quincena' : '1ra Quincena'}</td>
+              </tr>
+              <tr>
+                <td style="padding: 12px 15px; color: #718096; border-bottom: 1px solid #e2e8f0;">Enviado por</td>
+                <td style="padding: 12px 15px; font-weight: 600; color: #2d3748; border-bottom: 1px solid #e2e8f0;">${submitterName || 'Nómina'}</td>
+              </tr>
+              <tr>
+                <td style="padding: 12px 15px; color: #718096;">Empleados</td>
+                <td style="padding: 12px 15px; font-weight: 600; color: #2d3748;">${employeesCount != null ? employeesCount : '—'}</td>
+              </tr>
+            </table>
+          </div>
+          <p style="color: #718096; font-size: 12px; margin: 0;">
+            Ingrese al Historial de Nóminas en el sistema para aprobar o solicitar correcciones.
+          </p>
+        </div>
+      </div>
+    </div>
+  `;
+};
+
+const sendPayrollSubmittedToAuditEmail = async (recipientEmail, recipientName, details) => {
+  const mailOptions = {
+    from: `"Sistema Nómina" <${process.env.GMAIL_USER || 'notificacioneseconsa@gmail.com'}>`,
+    to: recipientEmail,
+    subject: `Nómina para revisión: ${details.companyName || details.title}`,
+    html: buildPayrollSubmittedToAuditEmailHtml({ ...details, recipientName })
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`Email de envío a auditoría enviado a ${recipientEmail}`);
+  } catch (error) {
+    console.error('Error enviando correo de envío a auditoría:', error);
+    throw new Error('No se pudo enviar el correo de envío a auditoría.');
+  }
+};
+
 module.exports = {
   sendReactivationEmail,
   buildOperationEmailHtml,
   getOperationEmailSubject,
   sendOperationLogEmail,
-  sendOperationRejectToManagerEmail
+  sendOperationRejectToManagerEmail,
+  sendPayrollAuditDecisionEmail,
+  sendPayrollSubmittedToAuditEmail
 };

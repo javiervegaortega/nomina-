@@ -1,5 +1,6 @@
 const { OperationLog, OperationBatch, Employee, Company, User } = require('../models');
 const { sendOperationLogEmail, sendOperationRejectToManagerEmail } = require('../services/email.service');
+const { assertActivePayrollForLog } = require('../services/operationPayroll.service');
 
 const NOMINA_ROLES = ['ADMIN', 'NOMINA', 'AUDITOR'];
 
@@ -21,7 +22,7 @@ const getAll = async (req, res) => {
 
 const create = async (req, res) => {
   try {
-    const { type, hoursQty, hourType, bonusAmount } = req.body;
+    const { type, hoursQty, hourType, bonusAmount, date, companyId } = req.body;
 
     if (type === 'HORA_EXTRA') {
       if (!hourType || !['SIMPLE', 'DOBLE', 'NOCTURNA'].includes(hourType)) {
@@ -35,6 +36,8 @@ const create = async (req, res) => {
         return res.status(400).json({ error: 'bonusAmount debe ser mayor a 0 para bonos.' });
       }
     }
+
+    await assertActivePayrollForLog(date, companyId);
 
     const isGlobalRole = ['admin', 'nomina', 'gerente general'].includes(req.user?.role?.toLowerCase());
     const status = isGlobalRole ? 'APPROVED_MANAGER' : 'PENDING_MANAGER';
@@ -51,7 +54,7 @@ const create = async (req, res) => {
     });
     res.status(201).json(populatedLog);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    res.status(err.statusCode || 400).json({ error: err.message });
   }
 };
 
@@ -126,6 +129,8 @@ const update = async (req, res) => {
     const hoursQty = req.body.hoursQty !== undefined ? req.body.hoursQty : log.hoursQty;
     const hourType = req.body.hourType !== undefined ? req.body.hourType : log.hourType;
     const bonusAmount = req.body.bonusAmount !== undefined ? req.body.bonusAmount : log.bonusAmount;
+    const date = req.body.date !== undefined ? req.body.date : log.date;
+    const companyId = req.body.companyId !== undefined ? req.body.companyId : log.companyId;
 
     if (type === 'HORA_EXTRA') {
       if (!hourType || !['SIMPLE', 'DOBLE', 'NOCTURNA'].includes(hourType)) {
@@ -139,6 +144,8 @@ const update = async (req, res) => {
         return res.status(400).json({ error: 'bonusAmount debe ser mayor a 0 para bonos.' });
       }
     }
+
+    await assertActivePayrollForLog(date, companyId);
     
     const isGlobalRole = ['admin', 'nomina', 'gerente general'].includes(req.user?.role?.toLowerCase());
     const newStatus = isGlobalRole ? 'APPROVED_MANAGER' : 'PENDING_MANAGER';
@@ -158,7 +165,7 @@ const update = async (req, res) => {
 
     res.json(populatedLog);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    res.status(err.statusCode || 400).json({ error: err.message });
   }
 };
 

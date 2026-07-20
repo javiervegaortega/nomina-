@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useContext, useEffect } from 'react';
 import {
-  Save, Download, FileText, Check, X, Edit3, CheckCircle2,
+  FileText, Check, X, Edit3, CheckCircle2,
   ChevronRight, ChevronDown, ChevronUp, AlertCircle, DollarSign, Clock,
   Calculator, Building2, Plus, ArrowLeft, Trash2, Calendar, Search, LayoutGrid, List, User, Edit2, Eye
 } from 'lucide-react';
@@ -9,7 +9,7 @@ import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
 import { CUOTA_PATRONAL_RATE, CUOTA_LABORAL_RATE, IRTRA_INTECAP_RATE, formatQ, calculateMonthlyISR } from '../data/mockData';
 import { getEmployeePayrollSnapshot } from '../utils/payrollCalculator';
-import { getNetPayable } from '../utils/payrollPeriod';
+import { getNetPayable, inferPeriodTypeFromDate, buildPayrollDraftTitle } from '../utils/payrollPeriod';
 import EmployeeIncidences from '../components/EmployeeIncidences';
 import EmployeeDeductions from '../components/EmployeeDeductions';
 import EmployeeSummaryModal from '../components/EmployeeSummaryModal';
@@ -22,9 +22,8 @@ import {
   Badge, Divider, useColorModeValue, Center, Tag, HStack, VStack, Checkbox, ButtonGroup, Card, CardHeader, CardBody, CardFooter, Stat, StatLabel, StatNumber, StatGroup, Skeleton, SkeletonText,
   AlertDialog, AlertDialogOverlay, AlertDialogContent, AlertDialogHeader, AlertDialogBody, AlertDialogFooter, useDisclosure,
   Drawer, DrawerBody, DrawerFooter, DrawerHeader, DrawerOverlay, DrawerContent, DrawerCloseButton, TabPanels, TabPanel, InputRightAddon,
-  Menu, MenuButton, MenuList, MenuItem, MenuItemOption, MenuOptionGroup, Tooltip
+  Menu, MenuButton, MenuList, MenuItemOption, MenuOptionGroup, Tooltip
 } from '@chakra-ui/react';
-import { exportPayrollReportExcel } from '../utils/payrollReports';
 import { matchesDepartmentFilter, normalizeMultiFilter, resolveEmployeeDepartment } from '../utils/orgFilters';
 
 const TABS = [
@@ -82,6 +81,8 @@ function PayrollHub({ onSelectDraft }) {
   const [selectedCompany, setSelectedCompany] = useState('');
   const [periodType, setPeriodType] = useState('1ra');
   const [notes, setNotes] = useState('');
+  const [titleTouched, setTitleTouched] = useState(false);
+  const [periodTouched, setPeriodTouched] = useState(false);
 
   const handleCreateOrUpdate = async () => {
     if (!title || !selectedCompany || selectedCompany === 'ALL') return;
@@ -134,6 +135,8 @@ function PayrollHub({ onSelectDraft }) {
     const dateStr = draft.createdAt ? new Date(draft.createdAt).toISOString().split('T')[0] : '';
     setDraftDate(dateStr);
     setNotes(draft.notes || '');
+    setTitleTouched(false);
+    setPeriodTouched(true);
     
     let comp = '';
     if (Array.isArray(draft.companies) && draft.companies.length > 0) {
@@ -160,6 +163,41 @@ function PayrollHub({ onSelectDraft }) {
     }
     setSelectedCompany(comp);
     setShowModal(true);
+  };
+
+  const openCreateModal = () => {
+    const today = new Date().toISOString().split('T')[0];
+    const inferredPeriod = inferPeriodTypeFromDate(today);
+    setEditingDraftId(null);
+    setNotes('');
+    setDraftDate(today);
+    setSelectedCompany('');
+    setPeriodType(inferredPeriod);
+    setTitle(buildPayrollDraftTitle(today, inferredPeriod));
+    setTitleTouched(false);
+    setPeriodTouched(false);
+    setShowModal(true);
+  };
+
+  const handleDraftDateChange = (value) => {
+    setDraftDate(value);
+    const nextPeriod = (!editingDraftId && !periodTouched)
+      ? inferPeriodTypeFromDate(value)
+      : periodType;
+    if (!editingDraftId && !periodTouched) {
+      setPeriodType(nextPeriod);
+    }
+    if (!titleTouched) {
+      setTitle(buildPayrollDraftTitle(value, nextPeriod));
+    }
+  };
+
+  const handlePeriodTypeChange = (value) => {
+    setPeriodType(value);
+    setPeriodTouched(true);
+    if (!titleTouched) {
+      setTitle(buildPayrollDraftTitle(draftDate, value));
+    }
   };
 
   const cardBg = useColorModeValue('white', 'gray.800');
@@ -211,15 +249,7 @@ function PayrollHub({ onSelectDraft }) {
             colorScheme="brand" 
             leftIcon={<Plus size={16} />} 
             borderRadius="lg" 
-            onClick={() => {
-              setEditingDraftId(null);
-              setTitle('');
-              setNotes('');
-              setDraftDate(new Date().toISOString().split('T')[0]);
-              setSelectedCompany('');
-              setPeriodType('1ra');
-              setShowModal(true);
-            }}
+            onClick={openCreateModal}
           >
             Nueva Nómina
           </Button>
@@ -261,7 +291,7 @@ function PayrollHub({ onSelectDraft }) {
                 </Box>
               </Flex>
               <Flex gap={1} flexShrink={0} ml={2} mt={-1} mr={-1}>
-                {!isReadOnly && (
+                {!isReadOnly && !draft.isApproved && (
                   <>
                     <IconButton 
                       aria-label="Edit draft"
@@ -325,7 +355,7 @@ function PayrollHub({ onSelectDraft }) {
               onClick={() => onSelectDraft(draft.id)} 
               borderRadius="lg"
             >
-              Continuar Editando
+              {draft.isApproved ? 'Abrir (solo cierre)' : 'Continuar Editando'}
             </Button>
           </Box>
         ))}
@@ -358,9 +388,12 @@ function PayrollHub({ onSelectDraft }) {
                 <FormLabel>Título del Periodo</FormLabel>
                 <Input
                   autoFocus
-                  placeholder="Ej: Primera Quincena Febrero 2026"
+                  placeholder="Ej: Primera Quincena del mes de Febrero 2026"
                   value={title}
-                  onChange={e => setTitle(e.target.value)}
+                  onChange={e => {
+                    setTitle(e.target.value);
+                    setTitleTouched(true);
+                  }}
                 />
               </FormControl>
               <FormControl>
@@ -368,14 +401,14 @@ function PayrollHub({ onSelectDraft }) {
                 <Input
                   type="date"
                   value={draftDate}
-                  onChange={e => setDraftDate(e.target.value)}
+                  onChange={e => handleDraftDateChange(e.target.value)}
                 />
               </FormControl>
               <FormControl>
                 <FormLabel>Periodo</FormLabel>
                 <Select
                   value={periodType}
-                  onChange={e => setPeriodType(e.target.value)}
+                  onChange={e => handlePeriodTypeChange(e.target.value)}
                 >
                   <option value="1ra">Primera Quincena</option>
                   <option value="2da">Segunda Quincena</option>
@@ -407,7 +440,7 @@ function PayrollHub({ onSelectDraft }) {
   );
 }
 
-const DraftNotesEditor = ({ draft, updateDraftMetadata }) => {
+const DraftNotesEditor = ({ draft, updateDraftMetadata, isReadOnly = false }) => {
   const [localNotes, setLocalNotes] = useState(draft?.notes || '');
   const bg = useColorModeValue('white', 'gray.800');
   
@@ -421,8 +454,13 @@ const DraftNotesEditor = ({ draft, updateDraftMetadata }) => {
       <Textarea 
         placeholder="Ingrese notas sobre el borrador de nómina..." 
         value={localNotes}
-        onChange={(e) => setLocalNotes(e.target.value)}
+        isReadOnly={isReadOnly}
+        onChange={(e) => {
+          if (isReadOnly) return;
+          setLocalNotes(e.target.value);
+        }}
         onBlur={() => {
+          if (isReadOnly) return;
           if (localNotes !== (draft?.notes || '')) {
             updateDraftMetadata(draft.id, draft.title, draft.companies, draft.createdAt, draft.periodType, localNotes);
           }
@@ -454,10 +492,12 @@ function PayrollEditor({ draftId, onBack }) {
   
   const { confirmAction, showToast } = useContext(AppContext);
   const { user } = useContext(AuthContext);
-  const isReadOnly = user?.role === 'AUDITOR';
+  const isAuditor = user?.role === 'AUDITOR';
   
   const draft = activePayrolls.find(p => p.id === draftId);
   const data = draft?.employees || [];
+  // Bloqueo: auditor siempre; nómina aprobada no se edita (solo cierre definitivo)
+  const isReadOnly = isAuditor || !!draft?.isApproved;
 
   const [tabIndex, setTabIndex] = useState(0);
   const [editingCell, setEditingCell] = useState(null); // { id, field, type }
@@ -479,6 +519,7 @@ function PayrollEditor({ draftId, onBack }) {
   const tab = TABS[tabIndex].id;
 
   const handleChange = (id, section, field, value) => {
+    if (isReadOnly) return;
     const newData = data.map(e => {
       if (e.id !== id) return e;
 
@@ -731,12 +772,12 @@ function PayrollEditor({ draftId, onBack }) {
             <Text fontSize="sm" color="gray.500">
               {employees.length} empleados en esta nómina
             </Text>
-            <DraftNotesEditor draft={draft} updateDraftMetadata={updateDraftMetadata} />
+            <DraftNotesEditor draft={draft} updateDraftMetadata={updateDraftMetadata} isReadOnly={isReadOnly} />
           </Box>
         </Flex>
 
         <Flex gap={2}>
-          {!isReadOnly && (
+          {!isAuditor && (
             <Button 
               bg={draft.isApproved ? "green.500" : "red.500"}
               color="white"
@@ -844,7 +885,6 @@ function PayrollEditor({ draftId, onBack }) {
             handleOpenSummary={setSummaryEmp}
             isReadOnly={isReadOnly}
             draftDateStr={draft?.createdAt}
-            draftTitle={draft?.title}
             companies={companies}
           />
         )}
@@ -852,7 +892,7 @@ function PayrollEditor({ draftId, onBack }) {
         {tab === 'observations' && (
           <Box p={6} bg={useColorModeValue('white', 'gray.800')} borderRadius="xl" borderWidth="1px" borderColor={borderColor}>
             <Heading size="sm" mb={4}>Observaciones del periodo</Heading>
-            <DraftNotesEditor draft={draft} updateDraftMetadata={updateDraftMetadata} />
+            <DraftNotesEditor draft={draft} updateDraftMetadata={updateDraftMetadata} isReadOnly={isReadOnly} />
             <Text fontSize="sm" color="gray.500" mt={4} mb={6}>
               Estas notas se conservan al enviar a auditoría o cerrar la nómina.
             </Text>
@@ -1054,7 +1094,7 @@ function ListadoPagosTab({
   searchQuery, setSearchQuery,
   handleClose, handleSaveIncidence, handleDeleteIncidence,
   handleSaveDeduction, handleDeleteDeduction, handleOpenSummary,
-  isReadOnly, draftDateStr, draftTitle, companies: companiesProp
+  isReadOnly, draftDateStr, companies: companiesProp
 }) {
   const { companies } = useContext(DataContext);
   const [viewMode, setViewMode] = useState('summary');
@@ -1186,8 +1226,6 @@ function ListadoPagosTab({
     }));
   }, [data, filterDept, filterArea, filterDiv, filterSubdiv, filterDim5, filterCompany, divisions, areas, departments, subdivisions, dimension5s, employees, companyList]);
 
-  const { confirmAction, showToast } = useContext(AppContext);
-
   return (
     <Box>
       {/* Filters bar */}
@@ -1300,43 +1338,6 @@ function ListadoPagosTab({
               Por Área
             </Button>
           </Tooltip>
-          <Menu>
-            <MenuButton as={Button} size="sm" variant="outline" leftIcon={<Download size={14} />} borderRadius="md">
-              Reportería (preliminar)
-            </MenuButton>
-            <MenuList zIndex={100} boxShadow="lg">
-              <MenuItem fontSize="sm" onClick={() => {
-                const missing = exportPayrollReportExcel({
-                  type: 'verificador',
-                  employees: data,
-                  periodType,
-                  title: draftTitle,
-                  companies,
-                  isDraft: true
-                });
-                if (missing.length) {
-                  showToast(`${missing.length} empleado(s) con campos incompletos para reportería`, 'warning');
-                } else {
-                  showToast('Verificador preliminar exportado', 'success');
-                }
-              }}>Verificador de Pagos</MenuItem>
-              <MenuItem fontSize="sm" onClick={() => {
-                const missing = exportPayrollReportExcel({
-                  type: 'libro',
-                  employees: data,
-                  periodType,
-                  title: draftTitle,
-                  companies,
-                  isDraft: true
-                });
-                if (missing.length) {
-                  showToast(`${missing.length} empleado(s) con campos incompletos para reportería`, 'warning');
-                } else {
-                  showToast('Libro de Salarios preliminar exportado', 'success');
-                }
-              }}>Libro de Salarios</MenuItem>
-            </MenuList>
-          </Menu>
         </HStack>
 
         <HStack maxW={{ base: '100%', lg: '600px' }} spacing={{ base: 2, md: 3 }} w={{ base: '100%', md: 'auto' }} flexWrap={{ base: 'wrap', lg: 'nowrap' }}>
