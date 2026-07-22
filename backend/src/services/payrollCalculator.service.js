@@ -3,15 +3,27 @@ const Decimal = require('decimal.js');
 /** Tasas oficiales IGSS Guatemala (fuente única) */
 const CUOTA_PATRONAL_RATE = new Decimal('0.1067');
 const CUOTA_LABORAL_RATE = new Decimal('0.0483');
+/** Cuota laboral reducida para jubilados que siguen laborando */
+const CUOTA_LABORAL_JUBILADO_RATE = new Decimal('0.03');
 /** IRTRA 1% + INTECAP 1% — el Excel de nómina los incluye en la cuota patronal (12.67%) */
 const IRTRA_INTECAP_RATE = new Decimal('0.02');
 const IVA_RATE = new Decimal('0.12');
 
+const isJubilado = (e) => !!(e && (e.jubilacion === true || e.jubilacion === 1));
+
 /**
- * Indica si el empleado está exento de IGSS (jubilado u otro flag).
- * Jubilados no cotizan laboral ni generan cuota patronal sobre esa base.
+ * Exento total de IGSS (flag explícito). Los jubilados NO son exentos: cotizan 3% laboral.
+ * Sin cuota patronal / IRTRA-INTECAP cuando es jubilado o exento.
  */
-const isIgssExempt = (e) => !!(e && (e.jubilacion === true || e.jubilacion === 1 || e.igss_exempt === true));
+const isIgssExempt = (e) => !!(e && (e.igss_exempt === true || e.igss_exempt === 1));
+const skipsIgssPatronal = (e) => isJubilado(e) || isIgssExempt(e);
+
+/** Tasa laboral aplicable: 0 (exento), 3% (jubilado) o 4.83% (normal). */
+const getCuotaLaboralRate = (e) => {
+  if (isIgssExempt(e)) return new Decimal(0);
+  if (isJubilado(e)) return CUOTA_LABORAL_JUBILADO_RATE;
+  return CUOTA_LABORAL_RATE;
+};
 
 /**
  * Costo empresa para facturación / reportes = bruto + cuota patronal.
@@ -113,27 +125,45 @@ const calculateEmployeePayroll = (e, periodType) => {
   // (igual que el Excel: sueldo + hrs extra + comisiones + otros)
   const igssBase = baseSalary.plus(extrasTotal).plus(extrasBonos).plus(bonusesSum);
 
-  const exempt = isIgssExempt(e);
-  const igssValue = exempt
+  const laboralRate = getCuotaLaboralRate(e);
+  const noPatronal = skipsIgssPatronal(e);
+  const igssValue = laboralRate.isZero()
     ? new Decimal(0)
-    : igssBase.times(CUOTA_LABORAL_RATE).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
-  const patronal = exempt
+    : igssBase.times(laboralRate).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+  const patronal = noPatronal
     ? new Decimal(0)
     : igssBase.times(CUOTA_PATRONAL_RATE).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
-  const irtraIntecap = exempt
+  const irtraIntecap = noPatronal
     ? new Decimal(0)
     : igssBase.times(IRTRA_INTECAP_RATE).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
 
   // ISR: manda el valor del maestro del empleado (retención mensual definida por
   // contabilidad, como en el Excel). La fórmula 5%-7% es solo fallback/sugerencia.
+  // En 2ª quincena: ISR periodo = Total ISR − ISR ya retenido en 1ª.
   const { calculateMonthlyISR } = require('./isr.service');
   const hasMasterIsr = e.isr !== undefined && e.isr !== null && e.isr !== '';
   const monthlyIsr = hasMasterIsr
     ? (Number(e.isr) || 0)
     : calculateMonthlyISR(sueldoOrd.toNumber(), bonDec.toNumber());
-  const isrValue = new Decimal(monthlyIsr)
-    .times(baseFactor)
-    .toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+
+  const isSecondQuincena = periodType === '2da'
+    || e.totalIsr !== undefined
+    || e.isr1ra !== undefined;
+  let isrValue;
+  if (isSecondQuincena) {
+    const totalIsr = new Decimal(
+      e.totalIsr !== undefined && e.totalIsr !== null && e.totalIsr !== ''
+        ? e.totalIsr
+        : monthlyIsr
+    );
+    const isr1ra = new Decimal(e.isr1ra || 0);
+    isrValue = Decimal.max(0, totalIsr.minus(isr1ra))
+      .toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+  } else {
+    isrValue = new Decimal(monthlyIsr)
+      .times(baseFactor)
+      .toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+  }
 
   const currentDeductions = { ...(e.deductions || {}) };
   currentDeductions.igss = igssValue.toNumber();
@@ -202,7 +232,8 @@ const calculateEmployeePayroll = (e, periodType) => {
     patronal: patronalNum,
     irtraIntecap: irtraIntecapNum,
     companyCost: getCompanyCost({ gross: grossRounded, patronal: patronalNum, irtraIntecap: irtraIntecapNum }),
-    igssExempt: exempt,
+    igssExempt: isIgssExempt(e),
+    jubilacion: isJubilado(e),
     hourlyRate: sueldoOrd.dividedBy(30).dividedBy(8).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(),
     vacacionesVal: vacacionesVal.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(),
     ventasEconomicas: ventasEconomicas.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(),
@@ -229,10 +260,14 @@ module.exports = {
   calculatePayrollBatch,
   getCompanyCost,
   isIgssExempt,
+  isJubilado,
+  skipsIgssPatronal,
+  getCuotaLaboralRate,
   getQuincenaDateRange,
   isDateInQuincena,
   CUOTA_PATRONAL_RATE,
   CUOTA_LABORAL_RATE,
+  CUOTA_LABORAL_JUBILADO_RATE,
   IRTRA_INTECAP_RATE,
   IVA_RATE
 };

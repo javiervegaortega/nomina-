@@ -1,6 +1,7 @@
 import React, { createContext, useState, useEffect, useRef, useContext, useMemo } from 'react';
 import { AuthContext } from './AuthContext';
-import { isDateInQuincena, findMatchingActiveDraft, CUOTA_LABORAL_RATE } from '../utils/payrollPeriod';
+import { isDateInQuincena, findMatchingActiveDraft } from '../utils/payrollPeriod';
+import { getCuotaLaboralRate } from '../utils/payrollCalculator';
 import { calculateMonthlyISR } from '../data/mockData';
 
 export const DataContext = createContext();
@@ -919,8 +920,9 @@ export function DataProvider({ children }) {
 
     const draftRefDate = draftDateStr || new Date().toISOString();
 
-    // If 2nd quincena, find 1st quincena payouts (prefer cerrada, most recent)
+    // If 2nd quincena, find 1st quincena payouts + ISR (prefer cerrada, most recent)
     let firstQuincenaPayouts = {};
+    let firstQuincenaIsr = {};
     let missingAnticipoWarning = false;
     if (periodType === '2da') {
       // Refrescar historial para no perder 1ras recién cerradas
@@ -1060,6 +1062,15 @@ export function DataProvider({ children }) {
             ? Number(emp.netTotal)
             : (Number(emp.calculated?.netPayable) || Number(emp.calculated?.net) || 0);
           if (payout) firstQuincenaPayouts[String(emp.id)] = payout;
+
+          const isr1raPaid = Number(
+            emp.calculated?.proratedDeductions?.isr
+            ?? emp.deductions?.isr
+            ?? 0
+          ) || 0;
+          if (isr1raPaid || firstQuincenaIsr[String(emp.id)] == null) {
+            firstQuincenaIsr[String(emp.id)] = isr1raPaid;
+          }
         });
 
         if (Object.keys(firstQuincenaPayouts).length === 0) {
@@ -1076,7 +1087,7 @@ export function DataProvider({ children }) {
         const days = periodType === '1ra' ? 15 : 30;
         const baseSalary = Number(e.sueldo_ordinario) || 0;
         const baseFactor = days / 30;
-        const igssExempt = !!(e.jubilacion === true || e.jubilacion === 1);
+        const laboralRate = getCuotaLaboralRate(e);
 
         // Solo Reporte Operativo (APPROVED_MANAGER) alimenta horas/bonos extras
         let qtySimples = 0;
@@ -1119,20 +1130,30 @@ export function DataProvider({ children }) {
         const otrosIngresosVal = Number(e.otro_ingresos) || 0;
         const igssBase = (baseSalary * baseFactor) + valSimples + valDobles + totalBonos
           + otrosIngresosVal + vacacionesPeriodo + ventasPeriodo;
-        const igssVal = igssExempt ? 0 : igssBase * CUOTA_LABORAL_RATE;
+        const igssVal = laboralRate === 0 ? 0 : igssBase * laboralRate;
 
         // ISR: manda la retención mensual del maestro (como en el Excel); fórmula solo de fallback
         const monthlyIsr = (e.isr !== undefined && e.isr !== null && e.isr !== '')
           ? (Number(e.isr) || 0)
           : calculateMonthlyISR(baseSalary, Number(e.bon_dec_37_2001) || 0);
 
+        // 2ª: Total ISR (editable) − ISR ya retenido en 1ª; 1ª: mitad del mensual
+        const isr1ra = periodType === '2da'
+          ? (Number(firstQuincenaIsr[String(e.id)] ?? firstQuincenaIsr[e.id]) || 0)
+          : 0;
+        const totalIsr = periodType === '2da' ? monthlyIsr : undefined;
+        const periodIsr = periodType === '2da'
+          ? Math.max(0, Number((monthlyIsr - isr1ra).toFixed(2)))
+          : Number((monthlyIsr * baseFactor).toFixed(2));
+
         return {
           ...e,
           days,
           company: e.company || (companies.find(c => c.id === e.companyId)?.nombre_comercial || ''),
+          ...(periodType === '2da' ? { totalIsr, isr1ra } : {}),
           deductions: {
             igss: igssVal,
-            isr: monthlyIsr * baseFactor,
+            isr: periodIsr,
             cafe: 0,
             cell: 0,
             uniform: 0,
@@ -1378,6 +1399,19 @@ export function DataProvider({ children }) {
         const { data: _fullData, ...listEntry } = saved;
         setPayrollHistory([listEntry, ...payrollHistory.filter((p) => p.id !== saved.id)]);
         deleteActivePayroll(id);
+
+        // Tras cerrar 2ª, refrescar fichas (Total ISR pudo actualizar employees.isr)
+        if (draft.periodType === '2da' && historyRecord.status === 'cerrada') {
+          try {
+            const empRes = await fetch('http://localhost:3000/api/employees', { headers: getAuthHeader() });
+            if (empRes.ok) {
+              const apiEmployees = await empRes.json();
+              if (Array.isArray(apiEmployees)) setEmployees(apiEmployees);
+            }
+          } catch (e) {
+            console.warn('No se pudo refrescar empleados tras cerrar 2ª:', e);
+          }
+        }
 
         // Mark operation logs as PROCESSED_PAYROLL with periodAssigned
         if (logsToProcess.length > 0) {

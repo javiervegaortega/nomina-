@@ -1,4 +1,4 @@
-const { PayrollHistory, User, PayrollDraft, PayrollDraftEmployee, Company, sequelize } = require('../models');
+const { PayrollHistory, User, PayrollDraft, PayrollDraftEmployee, Company, Employee, sequelize } = require('../models');
 const jwt = require('jsonwebtoken');
 const { sendReactivationEmail, sendPayrollAuditDecisionEmail, sendPayrollSubmittedToAuditEmail } = require('../services/email.service');
 const BillingService = require('../services/billing.service');
@@ -7,6 +7,26 @@ const { computePayrollSummary, parsePayrollEmployees, parsePayrollSummary } = re
 const { calculatePayrollBatch } = require('../services/payrollCalculator.service');
 
 const AUDIT_ROLES = ['AUDITOR', 'ADMIN', 'GERENTE GENERAL'];
+
+/**
+ * Al cerrar 2ª quincena, persiste Total ISR en la ficha del empleado
+ * para que la próxima 1ª arranque con la mitad de ese valor.
+ */
+const syncEmployeeIsrFromClosed2da = async (periodType, status, employees) => {
+  if (periodType !== '2da' || status !== 'cerrada') return;
+  const emps = Array.isArray(employees) ? employees : [];
+  for (const emp of emps) {
+    if (emp == null || emp.id == null) continue;
+    if (emp.totalIsr === undefined || emp.totalIsr === null || emp.totalIsr === '') continue;
+    const totalIsr = Number(emp.totalIsr);
+    if (Number.isNaN(totalIsr)) continue;
+    const current = await Employee.findByPk(emp.id, { attributes: ['id', 'isr'] });
+    if (!current) continue;
+    const currentIsr = Number(current.isr) || 0;
+    if (currentIsr === totalIsr) continue;
+    await current.update({ isr: totalIsr });
+  }
+};
 
 const resolveCompanyNames = async (companyIds = []) => {
   const ids = (Array.isArray(companyIds) ? companyIds : [])
@@ -248,6 +268,14 @@ const createPayroll = async (req, res) => {
     // companies no es columna del modelo; vive en summary
     const { companies: _companies, ...historyPayload } = payload;
     const newPayroll = await PayrollHistory.create(historyPayload);
+
+    // Persist Total ISR → ficha empleado solo al cierre definitivo de 2ª
+    try {
+      const empsForIsr = typeof payload.data === 'string' ? JSON.parse(payload.data) : (payload.data || emps);
+      await syncEmployeeIsrFromClosed2da(payload.periodType, payload.status, empsForIsr);
+    } catch (isrSyncErr) {
+      console.error('Error sincronizando ISR de empleados al cerrar 2ª:', isrSyncErr);
+    }
 
     if (payload.status === 'auditoria') {
       try {
@@ -729,10 +757,20 @@ const updateStatus = async (req, res) => {
     const { status } = req.body;
     const payroll = await PayrollHistory.findByPk(req.params.id);
     if (!payroll) return res.status(404).json({ error: 'No encontrado' });
-    
+
+    const prevStatus = payroll.status;
     payroll.status = status;
     await payroll.save();
-    
+
+    if (prevStatus !== 'cerrada' && status === 'cerrada') {
+      try {
+        const emps = typeof payroll.data === 'string' ? JSON.parse(payroll.data) : (payroll.data || []);
+        await syncEmployeeIsrFromClosed2da(payroll.periodType, status, emps);
+      } catch (isrSyncErr) {
+        console.error('Error sincronizando ISR al cambiar status a cerrada:', isrSyncErr);
+      }
+    }
+
     res.json(payroll);
   } catch (err) {
     res.status(400).json({ error: err.message });

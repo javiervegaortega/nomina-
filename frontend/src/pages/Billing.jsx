@@ -59,7 +59,7 @@ export default function Billing() {
       <Box mb={6}>
         <Text fontSize="2xl" fontWeight="bold">Facturación</Text>
         <Text color="gray.500" mt={1}>
-          Calcula, confirma y consulta la facturación intercompañías de nóminas cerradas.
+          Mensual por empresa (2ª) · Proquima, Unhesa, Econacional · por centro de costo
         </Text>
       </Box>
 

@@ -4,6 +4,7 @@
 
 export const CUOTA_PATRONAL_RATE = 0.1067;
 export const CUOTA_LABORAL_RATE = 0.0483;
+export const CUOTA_LABORAL_JUBILADO_RATE = 0.03;
 
 const MONTH_NAMES_ES = [
   'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',

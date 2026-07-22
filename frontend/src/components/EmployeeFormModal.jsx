@@ -13,11 +13,12 @@ import { toast } from 'sonner';
 import { calculateMonthlyISR } from '../data/mockData';
 
 const IGSS_LABORAL_RATE = 0.0483;
+const IGSS_LABORAL_JUBILADO_RATE = 0.03;
 const IGSS_PATRONAL_RATE = 0.1067;
 
 const calcIgssLaboralAmount = (sueldo, jubilado) => {
-  if (jubilado) return '0.00';
-  return ((Number(sueldo) || 0) * IGSS_LABORAL_RATE).toFixed(2);
+  const rate = jubilado ? IGSS_LABORAL_JUBILADO_RATE : IGSS_LABORAL_RATE;
+  return ((Number(sueldo) || 0) * rate).toFixed(2);
 };
 
 const calcIgssPatronalAmount = (sueldo, jubilado) => {
@@ -638,7 +639,7 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
                   {/* DESCUENTOS */}
                   <Box>
                     <SectionTitle title="Descuentos" />
-                    <Field label="IGSS laboral (4.83% automático)" type="number" readOnly val={autoIgssLaboral} />
+                    <Field label={form.jubilacion ? 'IGSS laboral (3% jubilado)' : 'IGSS laboral (4.83% automático)'} type="number" readOnly val={autoIgssLaboral} />
                     <Box mt={4}>
                       <Field label="ISR mensual (automático 5%-7%, editable)" type="number" val={form.isr ?? autoIsr} onChange={v => handleChange('isr', v)} />
                       <Text fontSize="11px" color="gray.500" mt={1}>

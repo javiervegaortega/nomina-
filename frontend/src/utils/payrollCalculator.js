@@ -2,11 +2,22 @@ import { calculateMonthlyISR } from '../data/mockData';
 
 export const CUOTA_PATRONAL_RATE = 0.1067;
 export const CUOTA_LABORAL_RATE = 0.0483;
+export const CUOTA_LABORAL_JUBILADO_RATE = 0.03;
 export const IRTRA_INTECAP_RATE = 0.02;
 
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
-export const isIgssExempt = (e) => !!(e && (e.jubilacion === true || e.jubilacion === 1 || e.igss_exempt === true));
+export const isJubilado = (e) => !!(e && (e.jubilacion === true || e.jubilacion === 1));
+/** Exento total de IGSS (flag explícito). Jubilados cotizan 3% laboral. */
+export const isIgssExempt = (e) => !!(e && (e.igss_exempt === true || e.igss_exempt === 1));
+export const skipsIgssPatronal = (e) => isJubilado(e) || isIgssExempt(e);
+
+/** Tasa laboral: 0 (exento), 3% (jubilado) o 4.83% (normal). */
+export const getCuotaLaboralRate = (e) => {
+  if (isIgssExempt(e)) return 0;
+  if (isJubilado(e)) return CUOTA_LABORAL_JUBILADO_RATE;
+  return CUOTA_LABORAL_RATE;
+};
 
 export const getCompanyCost = (calculated) => {
   if (!calculated) return 0;
@@ -57,18 +68,33 @@ export const calculateEmployeePayroll = (e, periodType) => {
   const gross = round2(baseSalary + bonusLey + bonusDec + extrasBonos + extrasTotal + bonusesSum);
 
   const igssBase = baseSalary + extrasTotal + extrasBonos + bonusesSum;
-  const exempt = isIgssExempt(e);
-  const patronal = exempt ? 0 : round2(igssBase * CUOTA_PATRONAL_RATE);
-  const irtraIntecap = exempt ? 0 : round2(igssBase * IRTRA_INTECAP_RATE);
+  const laboralRate = getCuotaLaboralRate(e);
+  const noPatronal = skipsIgssPatronal(e);
+  const patronal = noPatronal ? 0 : round2(igssBase * CUOTA_PATRONAL_RATE);
+  const irtraIntecap = noPatronal ? 0 : round2(igssBase * IRTRA_INTECAP_RATE);
 
   const hasMasterIsr = e.isr !== undefined && e.isr !== null && e.isr !== '';
   const monthlyIsr = hasMasterIsr
     ? (Number(e.isr) || 0)
     : calculateMonthlyISR(sueldoOrd, bonDec);
-  const isrValue = round2(monthlyIsr * baseFactor);
+
+  // 2ª quincena: ISR periodo = Total ISR − ISR ya retenido en 1ª
+  const isSecondQuincena = periodType === '2da'
+    || e.totalIsr !== undefined
+    || e.isr1ra !== undefined;
+  let isrValue;
+  if (isSecondQuincena) {
+    const totalIsr = (e.totalIsr !== undefined && e.totalIsr !== null && e.totalIsr !== '')
+      ? (Number(e.totalIsr) || 0)
+      : monthlyIsr;
+    const isr1ra = Number(e.isr1ra) || 0;
+    isrValue = round2(Math.max(0, totalIsr - isr1ra));
+  } else {
+    isrValue = round2(monthlyIsr * baseFactor);
+  }
 
   const deductions = { ...(e.deductions || {}) };
-  deductions.igss = exempt ? 0 : round2(igssBase * CUOTA_LABORAL_RATE);
+  deductions.igss = laboralRate === 0 ? 0 : round2(igssBase * laboralRate);
   deductions.isr = isrValue;
 
   const totalDeductions = round2(
@@ -92,7 +118,8 @@ export const calculateEmployeePayroll = (e, periodType) => {
     patronal,
     irtraIntecap,
     companyCost: getCompanyCost({ gross, patronal, irtraIntecap }),
-    igssExempt: exempt,
+    igssExempt: isIgssExempt(e),
+    jubilacion: isJubilado(e),
     periodType: periodType || null
   };
 

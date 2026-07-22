@@ -247,6 +247,10 @@ async function runBilling(token, company, closedPayrollId, employeeCount) {
       Number(preview.body?.employeeCount) === employeeCount,
       `[${cName}] Billing employeeCount (${preview.body?.employeeCount}/${employeeCount})`
     );
+    assert(
+      (preview.body.lines || []).every((l) => l.centroCosto),
+      `[${cName}] Todas las líneas de factura tienen centro de costo`
+    );
     const confirm = await api('/api/billing/runs', {
       method: 'POST',
       body: JSON.stringify({ payrollId: closedPayrollId, notes: `E2E ${cName}` })
@@ -397,8 +401,9 @@ async function runCompanyCycle(token, company) {
     }, token);
   }
 
-  const billing1Id = await runBilling(token, company, q1Result.closedPayrollId, payrollEmployees.length);
-  report.billing1 = billing1Id ? 'OK' : 'WARN';
+  // Facturación solo en 2ª quincena (una vez al mes por empresa)
+  console.log(`  [${cName}] Billing 1ra omitido (solo 2ª quincena)`);
+  report.billing1 = 'SKIP';
 
   const anticipoMap = getFirstQuincenaPayouts(q1Result.draftEmployees);
   const q2Result = await createAndClosePayroll(token, {

@@ -73,21 +73,6 @@ export const resolveGroupPayrollId = (group) => {
   return (inAudit || group.records[0]).id;
 };
 
-/** Resuelve ID o nombre crudo de empresa a nombre comercial. */
-const resolveCompanyLabel = (raw, companiesCatalog = []) => {
-  if (raw == null || raw === '') return null;
-  const str = String(raw).trim();
-  if (!str) return null;
-  const found = companiesCatalog.find(
-    (c) =>
-      String(c.id) === str ||
-      c.nombre_comercial === str ||
-      c.razon_social === str ||
-      c.nit === str
-  );
-  return found?.nombre_comercial || found?.razon_social || found?.nit || str;
-};
-
 export default function PayrollHistory() {
   const { payrollHistory, deletePayroll, auditorApprovePayroll, auditorRejectPayroll, companies, areas, activePayrolls, deleteOperationLog, addOperationLog, isLoading } = useContext(DataContext);
   const { confirmAction, showToast } = useContext(AppContext);
@@ -108,13 +93,6 @@ export default function PayrollHistory() {
   const [rejectGroup, setRejectGroup] = useState(null);
   const [rejectNote, setRejectNote] = useState('');
   const [isRejecting, setIsRejecting] = useState(false);
-
-  // Approve Modal State (list view)
-  const [approveGroup, setApproveGroup] = useState(null);
-  const [isApproving, setIsApproving] = useState(false);
-  const mutedText = useColorModeValue('gray.600', 'gray.400');
-  const strongText = useColorModeValue('gray.800', 'white');
-  const softText = useColorModeValue('gray.500', 'gray.500');
 
   // Group by title
   const groupedHistory = useMemo(() => {
@@ -157,10 +135,7 @@ export default function PayrollHistory() {
         groups[t].employeesCount += summary.employeesCount || 0;
         groups[t].grossTotal += summary.grossTotal || 0;
         groups[t].netTotal += summary.netTotal || 0;
-        (summary.companies || []).forEach((c) => {
-          const label = resolveCompanyLabel(c, companies);
-          if (label) groups[t].companies.add(label);
-        });
+        (summary.companies || []).forEach((c) => groups[t].companies.add(c));
       } else if (hasInlineData) {
       // Calculate gross total from employee snapshots
       let emps = p.data || p.employees || [];
@@ -207,26 +182,9 @@ export default function PayrollHistory() {
       
       emps.forEach(e => {
         if (!e.empresa_principal) return;
-        const label = resolveCompanyLabel(e.empresa_principal, companies);
-        if (label) groups[t].companies.add(label);
+        const comp = companies.find(c => c.id === e.empresa_principal);
+        if (comp?.nombre_comercial) groups[t].companies.add(comp.nombre_comercial);
       });
-      }
-
-      // Fallback si aún no hay empresa resuelta
-      if (groups[t].companies.size === 0) {
-        let rawComps = p.companies;
-        if (typeof rawComps === 'string') {
-          try { rawComps = JSON.parse(rawComps); } catch { rawComps = []; }
-        }
-        if (!Array.isArray(rawComps) || rawComps.length === 0) {
-          rawComps = summary?.companies || [];
-        }
-        if (Array.isArray(rawComps)) {
-          rawComps.forEach((c) => {
-            const label = resolveCompanyLabel(c, companies);
-            if (label) groups[t].companies.add(label);
-          });
-        }
       }
       
       if (new Date(p.closedAt || new Date()) > new Date(groups[t].date)) {
@@ -295,38 +253,26 @@ export default function PayrollHistory() {
     return Object.values(sections).sort((a, b) => new Date(b.sortDate) - new Date(a.sortDate));
   }, [pagination.paginatedData]);
 
-  const handleApprovePayroll = (group) => {
+  const handleApprovePayroll = async (group) => {
     const payrollId = resolveGroupPayrollId(group);
     if (!payrollId) {
       showToast('No se encontró el ID de la nómina', 'error');
       return;
     }
-    setApproveGroup(group);
-  };
-
-  const handleConfirmApprove = async () => {
-    if (!approveGroup) return;
-    const payrollId = resolveGroupPayrollId(approveGroup);
-    if (!payrollId) {
-      showToast('No se encontró el ID de la nómina', 'error');
-      return;
-    }
-    setIsApproving(true);
-    try {
-      await auditorApprovePayroll(payrollId);
-      showToast('Nómina aprobada con visto bueno. Ya está en borradores para cierre definitivo.', 'success');
-      setApproveGroup(null);
-    } catch {
-      showToast('Error al aprobar la nómina', 'error');
-    } finally {
-      setIsApproving(false);
+    if (window.confirm('¿Aprobar esta nómina y devolverla a borradores para su cierre final?')) {
+      try {
+        await auditorApprovePayroll(payrollId);
+        showToast('Nómina aprobada correctamente', 'success');
+      } catch {
+        showToast('Error al aprobar la nómina', 'error');
+      }
     }
   };
 
   const handleConfirmReject = async () => {
     if (!rejectGroup) return;
     if (!rejectNote.trim()) {
-      showToast('Debes indicar qué debe corregirse', 'error');
+      showToast('Debes ingresar una justificación', 'error');
       return;
     }
     const payrollId = resolveGroupPayrollId(rejectGroup);
@@ -337,7 +283,7 @@ export default function PayrollHistory() {
     setIsRejecting(true);
     try {
       await auditorRejectPayroll(payrollId, rejectNote);
-      showToast('Nómina enviada a corrección. Nómina podrá editarla y volver a mandarla a auditoría.', 'success');
+      showToast('Nómina rebotada a borradores exitosamente', 'success');
       setRejectGroup(null);
       setRejectNote('');
     } catch {
@@ -714,66 +660,29 @@ export default function PayrollHistory() {
         </ModalContent>
       </Modal>
 
-      {/* Approve Modal (list view) */}
-      <Modal isOpen={!!approveGroup} onClose={() => !isApproving && setApproveGroup(null)} isCentered>
-        <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(4px)" />
-        <ModalContent borderRadius="xl" mx={4}>
-          <ModalHeader color="green.500" pb={2}>Aprobar nómina</ModalHeader>
-          <ModalCloseButton isDisabled={isApproving} />
-          <ModalBody>
-            <Text mb={3} fontSize="sm" color={mutedText}>
-              ¿Confirmas el visto bueno de{' '}
-              <Text as="span" fontWeight="700" color={strongText}>{approveGroup?.title}</Text>?
-            </Text>
-            <Text fontSize="sm" color={softText} mb={2}>Al aprobar:</Text>
-            <Text fontSize="sm" color={softText} pl={3} as="div">
-              • La nómina pasa a borradores con <Text as="span" fontWeight="600">visto bueno de auditoría</Text>.
-              <br />
-              • Nómina solo podrá <Text as="span" fontWeight="600">cerrarla definitivamente</Text>.
-              <br />
-              • Ya no se podrán editar montos ni empleados.
-            </Text>
-          </ModalBody>
-          <ModalFooter gap={2}>
-            <Button variant="ghost" onClick={() => setApproveGroup(null)} isDisabled={isApproving} borderRadius="lg">
-              Cancelar
-            </Button>
-            <Button colorScheme="green" isLoading={isApproving} loadingText="Aprobando..." onClick={handleConfirmApprove} borderRadius="lg">
-              Sí, aprobar
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
-
       {/* Reject / Correct Modal (list view) */}
-      <Modal isOpen={!!rejectGroup} onClose={() => { if (!isRejecting) { setRejectGroup(null); setRejectNote(''); } }} isCentered>
-        <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(4px)" />
-        <ModalContent borderRadius="xl" mx={4}>
-          <ModalHeader color="red.500" pb={2}>Solicitar corrección</ModalHeader>
-          <ModalCloseButton isDisabled={isRejecting} />
+      <Modal isOpen={!!rejectGroup} onClose={() => { setRejectGroup(null); setRejectNote(''); }} isCentered>
+        <ModalOverlay />
+        <ModalContent>
+          <ModalHeader color="red.500">Enviar a Corrección</ModalHeader>
+          <ModalCloseButton />
           <ModalBody>
-            <Text mb={3} fontSize="sm" color={mutedText}>
-              Vas a devolver{' '}
-              <Text as="span" fontWeight="700" color={strongText}>{rejectGroup?.title}</Text>
-              {' '}a borradores para que Nómina la corrija y la envíe de nuevo a auditoría.
-            </Text>
-            <Text mb={3} fontSize="sm" color={softText}>
-              Indica qué debe corregirse (obligatorio):
+            <Text mb={4} fontSize="sm" color="gray.600">
+              Por favor, detalla qué es lo que está incorrecto en esta nómina. El operador de nóminas verá esta justificación y podrá editarla.
             </Text>
             <Textarea
               placeholder="Ej. El bono del empleado X está mal calculado..."
               value={rejectNote}
               onChange={(e) => setRejectNote(e.target.value)}
               rows={4}
-              borderRadius="lg"
             />
           </ModalBody>
-          <ModalFooter gap={2}>
-            <Button variant="ghost" onClick={() => { setRejectGroup(null); setRejectNote(''); }} isDisabled={isRejecting} borderRadius="lg">
+          <ModalFooter>
+            <Button variant="ghost" onClick={() => { setRejectGroup(null); setRejectNote(''); }} mr={3} isDisabled={isRejecting}>
               Cancelar
             </Button>
-            <Button colorScheme="red" isLoading={isRejecting} loadingText="Enviando..." onClick={handleConfirmReject} borderRadius="lg">
-              Enviar a corrección
+            <Button colorScheme="red" isLoading={isRejecting} onClick={handleConfirmReject}>
+              Confirmar Rechazo
             </Button>
           </ModalFooter>
         </ModalContent>
@@ -886,11 +795,6 @@ function PayrollHistoryDetail({ group, onBack }) {
   const isReadOnly = user?.role === 'AUDITOR';
   const [selectedVoucherEmp, setSelectedVoucherEmp] = useState(null);
   const [activeGroup, setActiveGroup] = useState(group);
-  const [isApproveModalOpen, setIsApproveModalOpen] = useState(false);
-  const [isApprovingDetail, setIsApprovingDetail] = useState(false);
-  const mutedTextDetail = useColorModeValue('gray.600', 'gray.400');
-  const strongTextDetail = useColorModeValue('gray.800', 'white');
-  const softTextDetail = useColorModeValue('gray.500', 'gray.500');
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [printBoletas, setPrintBoletas] = useState(false);
 
@@ -1740,7 +1644,17 @@ function PayrollHistoryDetail({ group, onBack }) {
         <Flex gap={2} wrap="wrap">
           {group.status === 'auditoria' && canAuditPayroll(user?.role) && (
             <>
-              <Button colorScheme="green" onClick={() => setIsApproveModalOpen(true)} size={{ base: 'sm', md: 'md' }}>
+              <Button colorScheme="green" onClick={async () => {
+                if (window.confirm('¿Aprobar esta nómina y devolverla a borradores para su cierre final?')) {
+                  try {
+                    await auditorApprovePayroll(resolveGroupPayrollId(group));
+                    showToast('Nómina aprobada correctamente', 'success');
+                    onBack();
+                  } catch (e) {
+                    showToast('Error al aprobar', 'error');
+                  }
+                }
+              }} size={{ base: 'sm', md: 'md' }}>
                 Aprobar Nómina
               </Button>
               <Button colorScheme="red" variant="outline" onClick={() => setIsRejectModalOpen(true)} size={{ base: 'sm', md: 'md' }}>
@@ -2298,84 +2212,30 @@ function PayrollHistoryDetail({ group, onBack }) {
         periodType={payrollGroup?.periodType || '1ra'}
       />
 
-      <Modal isOpen={isApproveModalOpen} onClose={() => !isApprovingDetail && setIsApproveModalOpen(false)} isCentered>
-        <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(4px)" />
-        <ModalContent borderRadius="xl" mx={4}>
-          <ModalHeader color="green.500" pb={2}>Aprobar nómina</ModalHeader>
-          <ModalCloseButton isDisabled={isApprovingDetail} />
+      <Modal isOpen={isRejectModalOpen} onClose={() => setIsRejectModalOpen(false)}>
+        <ModalOverlay />
+        <ModalContent>
+          <ModalHeader color="red.500">Enviar a Corrección</ModalHeader>
+          <ModalCloseButton />
           <ModalBody>
-            <Text mb={3} fontSize="sm" color={mutedTextDetail}>
-              ¿Confirmas el visto bueno de{' '}
-              <Text as="span" fontWeight="700" color={strongTextDetail}>{group.title}</Text>?
-            </Text>
-            <Text fontSize="sm" color={softTextDetail} mb={2}>Al aprobar:</Text>
-            <Text fontSize="sm" color={softTextDetail} pl={3} as="div">
-              • La nómina pasa a borradores con <Text as="span" fontWeight="600">visto bueno de auditoría</Text>.
-              <br />
-              • Nómina solo podrá <Text as="span" fontWeight="600">cerrarla definitivamente</Text>.
-              <br />
-              • Ya no se podrán editar montos ni empleados.
-            </Text>
-          </ModalBody>
-          <ModalFooter gap={2}>
-            <Button variant="ghost" onClick={() => setIsApproveModalOpen(false)} isDisabled={isApprovingDetail} borderRadius="lg">
-              Cancelar
-            </Button>
-            <Button
-              colorScheme="green"
-              isLoading={isApprovingDetail}
-              loadingText="Aprobando..."
-              borderRadius="lg"
-              onClick={async () => {
-                setIsApprovingDetail(true);
-                try {
-                  await auditorApprovePayroll(resolveGroupPayrollId(group));
-                  showToast('Nómina aprobada con visto bueno. Ya está en borradores para cierre definitivo.', 'success');
-                  setIsApproveModalOpen(false);
-                  onBack();
-                } catch (e) {
-                  showToast('Error al aprobar', 'error');
-                } finally {
-                  setIsApprovingDetail(false);
-                }
-              }}
-            >
-              Sí, aprobar
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
-
-      <Modal isOpen={isRejectModalOpen} onClose={() => !isRejecting && setIsRejectModalOpen(false)} isCentered>
-        <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(4px)" />
-        <ModalContent borderRadius="xl" mx={4}>
-          <ModalHeader color="red.500" pb={2}>Solicitar corrección</ModalHeader>
-          <ModalCloseButton isDisabled={isRejecting} />
-          <ModalBody>
-            <Text mb={3} fontSize="sm" color={mutedTextDetail}>
-              Vas a devolver{' '}
-              <Text as="span" fontWeight="700" color={strongTextDetail}>{group.title}</Text>
-              {' '}a borradores para que Nómina la corrija y la envíe de nuevo a auditoría.
-            </Text>
-            <Text mb={3} fontSize="sm" color={softTextDetail}>
-              Indica qué debe corregirse (obligatorio):
+            <Text mb={4} fontSize="sm" color="gray.600">
+              Por favor, detalla qué es lo que está incorrecto en esta nómina. El operador de nóminas verá esta justificación y podrá editarla.
             </Text>
             <Textarea 
               placeholder="Ej. El bono del empleado X está mal calculado..." 
               value={rejectNote} 
               onChange={e => setRejectNote(e.target.value)} 
               rows={4}
-              borderRadius="lg"
             />
           </ModalBody>
-          <ModalFooter gap={2}>
-            <Button variant="ghost" onClick={() => setIsRejectModalOpen(false)} isDisabled={isRejecting} borderRadius="lg">Cancelar</Button>
-            <Button colorScheme="red" isLoading={isRejecting} loadingText="Enviando..." borderRadius="lg" onClick={async () => {
-              if (!rejectNote.trim()) return showToast('Debes indicar qué debe corregirse', 'error');
+          <ModalFooter>
+            <Button variant="ghost" onClick={() => setIsRejectModalOpen(false)} mr={3}>Cancelar</Button>
+            <Button colorScheme="red" isLoading={isRejecting} onClick={async () => {
+              if (!rejectNote.trim()) return showToast('Debes ingresar una justificación', 'error');
               setIsRejecting(true);
               try {
                 await auditorRejectPayroll(resolveGroupPayrollId(group), rejectNote);
-                showToast('Nómina enviada a corrección. Nómina podrá editarla y volver a mandarla a auditoría.', 'success');
+                showToast('Nómina rebotada a borradores exitosamente', 'success');
                 setIsRejectModalOpen(false);
                 onBack();
               } catch (e) {
@@ -2384,7 +2244,7 @@ function PayrollHistoryDetail({ group, onBack }) {
                 setIsRejecting(false);
               }
             }}>
-              Enviar a corrección
+              Confirmar Rechazo
             </Button>
           </ModalFooter>
         </ModalContent>

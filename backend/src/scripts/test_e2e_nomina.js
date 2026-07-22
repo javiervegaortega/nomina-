@@ -398,32 +398,19 @@ async function main() {
     assert(allProcessed, 'Logs operativos en PROCESSED_PAYROLL');
   }
 
-  // Fase 12: Facturación
-  console.log('\nFase 12: Facturación');
+  // Fase 12: Facturación (solo 2ª quincena — este E2E corre en 1ra)
+  console.log('\nFase 12: Facturación (requiere 2ª — se valida el rechazo en 1ra)');
   {
     const preview = await api('/api/billing/preview', {
       method: 'POST',
       body: JSON.stringify({ payrollId: closedPayrollId })
     }, token);
-    assert(preview.status === 200, `POST billing/preview → ${preview.status}`);
-    const warnings = preview.body?.warnings || [];
-    const critical = warnings.filter((w) =>
-      /no coincide|appliedBonuses|operation_logs|extras\.bonos/i.test(w)
+    assert(preview.status === 400, `POST billing/preview en 1ra → ${preview.status} (esperado 400)`);
+    assert(
+      /2ª quincena|2da quincena/i.test(String(preview.body?.error || '')),
+      'Error indica que solo aplica en 2ª quincena'
     );
-    assert(critical.length === 0, `0 warnings críticos en billing (total: ${warnings.length})`);
-    assert((preview.body?.lines || []).length > 0, 'Preview billing genera al menos 1 factura');
-    assert(Number(preview.body?.employeeCount) === draftEmployees.length,
-      `Billing procesa toda la nómina (${preview.body?.employeeCount}/${draftEmployees.length} empleados)`);
-    const billedEmployeeIds = new Set((preview.body?.details || []).map((d) => String(d.employeeId)));
-    assert(billedEmployeeIds.size === draftEmployees.length,
-      `Detalle billing incluye todos los empleados (${billedEmployeeIds.size}/${draftEmployees.length})`);
-
-    const confirm = await api('/api/billing/runs', {
-      method: 'POST',
-      body: JSON.stringify({ payrollId: closedPayrollId, notes: 'E2E test run' })
-    }, token);
-    assert(confirm.status === 201, `POST billing/runs → ${confirm.status}`);
-    tracked.billingRunId = confirm.body?.id;
+    console.log('  OK: facturación bloqueada correctamente en 1ra quincena');
   }
 
   const elapsed = ((Date.now() - t0) / 1000).toFixed(1);

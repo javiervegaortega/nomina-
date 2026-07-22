@@ -1,10 +1,13 @@
 import React, { useState, useContext, useMemo, useEffect } from 'react';
 import {
   Box, Flex, Text, Button, Table, Thead, Tbody, Tr, Th, Td,
-  Select, VStack, HStack, Divider, Badge, Alert, AlertIcon,
-  useColorModeValue, SimpleGrid, Collapse, useDisclosure
+  Select, VStack, HStack, Badge, Alert, AlertIcon, Tooltip,
+  useColorModeValue, Collapse, useDisclosure, Tabs, TabList, Tab,
+  TabPanels, TabPanel
 } from '@chakra-ui/react';
-import { Calculator, CheckCircle, Download, ArrowRight, ChevronDown, ChevronUp } from 'lucide-react';
+import {
+  Calculator, CheckCircle, Download, ArrowRight, ChevronDown, ChevronUp, AlertTriangle
+} from 'lucide-react';
 import { AppContext } from '../App';
 import { AuthContext } from '../context/AuthContext';
 import { DataContext } from '../context/DataContext';
@@ -12,18 +15,56 @@ import { formatCurrency, exportBillingExcel } from '../utils/billingExport';
 
 const API = 'http://localhost:3000/api/billing';
 
-function KpiCard({ label, value, accent }) {
+const isSecondPeriod = (p) => String(p?.periodType || '').toLowerCase() === '2da';
+
+const GENERIC_WARNING_RE = /solo Proquima.*Unhesa.*Econacional|Facturaci[oó]n mensual por empresa/i;
+
+const baseConcept = (concept) => {
+  if (!concept) return '-';
+  const parts = String(concept).split(/\s+[—–-]\s+/);
+  return parts[0].trim() || concept;
+};
+
+function KpiStrip({ items }) {
   const bg = useColorModeValue('gray.50', 'whiteAlpha.50');
   const border = useColorModeValue('gray.200', 'whiteAlpha.100');
+  const divider = useColorModeValue('gray.200', 'whiteAlpha.200');
+
   return (
-    <Box bg={bg} borderWidth="1px" borderColor={border} borderRadius="lg" p={4}>
-      <Text fontSize="xs" color="gray.500" textTransform="uppercase" letterSpacing="wider" mb={1}>
-        {label}
-      </Text>
-      <Text fontSize="xl" fontWeight="bold" color={accent || 'inherit'} fontFamily="mono">
-        {value}
-      </Text>
-    </Box>
+    <Flex
+      bg={bg}
+      borderWidth="1px"
+      borderColor={border}
+      borderRadius="lg"
+      overflow="hidden"
+      flexWrap="wrap"
+    >
+      {items.map((item, idx) => (
+        <Box
+          key={item.label}
+          flex="1"
+          minW={{ base: '50%', md: 'auto' }}
+          px={4}
+          py={3}
+          borderRightWidth={{ base: idx % 2 === 0 ? '1px' : 0, md: idx < items.length - 1 ? '1px' : 0 }}
+          borderBottomWidth={{ base: idx < 2 ? '1px' : 0, md: 0 }}
+          borderColor={divider}
+        >
+          <Text fontSize="xs" color="gray.500" textTransform="uppercase" letterSpacing="wider">
+            {item.label}
+          </Text>
+          <Text
+            fontSize="lg"
+            fontWeight="bold"
+            fontFamily="mono"
+            color={item.accent || 'inherit'}
+            noOfLines={1}
+          >
+            {item.value}
+          </Text>
+        </Box>
+      ))}
+    </Flex>
   );
 }
 
@@ -41,11 +82,11 @@ export function BillingExecutePanel({
   const [previewData, setPreviewData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [confirming, setConfirming] = useState(false);
-  const { isOpen: matrixOpen, onToggle: toggleMatrix } = useDisclosure({ defaultIsOpen: true });
-  const { isOpen: detailOpen, onToggle: toggleDetail } = useDisclosure({ defaultIsOpen: false });
+  const [resultTab, setResultTab] = useState(0);
+  const { isOpen: warningsOpen, onToggle: toggleWarnings } = useDisclosure({ defaultIsOpen: false });
 
   const closedPayrolls = useMemo(
-    () => payrolls.filter((p) => p.status === 'cerrada'),
+    () => payrolls.filter((p) => p.status === 'cerrada' && isSecondPeriod(p)),
     [payrolls]
   );
 
@@ -62,6 +103,7 @@ export function BillingExecutePanel({
   const borderColor = useColorModeValue('gray.200', 'whiteAlpha.100');
   const selectBg = useColorModeValue('white', 'gray.800');
   const toolbarBg = useColorModeValue('gray.50', 'whiteAlpha.50');
+  const muted = useColorModeValue('gray.600', 'gray.400');
 
   const payrollEmpCount = (p) => {
     if (p.summary?.employeesCount) return p.summary.employeesCount;
@@ -75,7 +117,7 @@ export function BillingExecutePanel({
 
   const handlePreview = async () => {
     if (!selectedPayroll) {
-      showToast('Por favor selecciona una nómina cerrada', 'warning');
+      showToast('Por favor selecciona una nomina cerrada de 2da quincena', 'warning');
       return;
     }
     try {
@@ -89,15 +131,16 @@ export function BillingExecutePanel({
         body: JSON.stringify({ payrollId: selectedPayroll })
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Error en el cálculo');
+      if (!res.ok) throw new Error(data.error || 'Error en el calculo');
       setPreviewData(data);
+      setResultTab(0);
       if (data.warnings?.length) {
-        showToast(`Cálculo completado con ${data.warnings.length} advertencia(s)`, 'warning');
+        showToast(`Calculo completado con ${data.warnings.length} advertencia(s)`, 'warning');
       } else {
         showToast('Vista previa generada');
       }
     } catch (err) {
-      showToast(err.message || 'Error al calcular distribución', 'error');
+      showToast(err.message || 'Error al calcular distribucion', 'error');
     } finally {
       setLoading(false);
     }
@@ -108,7 +151,7 @@ export function BillingExecutePanel({
       showToast('No hay facturas para confirmar', 'warning');
       return;
     }
-    confirmAction('¿Confirmar esta ejecución de facturación? Se guardará en el historial.', async () => {
+    confirmAction('Confirmar esta ejecucion de facturacion? Se guardara en el historial.', async () => {
       try {
         setConfirming(true);
         const res = await fetch(`${API}/runs`, {
@@ -121,7 +164,7 @@ export function BillingExecutePanel({
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Error');
-        showToast(`Facturación confirmada (v${data.version})`);
+        showToast(`Facturacion confirmada (v${data.version})`);
         onConfirmed?.(data);
       } catch (err) {
         showToast(err.message || 'Error al confirmar', 'error');
@@ -155,43 +198,65 @@ export function BillingExecutePanel({
   const companyLabel = (id) => previewData?.companyNames?.[id] || id;
 
   const previewTotals = useMemo(() => {
-    if (!previewData?.lines?.length) return { invoices: 0, total: 0, employees: 0 };
+    if (!previewData?.lines?.length) return { invoices: 0, total: 0, employees: 0, costCenters: 0 };
     const total = previewData.lines.reduce((s, l) => s + Number(l.totalAmount || 0), 0);
     const employees = previewData.employeeCount
       ?? new Set((previewData.details || []).map((d) => d.employeeId)).size;
+    const costCenters = new Set(
+      (previewData.lines || []).map((l) => l.centroCosto).filter(Boolean)
+    ).size;
     return {
       invoices: previewData.lines.length,
       total,
-      employees
+      employees,
+      costCenters
     };
   }, [previewData]);
 
+  const visibleWarnings = useMemo(() => {
+    const all = previewData?.warnings || [];
+    return all.filter((w) => !GENERIC_WARNING_RE.test(String(w)));
+  }, [previewData]);
+
+  const costCenterSummary = useMemo(() => {
+    const byCc = {};
+    const receivers = new Set();
+    (previewData?.lines || []).forEach((line) => {
+      const cc = line.centroCosto || 'SIN CENTRO DE COSTO';
+      const to = line.toCompany || 'Destino';
+      receivers.add(to);
+      if (!byCc[cc]) byCc[cc] = {};
+      byCc[cc][to] = (byCc[cc][to] || 0) + (Number(line.baseAmount) || 0);
+    });
+    const receiverList = [...receivers].sort((a, b) => a.localeCompare(b, 'es'));
+    const rows = Object.keys(byCc)
+      .sort((a, b) => a.localeCompare(b, 'es'))
+      .map((cc) => {
+        const amounts = receiverList.map((r) => Number(byCc[cc][r]) || 0);
+        const total = amounts.reduce((s, n) => s + n, 0);
+        return { cc, amounts, total };
+      });
+    return { receiverList, rows };
+  }, [previewData]);
+
   return (
-    <VStack spacing={5} align="stretch">
+    <VStack spacing={4} align="stretch">
+      {/* Barra unica */}
       <Box
         bg={bgCard}
-        p={5}
+        px={4}
+        py={3}
         borderRadius="xl"
         shadow="sm"
         borderWidth="1px"
         borderColor={borderColor}
       >
-        <Text fontSize="md" fontWeight="bold" mb={1}>Nueva ejecución</Text>
-        <Text fontSize="sm" color="gray.500" mb={4}>
-          Selecciona una nómina cerrada y genera la vista previa antes de confirmar.
-        </Text>
-        <Flex
-          gap={3}
-          flexWrap="wrap"
-          align="center"
-          bg={toolbarBg}
-          p={4}
-          borderRadius="lg"
-        >
+        <Flex gap={3} flexWrap="wrap" align="center">
           <Select
-            placeholder="Seleccionar nómina cerrada"
+            placeholder="Nomina 2da cerrada"
             flex="1"
-            minW="260px"
+            minW="240px"
+            size="sm"
             bg={selectBg}
             value={selectedPayroll}
             onChange={(e) => { setSelectedPayroll(e.target.value); setPreviewData(null); }}
@@ -200,231 +265,371 @@ export function BillingExecutePanel({
               const empCount = payrollEmpCount(p);
               return (
                 <option key={p.id} value={p.id}>
-                  {p.title} ({empCount} empleado{empCount !== 1 ? 's' : ''})
+                  {p.title} — 2da ({empCount} emp.)
                 </option>
               );
             })}
           </Select>
-          <Button leftIcon={<Calculator size={18} />} colorScheme="brand" onClick={handlePreview} isLoading={loading}>
+          <Button
+            leftIcon={<Calculator size={16} />}
+            colorScheme="brand"
+            size="sm"
+            onClick={handlePreview}
+            isLoading={loading}
+          >
             Vista previa
           </Button>
+          {previewData && (
+            <HStack spacing={2} ml={{ base: 0, md: 'auto' }}>
+              <Button
+                leftIcon={<Download size={16} />}
+                variant="outline"
+                size="sm"
+                onClick={handleExport}
+              >
+                Excel
+              </Button>
+              <Button
+                leftIcon={<CheckCircle size={16} />}
+                colorScheme="green"
+                size="sm"
+                onClick={handleConfirm}
+                isLoading={confirming}
+                isDisabled={!previewData.lines?.length}
+              >
+                Confirmar
+              </Button>
+            </HStack>
+          )}
         </Flex>
       </Box>
 
       {closedPayrolls.length === 0 && (
-        <Alert status="info" borderRadius="lg">
+        <Alert status="info" borderRadius="lg" py={3}>
           <AlertIcon />
-          No hay nóminas cerradas disponibles para facturar.
+          No hay nominas cerradas de 2da quincena disponibles para facturar.
         </Alert>
       )}
 
       {previewData && (
         <>
-          {previewData.warnings?.length > 0 && (
-            <Alert status="warning" borderRadius="lg">
-              <AlertIcon />
-              <Box>
-                <Text fontWeight="bold" mb={1}>Advertencias</Text>
-                {previewData.warnings.map((w, i) => <Text key={i} fontSize="sm">{w}</Text>)}
-              </Box>
-            </Alert>
-          )}
-
-          <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
-            <KpiCard label="Facturas" value={previewTotals.invoices} />
-            <KpiCard label="Total facturado" value={formatCurrency(previewTotals.total)} accent="green.400" />
-            <KpiCard label="Empleados en nómina" value={previewTotals.employees} />
-          </SimpleGrid>
-
-          <Box bg={bgCard} p={5} borderRadius="xl" shadow="sm" borderWidth="1px" borderColor={borderColor}>
-            <Flex justify="space-between" align="center" mb={4} flexWrap="wrap" gap={3}>
-              <Box>
-                <Text fontSize="lg" fontWeight="bold">Facturas intercompañía</Text>
-                <Text fontSize="sm" color="gray.500">{previewData.payrollTitle}</Text>
-              </Box>
-              <HStack>
-                <Button leftIcon={<Download size={18} />} variant="outline" onClick={handleExport}>Exportar Excel</Button>
-                <Button leftIcon={<CheckCircle size={18} />} colorScheme="green" onClick={handleConfirm} isLoading={confirming}>
-                  Confirmar
-                </Button>
-              </HStack>
-            </Flex>
-            <Divider mb={4} />
-            <Box overflowX="auto">
-              <Table variant="simple" size="sm">
-                <Thead bg={bgHeader}>
-                  <Tr>
-                    <Th>Emisora</Th>
-                    <Th />
-                    <Th>Receptora</Th>
-                    <Th>Concepto</Th>
-                    <Th isNumeric>Base</Th>
-                    <Th isNumeric>Margen</Th>
-                    <Th isNumeric>IVA</Th>
-                    <Th isNumeric>Total</Th>
-                  </Tr>
-                </Thead>
-                <Tbody>
-                  {(previewData.lines || []).map((d, i) => (
-                    <Tr key={i}>
-                      <Td fontWeight="bold" color="blue.700">{d.fromCompany}</Td>
-                      <Td><ArrowRight size={14} color="gray" /></Td>
-                      <Td fontWeight="bold">{d.toCompany}</Td>
-                      <Td fontSize="xs" color="gray.600">{d.concept}</Td>
-                      <Td isNumeric>{formatCurrency(d.baseAmount)}</Td>
-                      <Td isNumeric>
-                        <VStack spacing={0} align="flex-end">
-                          <Text>{formatCurrency(d.marginAmount)}</Text>
-                          <Badge colorScheme="purple" fontSize="0.6rem">{d.marginPercentage}%</Badge>
-                        </VStack>
-                      </Td>
-                      <Td isNumeric>{formatCurrency(d.ivaAmount)}</Td>
-                      <Td isNumeric fontWeight="bold" color="green.600">{formatCurrency(d.totalAmount)}</Td>
-                    </Tr>
-                  ))}
-                  {(!previewData.lines || previewData.lines.length === 0) && (
-                    <Tr>
-                      <Td colSpan={8} textAlign="center" py={8} color="gray.500">
-                        <VStack spacing={2}>
-                          <Text>No se generaron facturas para esta nómina.</Text>
-                          <Text fontSize="xs">
-                            Revise las{' '}
-                            <Text as="button" color="brand.400" fontWeight="600" onClick={onGoToRules}>
-                              reglas de facturación
-                            </Text>
-                            {' '}y que la distribución por empresa de cada empleado genere cargos a otras compañías.
-                          </Text>
-                        </VStack>
-                      </Td>
-                    </Tr>
-                  )}
-                </Tbody>
-              </Table>
+          {/* KPIs + advertencias */}
+          <Flex gap={3} align="stretch" direction={{ base: 'column', lg: 'row' }}>
+            <Box flex="1">
+              <KpiStrip
+                items={[
+                  { label: 'Facturas', value: previewTotals.invoices },
+                  { label: 'Centros de costo', value: previewTotals.costCenters },
+                  { label: 'Total', value: formatCurrency(previewTotals.total), accent: 'green.400' },
+                  { label: 'Empleados', value: previewTotals.employees }
+                ]}
+              />
             </Box>
-          </Box>
-
-          {matrixRows.fromIds.length > 0 && (
-            <Box bg={bgCard} borderRadius="xl" shadow="sm" borderWidth="1px" borderColor={borderColor} overflow="hidden">
-              <Flex
-                px={5}
-                py={4}
-                justify="space-between"
-                align="center"
-                cursor="pointer"
-                onClick={toggleMatrix}
-                _hover={{ bg: bgHeader }}
+            {visibleWarnings.length > 0 && (
+              <Box
+                bg={bgCard}
+                borderWidth="1px"
+                borderColor="orange.300"
+                borderRadius="lg"
+                minW={{ lg: '220px' }}
+                maxW={{ lg: '320px' }}
+                overflow="hidden"
               >
-                <Text fontSize="lg" fontWeight="bold">Matriz de costos</Text>
-                {matrixOpen ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-              </Flex>
-              <Collapse in={matrixOpen}>
-                <Box px={5} pb={5} overflowX="auto">
-                  <Table variant="simple" size="sm">
-                    <Thead bg={bgHeader}>
-                      <Tr>
-                        <Th>De \ A</Th>
-                        {matrixRows.toIds.map((tid) => <Th key={tid} isNumeric>{companyLabel(tid)}</Th>)}
-                      </Tr>
-                    </Thead>
-                    <Tbody>
-                      {matrixRows.fromIds.map((fid) => (
-                        <Tr key={fid}>
-                          <Td fontWeight="bold">{companyLabel(fid)}</Td>
-                          {matrixRows.toIds.map((tid) => (
-                            <Td key={tid} isNumeric>
-                              {formatCurrency(previewData.matrix[fid]?.[tid] || 0)}
-                            </Td>
-                          ))}
-                        </Tr>
-                      ))}
-                    </Tbody>
-                  </Table>
-                </Box>
-              </Collapse>
-            </Box>
-          )}
-
-          {(previewData.details || []).length > 0 && (
-            <Box bg={bgCard} borderRadius="xl" shadow="sm" borderWidth="1px" borderColor={borderColor} overflow="hidden">
-              <Flex
-                px={5}
-                py={4}
-                justify="space-between"
-                align="center"
-                cursor="pointer"
-                onClick={toggleDetail}
-                _hover={{ bg: bgHeader }}
-              >
-                <Box>
-                  <Text fontSize="lg" fontWeight="bold">Detalle por empleado</Text>
-                  <Text fontSize="sm" color="gray.500">
-                    {(previewData.details || []).length} asignación(es)
+                <Flex
+                  px={3}
+                  py={2}
+                  align="center"
+                  gap={2}
+                  cursor="pointer"
+                  onClick={toggleWarnings}
+                  _hover={{ bg: toolbarBg }}
+                >
+                  <AlertTriangle size={16} color="#DD6B20" />
+                  <Text fontSize="sm" fontWeight="600" flex="1">
+                    Advertencias
                   </Text>
-                </Box>
-                {detailOpen ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-              </Flex>
-              <Collapse in={detailOpen}>
-                <Box px={5} pb={5} overflowX="auto" maxH="520px" overflowY="auto">
-                  <Table variant="simple" size="sm">
-                    <Thead bg={bgHeader} position="sticky" top={0} zIndex={1}>
-                      <Tr>
-                        <Th whiteSpace="nowrap">Empleado</Th>
-                        <Th whiteSpace="nowrap">Pagadora</Th>
-                        <Th whiteSpace="nowrap">Destino</Th>
-                        <Th isNumeric whiteSpace="nowrap">%</Th>
-                        <Th isNumeric whiteSpace="nowrap">Días</Th>
-                        <Th isNumeric whiteSpace="nowrap">Sueldo</Th>
-                        <Th isNumeric whiteSpace="nowrap">Bono Dec.</Th>
-                        <Th isNumeric whiteSpace="nowrap">Bono Inc.</Th>
-                        <Th isNumeric whiteSpace="nowrap">Bonos Ext.</Th>
-                        <Th isNumeric whiteSpace="nowrap">Bonos Cat.</Th>
-                        <Th isNumeric whiteSpace="nowrap">H. Extra</Th>
-                        <Th isNumeric whiteSpace="nowrap">Bruto</Th>
-                        <Th isNumeric whiteSpace="nowrap">IGSS Lab.</Th>
-                        <Th isNumeric whiteSpace="nowrap">ISR</Th>
-                        <Th isNumeric whiteSpace="nowrap">Líquido</Th>
-                        <Th isNumeric whiteSpace="nowrap">IGSS Pat.</Th>
-                        <Th isNumeric whiteSpace="nowrap">Costo Total</Th>
-                        <Th isNumeric whiteSpace="nowrap">Asg. Bruto</Th>
-                        <Th isNumeric whiteSpace="nowrap">Asg. Bonos Cat.</Th>
-                        <Th isNumeric whiteSpace="nowrap">Asg. IGSS</Th>
-                        <Th isNumeric whiteSpace="nowrap">Asg. ISR</Th>
-                        <Th isNumeric whiteSpace="nowrap">Asg. Costo</Th>
-                      </Tr>
-                    </Thead>
-                    <Tbody>
-                      {(previewData.details || []).map((d, i) => (
-                        <Tr key={`${d.employeeId}-${d.toCompanyId}-${i}`}>
-                          <Td fontWeight="medium" whiteSpace="nowrap">{d.employeeName}</Td>
-                          <Td fontSize="xs" whiteSpace="nowrap">{d.fromCompany}</Td>
-                          <Td fontSize="xs" whiteSpace="nowrap">{d.toCompany}</Td>
-                          <Td isNumeric>{d.percentage}%</Td>
-                          <Td isNumeric>{d.days ?? '—'}</Td>
-                          <Td isNumeric fontSize="xs">{formatCurrency(d.sueldoOrdinario)}</Td>
-                          <Td isNumeric fontSize="xs">{formatCurrency(d.bonoDecreto)}</Td>
-                          <Td isNumeric fontSize="xs">{formatCurrency(d.bonoIncentivo)}</Td>
-                          <Td isNumeric fontSize="xs">{formatCurrency(d.bonosExtras)}</Td>
-                          <Td isNumeric fontSize="xs">{formatCurrency(d.bonosAplicados)}</Td>
-                          <Td isNumeric fontSize="xs">{formatCurrency(d.horasExtrasOtros)}</Td>
-                          <Td isNumeric fontSize="xs">{formatCurrency(d.bruto)}</Td>
-                          <Td isNumeric fontSize="xs">{formatCurrency(d.igssLaboral)}</Td>
-                          <Td isNumeric fontSize="xs">{formatCurrency(d.isr)}</Td>
-                          <Td isNumeric fontSize="xs">{formatCurrency(d.liquido)}</Td>
-                          <Td isNumeric fontSize="xs">{formatCurrency(d.igssPatronal)}</Td>
-                          <Td isNumeric fontSize="xs" fontWeight="600">{formatCurrency(d.employeeCost)}</Td>
-                          <Td isNumeric fontSize="xs">{formatCurrency(d.asgBruto)}</Td>
-                          <Td isNumeric fontSize="xs">{formatCurrency(d.asgBonosAplicados)}</Td>
-                          <Td isNumeric fontSize="xs">{formatCurrency(d.asgIgssLaboral)}</Td>
-                          <Td isNumeric fontSize="xs">{formatCurrency(d.asgIsr)}</Td>
-                          <Td isNumeric fontWeight="700" color="brand.500">{formatCurrency(d.baseAmount)}</Td>
+                  <Badge colorScheme="orange">{visibleWarnings.length}</Badge>
+                  {warningsOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                </Flex>
+                <Collapse in={warningsOpen}>
+                  <Box px={3} pb={3} maxH="160px" overflowY="auto">
+                    {visibleWarnings.map((w, i) => (
+                      <Text key={i} fontSize="xs" color={muted} mb={1}>
+                        {w}
+                      </Text>
+                    ))}
+                  </Box>
+                </Collapse>
+              </Box>
+            )}
+          </Flex>
+
+          {/* Resultados en sub-tabs */}
+          <Box
+            bg={bgCard}
+            borderRadius="xl"
+            shadow="sm"
+            borderWidth="1px"
+            borderColor={borderColor}
+            overflow="hidden"
+          >
+            <Flex
+              px={4}
+              pt={3}
+              pb={1}
+              justify="space-between"
+              align="center"
+              flexWrap="wrap"
+              gap={2}
+            >
+              <Box>
+                <Text fontSize="md" fontWeight="bold">Resultados</Text>
+                <Text fontSize="xs" color="gray.500" noOfLines={1}>
+                  {previewData.payrollTitle}
+                </Text>
+              </Box>
+            </Flex>
+
+            <Tabs
+              index={resultTab}
+              onChange={setResultTab}
+              colorScheme="brand"
+              size="sm"
+              isLazy
+            >
+              <TabList px={4} borderColor={borderColor} gap={1} flexWrap="wrap">
+                <Tab fontWeight={600}>Facturas</Tab>
+                <Tab fontWeight={600}>Por centro de costo</Tab>
+                <Tab fontWeight={600}>Matriz</Tab>
+                <Tab fontWeight={600}>
+                  Detalle
+                  {(previewData.details || []).length > 0 && (
+                    <Badge ml={2} colorScheme="gray" fontSize="0.65rem">
+                      {(previewData.details || []).length}
+                    </Badge>
+                  )}
+                </Tab>
+              </TabList>
+
+              <TabPanels>
+                {/* Facturas */}
+                <TabPanel px={4} pb={4} pt={3}>
+                  <Box overflowX="auto">
+                    <Table variant="simple" size="sm">
+                      <Thead bg={bgHeader}>
+                        <Tr>
+                          <Th whiteSpace="nowrap">De / A</Th>
+                          <Th whiteSpace="nowrap">Centro de costo</Th>
+                          <Th whiteSpace="nowrap">Concepto</Th>
+                          <Th isNumeric>Base</Th>
+                          <Th isNumeric>Margen</Th>
+                          <Th isNumeric>IVA</Th>
+                          <Th isNumeric>Total</Th>
                         </Tr>
-                      ))}
-                    </Tbody>
-                  </Table>
-                </Box>
-              </Collapse>
-            </Box>
-          )}
+                      </Thead>
+                      <Tbody>
+                        {(previewData.lines || []).map((d, i) => (
+                          <Tr key={i}>
+                            <Td whiteSpace="nowrap">
+                              <HStack spacing={1} align="center">
+                                <Tooltip label={d.fromCompany} hasArrow>
+                                  <Text fontWeight="bold" fontSize="xs" maxW="120px" noOfLines={1}>
+                                    {d.fromCompany}
+                                  </Text>
+                                </Tooltip>
+                                <ArrowRight size={12} color="gray" />
+                                <Tooltip label={d.toCompany} hasArrow>
+                                  <Text fontWeight="bold" fontSize="xs" maxW="120px" noOfLines={1}>
+                                    {d.toCompany}
+                                  </Text>
+                                </Tooltip>
+                              </HStack>
+                            </Td>
+                            <Td fontSize="xs" whiteSpace="nowrap" maxW="180px">
+                              <Tooltip label={d.centroCosto || '-'} hasArrow>
+                                <Text noOfLines={1}>{d.centroCosto || '-'}</Text>
+                              </Tooltip>
+                            </Td>
+                            <Td fontSize="xs" color="gray.500" whiteSpace="nowrap">
+                              {baseConcept(d.concept)}
+                            </Td>
+                            <Td isNumeric whiteSpace="nowrap">{formatCurrency(d.baseAmount)}</Td>
+                            <Td isNumeric whiteSpace="nowrap">
+                              <Text fontSize="xs">{formatCurrency(d.marginAmount)}</Text>
+                              <Badge colorScheme="purple" fontSize="0.55rem">{d.marginPercentage}%</Badge>
+                            </Td>
+                            <Td isNumeric whiteSpace="nowrap">{formatCurrency(d.ivaAmount)}</Td>
+                            <Td isNumeric fontWeight="bold" color="green.500" whiteSpace="nowrap">
+                              {formatCurrency(d.totalAmount)}
+                            </Td>
+                          </Tr>
+                        ))}
+                        {(!previewData.lines || previewData.lines.length === 0) && (
+                          <Tr>
+                            <Td colSpan={7} textAlign="center" py={8} color="gray.500">
+                              <VStack spacing={2}>
+                                <Text>No se generaron facturas para esta nomina.</Text>
+                                <Text fontSize="xs">
+                                  Revise las{' '}
+                                  <Text as="button" color="brand.400" fontWeight="600" onClick={onGoToRules}>
+                                    reglas de facturacion
+                                  </Text>
+                                  {' '}y la distribucion por empresa.
+                                </Text>
+                              </VStack>
+                            </Td>
+                          </Tr>
+                        )}
+                      </Tbody>
+                    </Table>
+                  </Box>
+                </TabPanel>
+
+                {/* Por centro de costo */}
+                <TabPanel px={4} pb={4} pt={3}>
+                  <Box overflowX="auto">
+                    <Table variant="simple" size="sm">
+                      <Thead bg={bgHeader}>
+                        <Tr>
+                          <Th>Centro de costo</Th>
+                          {costCenterSummary.receiverList.map((r) => (
+                            <Th key={r} isNumeric whiteSpace="nowrap">{r}</Th>
+                          ))}
+                          <Th isNumeric>Total</Th>
+                        </Tr>
+                      </Thead>
+                      <Tbody>
+                        {costCenterSummary.rows.map((row) => (
+                          <Tr key={row.cc}>
+                            <Td fontWeight="600" fontSize="xs" whiteSpace="nowrap">{row.cc}</Td>
+                            {row.amounts.map((amt, i) => (
+                              <Td key={i} isNumeric fontSize="xs" whiteSpace="nowrap">
+                                {formatCurrency(amt)}
+                              </Td>
+                            ))}
+                            <Td isNumeric fontWeight="bold" whiteSpace="nowrap">
+                              {formatCurrency(row.total)}
+                            </Td>
+                          </Tr>
+                        ))}
+                        {costCenterSummary.rows.length === 0 && (
+                          <Tr>
+                            <Td colSpan={Math.max(2, costCenterSummary.receiverList.length + 2)} textAlign="center" py={6} color="gray.500">
+                              Sin datos por centro de costo.
+                            </Td>
+                          </Tr>
+                        )}
+                      </Tbody>
+                    </Table>
+                  </Box>
+                </TabPanel>
+
+                {/* Matriz */}
+                <TabPanel px={4} pb={4} pt={3}>
+                  {matrixRows.fromIds.length === 0 ? (
+                    <Text color="gray.500" fontSize="sm" py={6} textAlign="center">
+                      Sin datos en la matriz de costos.
+                    </Text>
+                  ) : (
+                    <Box overflowX="auto">
+                      <Table variant="simple" size="sm">
+                        <Thead bg={bgHeader}>
+                          <Tr>
+                            <Th>De \ A</Th>
+                            {matrixRows.toIds.map((tid) => (
+                              <Th key={tid} isNumeric>{companyLabel(tid)}</Th>
+                            ))}
+                          </Tr>
+                        </Thead>
+                        <Tbody>
+                          {matrixRows.fromIds.map((fid) => (
+                            <Tr key={fid}>
+                              <Td fontWeight="bold">{companyLabel(fid)}</Td>
+                              {matrixRows.toIds.map((tid) => (
+                                <Td key={tid} isNumeric>
+                                  {formatCurrency(previewData.matrix[fid]?.[tid] || 0)}
+                                </Td>
+                              ))}
+                            </Tr>
+                          ))}
+                        </Tbody>
+                      </Table>
+                    </Box>
+                  )}
+                </TabPanel>
+
+                {/* Detalle */}
+                <TabPanel px={4} pb={4} pt={3}>
+                  {(previewData.details || []).length === 0 ? (
+                    <Text color="gray.500" fontSize="sm" py={6} textAlign="center">
+                      Sin detalle por empleado.
+                    </Text>
+                  ) : (
+                    <Box maxH="480px" overflow="auto" borderWidth="1px" borderColor={borderColor} borderRadius="md">
+                      <Table variant="simple" size="sm">
+                        <Thead bg={bgHeader}>
+                          <Tr>
+                            <Th whiteSpace="nowrap" bg={bgHeader}>Empleado</Th>
+                            <Th whiteSpace="nowrap" bg={bgHeader}>Centro de costo</Th>
+                            <Th whiteSpace="nowrap" bg={bgHeader}>Pagadora</Th>
+                            <Th whiteSpace="nowrap" bg={bgHeader}>Destino</Th>
+                            <Th isNumeric whiteSpace="nowrap" bg={bgHeader}>%</Th>
+                            <Th isNumeric whiteSpace="nowrap" bg={bgHeader}>Dias</Th>
+                            <Th isNumeric whiteSpace="nowrap" bg={bgHeader}>Sueldo</Th>
+                            <Th isNumeric whiteSpace="nowrap" bg={bgHeader}>Bono Dec.</Th>
+                            <Th isNumeric whiteSpace="nowrap" bg={bgHeader}>Bono Inc.</Th>
+                            <Th isNumeric whiteSpace="nowrap" bg={bgHeader}>Bonos Ext.</Th>
+                            <Th isNumeric whiteSpace="nowrap" bg={bgHeader}>Bonos Cat.</Th>
+                            <Th isNumeric whiteSpace="nowrap" bg={bgHeader}>H. Extra</Th>
+                            <Th isNumeric whiteSpace="nowrap" bg={bgHeader}>Bruto</Th>
+                            <Th isNumeric whiteSpace="nowrap" bg={bgHeader}>IGSS Lab.</Th>
+                            <Th isNumeric whiteSpace="nowrap" bg={bgHeader}>ISR</Th>
+                            <Th isNumeric whiteSpace="nowrap" bg={bgHeader}>Liquido</Th>
+                            <Th isNumeric whiteSpace="nowrap" bg={bgHeader}>IGSS Pat.</Th>
+                            <Th isNumeric whiteSpace="nowrap" bg={bgHeader}>Costo Total</Th>
+                            <Th isNumeric whiteSpace="nowrap" bg={bgHeader}>Asg. Bruto</Th>
+                            <Th isNumeric whiteSpace="nowrap" bg={bgHeader}>Asg. Bonos Cat.</Th>
+                            <Th isNumeric whiteSpace="nowrap" bg={bgHeader}>Asg. IGSS</Th>
+                            <Th isNumeric whiteSpace="nowrap" bg={bgHeader}>Asg. ISR</Th>
+                            <Th isNumeric whiteSpace="nowrap" bg={bgHeader}>Asg. Costo</Th>
+                          </Tr>
+                        </Thead>
+                        <Tbody>
+                          {(previewData.details || []).map((d, i) => (
+                            <Tr key={`${d.employeeId}-${d.toCompanyId}-${i}`}>
+                              <Td fontWeight="medium" whiteSpace="nowrap">{d.employeeName}</Td>
+                              <Td fontSize="xs" whiteSpace="nowrap">{d.centroCosto || '-'}</Td>
+                              <Td fontSize="xs" whiteSpace="nowrap">{d.fromCompany}</Td>
+                              <Td fontSize="xs" whiteSpace="nowrap">{d.toCompany}</Td>
+                              <Td isNumeric>{d.percentage}%</Td>
+                              <Td isNumeric>{d.days ?? '-'}</Td>
+                              <Td isNumeric fontSize="xs">{formatCurrency(d.sueldoOrdinario)}</Td>
+                              <Td isNumeric fontSize="xs">{formatCurrency(d.bonoDecreto)}</Td>
+                              <Td isNumeric fontSize="xs">{formatCurrency(d.bonoIncentivo)}</Td>
+                              <Td isNumeric fontSize="xs">{formatCurrency(d.bonosExtras)}</Td>
+                              <Td isNumeric fontSize="xs">{formatCurrency(d.bonosAplicados)}</Td>
+                              <Td isNumeric fontSize="xs">{formatCurrency(d.horasExtrasOtros)}</Td>
+                              <Td isNumeric fontSize="xs">{formatCurrency(d.bruto)}</Td>
+                              <Td isNumeric fontSize="xs">{formatCurrency(d.igssLaboral)}</Td>
+                              <Td isNumeric fontSize="xs">{formatCurrency(d.isr)}</Td>
+                              <Td isNumeric fontSize="xs">{formatCurrency(d.liquido)}</Td>
+                              <Td isNumeric fontSize="xs">{formatCurrency(d.igssPatronal)}</Td>
+                              <Td isNumeric fontSize="xs" fontWeight="600">{formatCurrency(d.employeeCost)}</Td>
+                              <Td isNumeric fontSize="xs">{formatCurrency(d.asgBruto)}</Td>
+                              <Td isNumeric fontSize="xs">{formatCurrency(d.asgBonosAplicados)}</Td>
+                              <Td isNumeric fontSize="xs">{formatCurrency(d.asgIgssLaboral)}</Td>
+                              <Td isNumeric fontSize="xs">{formatCurrency(d.asgIsr)}</Td>
+                              <Td isNumeric fontWeight="700" color="brand.500">{formatCurrency(d.baseAmount)}</Td>
+                            </Tr>
+                          ))}
+                        </Tbody>
+                      </Table>
+                    </Box>
+                  )}
+                </TabPanel>
+              </TabPanels>
+            </Tabs>
+          </Box>
         </>
       )}
     </VStack>

@@ -35,17 +35,17 @@ async function test() {
   let criticalFailures = 0;
 
   const payrolls = await PayrollHistory.findAll({
-    where: { status: 'cerrada' },
+    where: { status: 'cerrada', periodType: '2da' },
     order: [['closedAt', 'DESC']],
     limit: 5
   });
 
   if (!payrolls.length) {
-    console.log('No hay nóminas cerradas para verificar.');
+    console.log('No hay nóminas cerradas de 2ª quincena para verificar.');
     process.exit(0);
   }
 
-  console.log(`Verificando ${payrolls.length} nómina(s) cerrada(s)...\n`);
+  console.log(`Verificando ${payrolls.length} nómina(s) cerrada(s) de 2ª quincena...\n`);
 
   for (const payroll of payrolls) {
     console.log('='.repeat(72));
@@ -73,6 +73,17 @@ async function test() {
       console.log(`Advertencias (${preview.warnings.length}):`);
       preview.warnings.forEach((w) => console.log(`  * ${w}`));
       totalWarnings += preview.warnings.length;
+
+      if ((preview.lines || []).length > 0) {
+        const missingCc = preview.lines.filter((l) => !l.centroCosto);
+        if (missingCc.length) {
+          criticalFailures += missingCc.length;
+          console.error(`  CRÍTICAS: ${missingCc.length} líneas sin centro de costo`);
+        } else {
+          const ccs = new Set(preview.lines.map((l) => l.centroCosto));
+          console.log(`Centros de costo en facturas: ${ccs.size}`);
+        }
+      }
 
       const critical = preview.warnings.filter((w) =>
         /no coincide|appliedBonuses|operation_logs|extras\.bonos/i.test(w)

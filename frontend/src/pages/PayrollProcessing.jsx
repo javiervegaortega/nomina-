@@ -7,8 +7,8 @@ import {
 import { AppContext } from '../App';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
-import { CUOTA_PATRONAL_RATE, CUOTA_LABORAL_RATE, IRTRA_INTECAP_RATE, formatQ, calculateMonthlyISR } from '../data/mockData';
-import { getEmployeePayrollSnapshot } from '../utils/payrollCalculator';
+import { formatQ, calculateMonthlyISR } from '../data/mockData';
+import { getEmployeePayrollSnapshot, getCuotaLaboralRate } from '../utils/payrollCalculator';
 import { getNetPayable, inferPeriodTypeFromDate, buildPayrollDraftTitle } from '../utils/payrollPeriod';
 import EmployeeIncidences from '../components/EmployeeIncidences';
 import EmployeeDeductions from '../components/EmployeeDeductions';
@@ -37,6 +37,21 @@ const monthlyIsrOf = (emp) =>
   (emp.isr !== undefined && emp.isr !== null && emp.isr !== '')
     ? (Number(emp.isr) || 0)
     : calculateMonthlyISR(Number(emp.sueldo_ordinario) || 0, Number(emp.bon_dec_37_2001) || 0);
+
+/** ISR del período: en 2ª = Total ISR − ISR 1ª; en 1ª = mensual × (días/30). */
+const periodIsrOf = (emp, baseFactor, periodType) => {
+  const isSecond = periodType === '2da'
+    || emp.totalIsr !== undefined
+    || emp.isr1ra !== undefined;
+  if (isSecond) {
+    const total = (emp.totalIsr !== undefined && emp.totalIsr !== null && emp.totalIsr !== '')
+      ? (Number(emp.totalIsr) || 0)
+      : monthlyIsrOf(emp);
+    const isr1ra = Number(emp.isr1ra) || 0;
+    return Math.max(0, Number((total - isr1ra).toFixed(2)));
+  }
+  return Number((monthlyIsrOf(emp) * baseFactor).toFixed(2)) || 0;
+};
 
 /** Base afecta al IGSS del período: sueldo prorrateado + extras (sin bono decreto/incentivo). */
 const igssBaseOf = (emp, baseSalary) => {
@@ -520,6 +535,7 @@ function PayrollEditor({ draftId, onBack }) {
 
   const handleChange = (id, section, field, value) => {
     if (isReadOnly) return;
+    const periodType = draft?.periodType || '1ra';
     const newData = data.map(e => {
       if (e.id !== id) return e;
 
@@ -546,19 +562,26 @@ function PayrollEditor({ draftId, onBack }) {
         }
       }
 
-      // 2. Recalculate igss / isr based on salary and days worked (0 si jubilado)
+      // 2. Recalculate igss / isr based on salary and days worked (3% si jubilado)
       const currentDays = (section === 'root' && field === 'days') ? Number(value) || 0 : e.days || 30;
       const baseFactor = currentDays / 30;
       const sueldoOrd = Number(e.sueldo_ordinario) || 0;
-      const bonDec = Number(e.bon_dec_37_2001) || 0;
       const baseSalary = sueldoOrd * baseFactor;
-      const igssExempt = !!(e.jubilacion === true || e.jubilacion === 1);
-      
+      const laboralRate = getCuotaLaboralRate(e);
+
+      // Total ISR (solo 2ª): recalcula ISR del período = Total − ISR 1ª
+      if (section === 'root' && field === 'totalIsr') {
+        updated.deductions = {
+          ...updated.deductions,
+          isr: periodIsrOf(updated, baseFactor, periodType)
+        };
+      }
+
       if (section === 'root' && field === 'days') {
         updated.deductions = {
           ...updated.deductions,
-          igss: igssExempt ? 0 : Number((igssBaseOf(updated, baseSalary) * CUOTA_LABORAL_RATE).toFixed(2)) || 0,
-          isr: Number((monthlyIsrOf(e) * baseFactor).toFixed(2)) || 0
+          igss: laboralRate === 0 ? 0 : Number((igssBaseOf(updated, baseSalary) * laboralRate).toFixed(2)) || 0,
+          isr: periodIsrOf(updated, baseFactor, periodType)
         };
       }
 
@@ -570,6 +593,7 @@ function PayrollEditor({ draftId, onBack }) {
 
   const handleSaveIncidence = (empId, newIncidence, dQ) => {
     // Save directly to the local payroll draft since there's no global incidence API
+    const periodType = draft?.periodType || '1ra';
     const newData = data.map(emp => {
       if (emp.id === empId) {
         const currentDays = emp.days || 30;
@@ -578,15 +602,15 @@ function PayrollEditor({ draftId, onBack }) {
           days: Math.max(0, currentDays - dQ),
           incidences: [...(emp.incidences || []), newIncidence]
         };
-        // Recalculate igss / isr based on new days (0 si jubilado)
+        // Recalculate igss / isr based on new days (3% si jubilado)
         const baseFactor = updated.days / 30;
         const sueldoOrd = Number(emp.sueldo_ordinario) || 0;
         const baseSalary = sueldoOrd * baseFactor;
-        const igssExempt = !!(emp.jubilacion === true || emp.jubilacion === 1);
+        const laboralRate = getCuotaLaboralRate(emp);
         updated.deductions = {
           ...updated.deductions,
-          igss: igssExempt ? 0 : Number((igssBaseOf(updated, baseSalary) * CUOTA_LABORAL_RATE).toFixed(2)) || 0,
-          isr: Number((monthlyIsrOf(emp) * baseFactor).toFixed(2)) || 0
+          igss: laboralRate === 0 ? 0 : Number((igssBaseOf(updated, baseSalary) * laboralRate).toFixed(2)) || 0,
+          isr: periodIsrOf(updated, baseFactor, periodType)
         };
         
         return updated;
@@ -598,6 +622,7 @@ function PayrollEditor({ draftId, onBack }) {
   };
 
   const handleDeleteIncidence = (empId, incId, daysToRestore) => {
+    const periodType = draft?.periodType || '1ra';
     const newData = data.map(emp => {
       if (emp.id === empId) {
         const filtered = (emp.incidences || []).filter(i => i.id !== incId);
@@ -606,15 +631,15 @@ function PayrollEditor({ draftId, onBack }) {
           days: (emp.days || 30) + daysToRestore,
           incidences: filtered
         };
-        // Recalculate igss / isr based on new days (0 si jubilado)
+        // Recalculate igss / isr based on new days (3% si jubilado)
         const baseFactor = updated.days / 30;
         const sueldoOrd = Number(emp.sueldo_ordinario) || 0;
         const baseSalary = sueldoOrd * baseFactor;
-        const igssExempt = !!(emp.jubilacion === true || emp.jubilacion === 1);
+        const laboralRate = getCuotaLaboralRate(emp);
         updated.deductions = {
           ...updated.deductions,
-          igss: igssExempt ? 0 : Number((igssBaseOf(updated, baseSalary) * CUOTA_LABORAL_RATE).toFixed(2)) || 0,
-          isr: Number((monthlyIsrOf(emp) * baseFactor).toFixed(2)) || 0
+          igss: laboralRate === 0 ? 0 : Number((igssBaseOf(updated, baseSalary) * laboralRate).toFixed(2)) || 0,
+          isr: periodIsrOf(updated, baseFactor, periodType)
         };
 
         return updated;
@@ -984,7 +1009,7 @@ function PayrollEditor({ draftId, onBack }) {
 function calculateGroupTotals(groupData, periodType) {
   let totSalarioOrd = 0, totBonInc = 0, totBonDec = 0, totBonos = 0, totDevengado = 0;
   let totHorasSimples = 0, totValSimple = 0, totHorasDobles = 0, totValDouble = 0, totOtrosIngresos = 0, totSalarioTotal = 0;
-  let totIgss = 0, totIsr = 0, totCafe = 0, totCell = 0, totUniform = 0, totShoes = 0, totEquipo = 0, totProduct = 0, totBancos = 0, totPrestamo = 0, totOtros = 0, totJudiciales = 0, totSeguro = 0, totParqueo = 0, totBoleta = 0, totOtrosEgresos = 0, totTotalEgresos = 0;
+  let totIgss = 0, totTotalIsr = 0, totIsr = 0, totCafe = 0, totCell = 0, totUniform = 0, totShoes = 0, totEquipo = 0, totProduct = 0, totBancos = 0, totPrestamo = 0, totOtros = 0, totJudiciales = 0, totSeguro = 0, totParqueo = 0, totBoleta = 0, totOtrosEgresos = 0, totTotalEgresos = 0;
   let totLiquido = 0, totQuincena1 = 0, totQuincena2 = 0;
 
   groupData.forEach(e => {
@@ -1052,6 +1077,9 @@ function calculateGroupTotals(groupData, periodType) {
     totSalarioTotal += salarioTotal;
 
     totIgss += igss;
+    totTotalIsr += (e.totalIsr !== undefined && e.totalIsr !== null && e.totalIsr !== '')
+      ? (Number(e.totalIsr) || 0)
+      : monthlyIsrOf(e);
     totIsr += isr;
     totCafe += cafe;
     totCell += cell;
@@ -1076,7 +1104,7 @@ function calculateGroupTotals(groupData, periodType) {
   return {
     totSalarioOrd, totBonInc, totBonDec, totBonos, totDevengado,
     totHorasSimples, totValSimple, totHorasDobles, totValDouble, totOtrosIngresos, totSalarioTotal,
-    totIgss, totIsr, totCafe, totCell, totUniform, totShoes, totEquipo, totProduct, totBancos, totPrestamo, totOtros, totJudiciales, totSeguro, totParqueo, totBoleta, totOtrosEgresos, totTotalEgresos,
+    totIgss, totTotalIsr, totIsr, totCafe, totCell, totUniform, totShoes, totEquipo, totProduct, totBancos, totPrestamo, totOtros, totJudiciales, totSeguro, totParqueo, totBoleta, totOtrosEgresos, totTotalEgresos,
     totLiquido, totQuincena1, totQuincena2
   };
 }
@@ -1124,7 +1152,9 @@ function ListadoPagosTab({
 
   const EDITABLE_FIELDS = {
     summary: ['days'],
-    detailed: ['days', 'bonos', 'simplesQty', 'simplesVal', 'doblesQty', 'doblesVal', 'otrosIngresos', 'igss', 'isr', 'cafe', 'cell', 'uniform', 'shoes', 'equipo', 'product', 'bancos', 'prestamo_empresa', 'otros', 'judiciales', 'seguro', 'parqueo', 'boleto_de_ornato', 'otros_egresos']
+    detailed: periodType === '2da'
+      ? ['days', 'bonos', 'simplesQty', 'simplesVal', 'doblesQty', 'doblesVal', 'otrosIngresos', 'igss', 'totalIsr', 'isr', 'cafe', 'cell', 'uniform', 'shoes', 'equipo', 'product', 'bancos', 'prestamo_empresa', 'otros', 'judiciales', 'seguro', 'parqueo', 'boleto_de_ornato', 'otros_egresos']
+      : ['days', 'bonos', 'simplesQty', 'simplesVal', 'doblesQty', 'doblesVal', 'otrosIngresos', 'igss', 'isr', 'cafe', 'cell', 'uniform', 'shoes', 'equipo', 'product', 'bancos', 'prestamo_empresa', 'otros', 'judiciales', 'seguro', 'parqueo', 'boleto_de_ornato', 'otros_egresos']
   };
 
   const handleNavigation = (currentId, currentField, key, shiftKey) => {
@@ -1359,6 +1389,12 @@ function ListadoPagosTab({
         </HStack>
       </Flex>
 
+      {periodType === '2da' && (
+        <Text fontSize="sm" color="gray.500" mb={3}>
+          Total ISR: edítalo en Vista Detallada. ISR 2ª = Total − ISR de la 1ª. Al cerrar la nómina se guarda el total en la ficha del empleado.
+        </Text>
+      )}
+
       {/* Spreadsheet Table or Summary View */}
       {groupedData.map((group, gIdx) => {
         const groupData = group.data;
@@ -1398,7 +1434,14 @@ function ListadoPagosTab({
                     <Th w="130px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="gold.500">Salario Total</Th>
                     
                     <Th w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">IGSS</Th>
-                    <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">ISR</Th>
+                    {periodType === '2da' && (
+                      <Th w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400" title="ISR total del mes. Al cerrar se guarda en la ficha.">
+                        Total ISR
+                      </Th>
+                    )}
+                    <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">
+                      {periodType === '2da' ? 'ISR 2ª' : 'ISR'}
+                    </Th>
                     <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Cafetería</Th>
                     <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Celular</Th>
                     <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Uniforme</Th>
@@ -1505,6 +1548,21 @@ function ListadoPagosTab({
                         <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="gold.500">{formatQ(salarioTotal)}</Td>
 
                         <EditableCell onNavigate={handleNavigation} id={e.id} field="igss" section="deductions" value={igss} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
+                        {periodType === '2da' && (
+                          <EditableCell
+                            onNavigate={handleNavigation}
+                            id={e.id}
+                            field="totalIsr"
+                            section="root"
+                            value={e.totalIsr !== undefined && e.totalIsr !== null && e.totalIsr !== '' ? e.totalIsr : monthlyIsrOf(e)}
+                            onChange={onChange}
+                            editing={editingCell}
+                            setEditing={setEditingCell}
+                            width={85}
+                            isMoney
+                            isDanger
+                          />
+                        )}
                         <EditableCell onNavigate={handleNavigation} id={e.id} field="isr" section="deductions" value={isr} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
                         <EditableCell onNavigate={handleNavigation} id={e.id} field="cafe" section="deductions" value={cafe} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
                         <EditableCell onNavigate={handleNavigation} id={e.id} field="cell" section="deductions" value={cell} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney isDanger />
@@ -1584,6 +1642,9 @@ function ListadoPagosTab({
                     <Th fontFamily="mono" fontSize="xs" fontWeight="bold" color="gold.500">{formatQ(columnTotals.totSalarioTotal)}</Th>
                     
                     <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totIgss)}</Th>
+                    {periodType === '2da' && (
+                      <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totTotalIsr)}</Th>
+                    )}
                     <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totIsr)}</Th>
                     <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totCafe)}</Th>
                     <Th fontFamily="mono" fontSize="xs" color="red.400">{formatQ(columnTotals.totCell)}</Th>

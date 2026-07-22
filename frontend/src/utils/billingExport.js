@@ -102,8 +102,8 @@ const setCols = (ws, widths) => {
 
 const buildFacturasSheet = (wb, { payrollTitle, lines }) => {
   const ws = wb.addWorksheet('Facturas', { views: [{ state: 'frozen', ySplit: 4 }] });
-  const cols = 8;
-  setCols(ws, [28, 28, 42, 14, 12, 14, 12, 14]);
+  const cols = 9;
+  setCols(ws, [28, 28, 28, 42, 14, 12, 14, 12, 14]);
 
   const title = ws.addRow(['Facturación Intercompañía — Facturas']);
   styleTitleRow(title, cols);
@@ -116,18 +116,20 @@ const buildFacturasSheet = (wb, { payrollTitle, lines }) => {
     '',
     '',
     '',
+    '',
     `Generado: ${new Date().toLocaleString('es-GT')}`,
     ''
   ]);
   styleMetaRow(meta, cols);
-  ws.mergeCells(2, 1, 2, 5);
-  ws.mergeCells(2, 7, 2, 8);
+  ws.mergeCells(2, 1, 2, 6);
+  ws.mergeCells(2, 8, 2, 9);
 
   ws.addRow([]);
 
   const header = ws.addRow([
     'Empresa Emisora',
     'Empresa Receptora',
+    'Centro de Costo',
     'Concepto',
     'Base',
     'Margen %',
@@ -146,6 +148,7 @@ const buildFacturasSheet = (wb, { payrollTitle, lines }) => {
     const row = ws.addRow([
       d.fromCompany || '',
       d.toCompany || '',
+      d.centroCosto || '',
       d.concept || '',
       Number(d.baseAmount) || 0,
       Number(d.marginPercentage) || 0,
@@ -154,12 +157,12 @@ const buildFacturasSheet = (wb, { payrollTitle, lines }) => {
       Number(d.totalAmount) || 0
     ]);
     styleDataRow(row, cols, idx % 2 === 1);
-    applyMoney(row.getCell(4));
-    applyPct(row.getCell(5));
-    applyMoney(row.getCell(6));
+    applyMoney(row.getCell(5));
+    applyPct(row.getCell(6));
     applyMoney(row.getCell(7));
     applyMoney(row.getCell(8));
-    row.getCell(8).font = { bold: true, size: 10, name: 'Calibri', color: { argb: '196F3D' } };
+    applyMoney(row.getCell(9));
+    row.getCell(9).font = { bold: true, size: 10, name: 'Calibri', color: { argb: '196F3D' } };
 
     sumBase += Number(d.baseAmount) || 0;
     sumMargin += Number(d.marginAmount) || 0;
@@ -172,17 +175,86 @@ const buildFacturasSheet = (wb, { payrollTitle, lines }) => {
     styleDataRow(empty, cols, false);
     ws.mergeCells(empty.number, 1, empty.number, cols);
   } else {
-    const total = ws.addRow(['TOTALES', '', '', sumBase, '', sumMargin, sumIva, sumTotal]);
+    const total = ws.addRow(['TOTALES', '', '', '', sumBase, '', sumMargin, sumIva, sumTotal]);
     styleDataRow(total, cols, false);
     for (let c = 1; c <= cols; c += 1) {
       const cell = total.getCell(c);
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.totalBg } };
       cell.font = { bold: true, size: 10, name: 'Calibri' };
     }
-    applyMoney(total.getCell(4));
-    applyMoney(total.getCell(6));
+    applyMoney(total.getCell(5));
     applyMoney(total.getCell(7));
     applyMoney(total.getCell(8));
+    applyMoney(total.getCell(9));
+  }
+
+  return ws;
+};
+
+const buildPorCentroCostoSheet = (wb, { payrollTitle, lines, companyNames }) => {
+  const byCc = {};
+  const receiverIds = new Set();
+
+  (lines || []).forEach((line) => {
+    const cc = line.centroCosto || 'SIN CENTRO DE COSTO';
+    const toId = line.toCompanyId != null ? String(line.toCompanyId) : (line.toCompany || 'destino');
+    const toLabel = line.toCompany || companyNames?.[toId] || toId;
+    if (!byCc[cc]) byCc[cc] = {};
+    if (!byCc[cc][toLabel]) byCc[cc][toLabel] = 0;
+    byCc[cc][toLabel] += Number(line.baseAmount) || 0;
+    receiverIds.add(toLabel);
+  });
+
+  const receivers = [...receiverIds].sort((a, b) => String(a).localeCompare(String(b), 'es'));
+  const colCount = Math.max(2, receivers.length + 2);
+  const ws = wb.addWorksheet('Por Centro de Costo', { views: [{ state: 'frozen', ySplit: 4, xSplit: 1 }] });
+  setCols(ws, [32, ...receivers.map(() => 16), 16]);
+
+  const title = ws.addRow(['Costos por Centro de Costo (distribución REAL facturable)']);
+  styleTitleRow(title, colCount);
+  ws.mergeCells(1, 1, 1, colCount);
+
+  const meta = ws.addRow([`Nómina: ${payrollTitle || '—'}`]);
+  styleMetaRow(meta, colCount);
+  ws.mergeCells(2, 1, 2, colCount);
+
+  ws.addRow([]);
+
+  const header = ws.addRow(['Centro de Costo', ...receivers, 'Total']);
+  styleHeaderRow(header, colCount);
+
+  const ccKeys = Object.keys(byCc).sort((a, b) => a.localeCompare(b, 'es'));
+  const colTotals = receivers.map(() => 0);
+  let grand = 0;
+
+  ccKeys.forEach((cc, idx) => {
+    let rowTotal = 0;
+    const values = receivers.map((recv, i) => {
+      const amt = Number(byCc[cc][recv]) || 0;
+      colTotals[i] += amt;
+      rowTotal += amt;
+      return amt;
+    });
+    grand += rowTotal;
+    const row = ws.addRow([cc, ...values, rowTotal]);
+    styleDataRow(row, colCount, idx % 2 === 1);
+    for (let c = 2; c <= colCount; c += 1) applyMoney(row.getCell(c));
+    row.getCell(1).font = { bold: true, size: 10, name: 'Calibri' };
+  });
+
+  if (ccKeys.length === 0) {
+    const empty = ws.addRow(['Sin datos por centro de costo.']);
+    styleDataRow(empty, colCount, false);
+    ws.mergeCells(empty.number, 1, empty.number, colCount);
+  } else {
+    const total = ws.addRow(['TOTALES', ...colTotals, grand]);
+    styleDataRow(total, colCount, false);
+    for (let c = 1; c <= colCount; c += 1) {
+      const cell = total.getCell(c);
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.totalBg } };
+      cell.font = { bold: true, size: 10, name: 'Calibri' };
+    }
+    for (let c = 2; c <= colCount; c += 1) applyMoney(total.getCell(c));
   }
 
   return ws;
@@ -232,6 +304,7 @@ const buildDetalleSheet = (wb, { payrollTitle, details }) => {
   const headers = [
     'ID',
     'Empleado',
+    'Centro de Costo',
     'Empresa Pagadora',
     'Empresa Destino',
     '% Destino',
@@ -266,7 +339,7 @@ const buildDetalleSheet = (wb, { payrollTitle, details }) => {
   const cols = headers.length;
   const ws = wb.addWorksheet('Detalle', { views: [{ state: 'frozen', ySplit: 4, xSplit: 2 }] });
   setCols(ws, [
-    8, 28, 22, 22, 10, 8, 10,
+    8, 28, 28, 22, 22, 10, 8, 10,
     13, 12, 12, 12, 12, 13, 12,
     12, 10, 13, 13, 11, 12, 13,
     11, 13, 13, 12, 12, 11, 11, 12, 10, 12, 16
@@ -295,7 +368,7 @@ const buildDetalleSheet = (wb, { payrollTitle, details }) => {
   const header = ws.addRow(headers);
   styleHeaderRow(header, cols);
 
-  const moneyCols = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32];
+  const moneyCols = [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33];
   let sumAmount = 0;
 
   (details || []).forEach((d, idx) => {
@@ -310,6 +383,7 @@ const buildDetalleSheet = (wb, { payrollTitle, details }) => {
     const row = ws.addRow([
       d.employeeId ?? '',
       d.employeeName || '',
+      d.centroCosto || '',
       d.fromCompany || '',
       d.toCompany || '',
       pct,
@@ -342,9 +416,9 @@ const buildDetalleSheet = (wb, { payrollTitle, details }) => {
       amount
     ]);
     styleDataRow(row, cols, idx % 2 === 1);
-    applyPct(row.getCell(5));
+    applyPct(row.getCell(6));
     moneyCols.forEach((c) => applyMoney(row.getCell(c)));
-    row.getCell(32).font = { bold: true, size: 10, name: 'Calibri', color: { argb: '196F3D' } };
+    row.getCell(33).font = { bold: true, size: 10, name: 'Calibri', color: { argb: '196F3D' } };
     sumAmount += amount;
   });
 
@@ -357,7 +431,7 @@ const buildDetalleSheet = (wb, { payrollTitle, details }) => {
   } else {
     const totalValues = Array(cols).fill('');
     totalValues[1] = 'TOTALES';
-    totalValues[31] = sumAmount;
+    totalValues[32] = sumAmount;
     const total = ws.addRow(totalValues);
     styleDataRow(total, cols, false);
     for (let c = 1; c <= cols; c += 1) {
@@ -365,7 +439,7 @@ const buildDetalleSheet = (wb, { payrollTitle, details }) => {
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.totalBg } };
       cell.font = { bold: true, size: 10, name: 'Calibri' };
     }
-    applyMoney(total.getCell(32));
+    applyMoney(total.getCell(33));
   }
 
   return ws;
@@ -436,6 +510,7 @@ export const exportBillingExcel = async (data, filename) => {
 
   buildResumenSheet(wb, payload);
   buildFacturasSheet(wb, payload);
+  buildPorCentroCostoSheet(wb, payload);
   buildMatrizSheet(wb, payload);
   buildDetalleSheet(wb, payload);
 
@@ -460,16 +535,33 @@ export const buildExportFromRun = (run) => {
   const details = Array.isArray(costMatrix.details) ? costMatrix.details : [];
   const warnings = Array.isArray(costMatrix.warnings) ? costMatrix.warnings : [];
 
-  const lines = (run.lines || []).map((l) => ({
-    fromCompany: l.fromCompanyData?.nombre_comercial || companyNames[l.fromCompanyId] || l.fromCompanyId,
-    toCompany: l.toCompanyData?.nombre_comercial || companyNames[l.toCompanyId] || l.toCompanyId,
-    concept: l.concept,
-    baseAmount: Number(l.baseAmount),
-    marginPercentage: Number(l.marginPercentage),
-    marginAmount: Number(l.marginAmount),
-    ivaAmount: Number(l.ivaAmount),
-    totalAmount: Number(l.totalAmount)
-  }));
+  const storedLines = Array.isArray(costMatrix.lines) ? costMatrix.lines : [];
+  const lines = (run.lines || []).map((l, idx) => {
+    const stored = storedLines[idx] || storedLines.find(
+      (s) => s.fromCompanyId === l.fromCompanyId
+        && s.toCompanyId === l.toCompanyId
+        && Number(s.baseAmount) === Number(l.baseAmount)
+        && String(s.concept || '') === String(l.concept || '')
+    ) || {};
+    let centroCosto = stored.centroCosto || '';
+    if (!centroCosto && l.concept) {
+      const parts = String(l.concept).split(' — ');
+      if (parts.length > 1) centroCosto = parts.slice(1).join(' — ').trim();
+    }
+    return {
+      fromCompanyId: l.fromCompanyId,
+      toCompanyId: l.toCompanyId,
+      fromCompany: l.fromCompanyData?.nombre_comercial || companyNames[l.fromCompanyId] || l.fromCompanyId,
+      toCompany: l.toCompanyData?.nombre_comercial || companyNames[l.toCompanyId] || l.toCompanyId,
+      centroCosto,
+      concept: l.concept,
+      baseAmount: Number(l.baseAmount),
+      marginPercentage: Number(l.marginPercentage),
+      marginAmount: Number(l.marginAmount),
+      ivaAmount: Number(l.ivaAmount),
+      totalAmount: Number(l.totalAmount)
+    };
+  });
 
   return {
     payrollTitle: run.payrollTitle,

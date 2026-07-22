@@ -3,6 +3,7 @@ const { Employee, EmployeeRecord, EmployeeIncidence, Department } = require('../
 const { calculateMonthlyISR } = require('../services/isr.service');
 
 const CUOTA_LABORAL = 0.0483;
+const CUOTA_LABORAL_JUBILADO = 0.03;
 const CUOTA_PATRONAL = 0.1067;
 
 /**
@@ -21,10 +22,11 @@ const applyAutoPayrollFields = (body) => {
   const base = Number(next.sueldo_ordinario) || 0;
   const bonus = Number(next.bon_dec_37_2001) || 0;
   const jubilado = !!(next.jubilacion === true || next.jubilacion === 1);
+  const laboralRate = jubilado ? CUOTA_LABORAL_JUBILADO : CUOTA_LABORAL;
 
   const hasManualIsr = next.isr !== undefined && next.isr !== null && next.isr !== '';
   next.isr = hasManualIsr ? (Number(next.isr) || 0) : calculateMonthlyISR(base, bonus);
-  next.igss_laboral = jubilado ? 0 : Number((base * CUOTA_LABORAL).toFixed(2));
+  next.igss_laboral = Number((base * laboralRate).toFixed(2));
   next.igss_patronal = jubilado ? 0 : Number((base * CUOTA_PATRONAL).toFixed(2));
   return next;
 };

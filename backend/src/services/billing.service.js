@@ -4,8 +4,14 @@ const {
 } = require('../models');
 const { getCompanyCost, calculateEmployeePayroll } = require('./payrollCalculator.service');
 
+/** Empresas que participan en facturación: Proquima, Unhesa, Econacional */
+const BILLABLE_COMPANY_IDS = new Set([1, 2, 3]);
+const SIN_CENTRO_COSTO = 'SIN CENTRO DE COSTO';
+
 const round4 = (n) => new Decimal(n || 0).toDecimalPlaces(4, Decimal.ROUND_HALF_UP).toNumber();
 const round2 = (n) => new Decimal(n || 0).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber();
+
+const isBillableCompany = (id) => BILLABLE_COMPANY_IDS.has(Number(id));
 
 const parseJsonField = (value) => {
   if (value == null) return null;
@@ -56,6 +62,13 @@ const getEmployeeAreaId = (e) => {
   return Number.isFinite(id) && id > 0 ? id : null;
 };
 
+const getEmployeeCentroCosto = (e) => {
+  const raw = e.centro_de_costo || e.centroCosto || e.centro_costo || null;
+  if (raw == null) return SIN_CENTRO_COSTO;
+  const text = String(raw).trim();
+  return text || SIN_CENTRO_COSTO;
+};
+
 const getEmployeePayrollSnapshot = (employee, periodType) => {
   const withCalc = employee.calculated
     ? employee
@@ -104,10 +117,6 @@ const getEmployeePayrollSnapshot = (employee, periodType) => {
     irtraIntecap,
     companyCost
   };
-};
-
-const getEmployeeCompanyCost = (employee, periodType) => {
-  return getEmployeePayrollSnapshot(employee, periodType).companyCost;
 };
 
 const splitByPct = (value, pct) =>
@@ -220,7 +229,6 @@ const buildAllocations = (distObj, principalId, employeeName, warnings) => {
     warnings.push(
       `Empleado "${employeeName}": la distribución efectiva suma ${round2(sumPositive)}% (debe ser 100%). Se renormaliza a 100% para no perder costo.`
     );
-    // Renormalizar para que el 100% del companyCost se asigne (evita "perder" costo)
     return positiveEntries.map(([toId, pct]) => ({
       toId,
       pct: round4(new Decimal(pct).times(100).dividedBy(sumPositive))
@@ -235,19 +243,58 @@ const ensureMatrixCell = (matrix, fromId, toId) => {
   if (!matrix[fromId][toId]) matrix[fromId][toId] = 0;
 };
 
-const resolveBillingFromId = (principalId, billingPayerIds) => {
-  if (!billingPayerIds || billingPayerIds.size === 0) return principalId;
-  if (principalId && billingPayerIds.has(principalId)) return principalId;
-  if (billingPayerIds.size === 1) return [...billingPayerIds][0];
-  return principalId;
+const ensureCcMatrixCell = (matrixByCc, fromId, toId, centroCosto) => {
+  if (!matrixByCc[fromId]) matrixByCc[fromId] = {};
+  if (!matrixByCc[fromId][toId]) matrixByCc[fromId][toId] = {};
+  if (!matrixByCc[fromId][toId][centroCosto]) matrixByCc[fromId][toId][centroCosto] = 0;
+};
+
+const assertPayrollEligibleForBilling = (payroll, { requireClosed = false } = {}) => {
+  if (!payroll) {
+    throw new Error('Nómina no encontrada');
+  }
+  const periodType = String(payroll.periodType || '').toLowerCase();
+  if (periodType !== '2da') {
+    throw new Error(
+      'La facturación solo se ejecuta sobre nóminas de 2ª quincena (una vez al mes por empresa).'
+    );
+  }
+  if (requireClosed && payroll.status !== 'cerrada') {
+    throw new Error('Solo se puede confirmar facturación de nóminas con estado cerrada');
+  }
+};
+
+const matchAreaIdForCentroCosto = (centroCosto, areas) => {
+  if (!centroCosto || centroCosto === SIN_CENTRO_COSTO) return null;
+  const needle = String(centroCosto).trim().toUpperCase();
+  const codeMatch = needle.match(/^(\d{5,})/);
+  const code = codeMatch ? codeMatch[1] : null;
+
+  for (const area of areas) {
+    const name = String(area.nombre || '').trim().toUpperCase();
+    if (!name) continue;
+    if (name === needle) return area.id;
+    if (code && name.startsWith(code)) return area.id;
+    // Match parent code 102000 against 102010-style labels in area names
+    if (code && code.length >= 6) {
+      const parent = `${code.slice(0, 3)}000`;
+      if (name.startsWith(parent)) return area.id;
+    }
+  }
+  return null;
 };
 
 class BillingService {
+  static getBillableCompanyIds() {
+    return [...BILLABLE_COMPANY_IDS];
+  }
+
   static async buildPreview(payrollId) {
     const payroll = await PayrollHistory.findByPk(payrollId);
     if (!payroll) {
       throw new Error('Nómina no encontrada');
     }
+    assertPayrollEligibleForBilling(payroll, { requireClosed: true });
 
     let employees = payroll.data;
     if (typeof employees === 'string') {
@@ -269,8 +316,10 @@ class BillingService {
     areas.forEach((a) => { areaNames[a.id] = a.nombre || `Área ${a.id}`; });
 
     const matrix = {};
+    const matrixByCostCenter = {};
     const details = [];
     const warnings = [];
+    const skippedNonBillable = new Set();
 
     const activeRules = await BillingRule.findAll({
       where: { isActive: true },
@@ -280,8 +329,14 @@ class BillingService {
       ]
     });
 
-    const billingPayerIds = new Set(
-      activeRules.map((rule) => Number(rule.fromCompanyId)).filter((id) => id > 0)
+    const billableRules = activeRules.filter((rule) => {
+      const fromId = Number(rule.fromCompanyId);
+      const toId = Number(rule.toCompanyId);
+      return isBillableCompany(fromId) && isBillableCompany(toId) && fromId !== toId;
+    });
+
+    warnings.push(
+      'Facturación mensual por empresa (2ª quincena): solo Proquima, Unhesa y Econacional. Otras empresas se omiten de las facturas.'
     );
 
     if (!Array.isArray(employees) || employees.length === 0) {
@@ -290,8 +345,6 @@ class BillingService {
       validatePayrollSnapshotForBilling(employees, warnings);
     }
 
-    let usedCentralPayer = false;
-
     employees.forEach((e) => {
       const principalId = getPrincipalCompanyId(e);
       if (!principalId) {
@@ -299,31 +352,37 @@ class BillingService {
         return;
       }
 
-      const fromId = resolveBillingFromId(principalId, billingPayerIds);
-      if (!fromId) {
-        warnings.push(`Empleado "${getEmployeeName(e)}": no se pudo determinar empresa pagadora para facturación.`);
+      if (!isBillableCompany(principalId)) {
+        warnings.push(
+          `Empleado "${getEmployeeName(e)}": empresa principal (${companyNames[principalId] || principalId}) no es facturable; se omite.`
+        );
         return;
       }
-      if (fromId !== principalId && billingPayerIds.size === 1) {
-        usedCentralPayer = true;
-      }
-      if (billingPayerIds.size > 1 && !billingPayerIds.has(principalId)) {
-        warnings.push(
-          `Empleado "${getEmployeeName(e)}": la empresa principal (${companyNames[principalId] || principalId}) no coincide con ninguna emisora en reglas activas.`
-        );
-      }
 
+      const fromId = principalId;
       const payrollSnap = getEmployeePayrollSnapshot(e, payroll.periodType);
       const totalCost = payrollSnap.companyCost;
       const distObj = parseDist(e.dist);
       const allocations = buildAllocations(distObj, principalId, getEmployeeName(e), warnings);
       const areaId = getEmployeeAreaId(e);
+      const centroCosto = getEmployeeCentroCosto(e);
 
       allocations.forEach(({ toId, pct }) => {
         if (toId === fromId) return;
+
+        if (!isBillableCompany(toId)) {
+          skippedNonBillable.add(companyNames[toId] || String(toId));
+          return;
+        }
+
         const amount = splitByPct(totalCost, pct);
         ensureMatrixCell(matrix, fromId, toId);
         matrix[fromId][toId] = round4(new Decimal(matrix[fromId][toId]).plus(amount));
+
+        ensureCcMatrixCell(matrixByCostCenter, fromId, toId, centroCosto);
+        matrixByCostCenter[fromId][toId][centroCosto] = round4(
+          new Decimal(matrixByCostCenter[fromId][toId][centroCosto]).plus(amount)
+        );
 
         details.push({
           employeeId: e.id,
@@ -336,11 +395,10 @@ class BillingService {
           areaId,
           areaName: areaId ? (areaNames[areaId] || String(areaId)) : null,
           puesto: e.puesto || e.cargo || null,
-          centroCosto: e.centro_de_costo || e.centroCosto || null,
+          centroCosto,
           percentage: pct,
           periodType: payrollSnap.periodType,
           days: payrollSnap.days,
-          // Totales del período (quincena/mes) — no prorrateados por empresa
           sueldoOrdinario: payrollSnap.baseSalary,
           bonoDecreto: payrollSnap.bonusDec,
           bonoIncentivo: payrollSnap.bonusLey,
@@ -356,7 +414,6 @@ class BillingService {
           igssPatronal: payrollSnap.patronal,
           irtraIntecap: payrollSnap.irtraIntecap,
           employeeCost: totalCost,
-          // Parte asignada a la empresa destino según %
           asgSueldo: splitByPct(payrollSnap.baseSalary, pct),
           asgBonoDecreto: splitByPct(payrollSnap.bonusDec, pct),
           asgBonoIncentivo: splitByPct(payrollSnap.bonusLey, pct),
@@ -372,10 +429,9 @@ class BillingService {
       });
     });
 
-    if (usedCentralPayer && billingPayerIds.size === 1) {
-      const hubId = [...billingPayerIds][0];
+    if (skippedNonBillable.size > 0) {
       warnings.push(
-        `Facturación con empresa pagadora central: ${companyNames[hubId] || hubId}. Los montos se asignan según la distribución por empresa de cada empleado.`
+        `Se omitieron tramos de distribución hacia empresas no facturables: ${[...skippedNonBillable].join(', ')}.`
       );
     }
 
@@ -394,43 +450,67 @@ class BillingService {
       if (!toId && rule.toCompany) {
         toId = nameToId[String(rule.toCompany).trim().toUpperCase()] || null;
       }
-      return { fromId, toId };
+      return { fromId: fromId ? Number(fromId) : null, toId: toId ? Number(toId) : null };
+    };
+
+    const findRule = (fromId, toId) => {
+      for (const rule of billableRules) {
+        const ids = resolveRuleIds(rule);
+        if (ids.fromId === fromId && ids.toId === toId) return rule;
+      }
+      return null;
     };
 
     const lines = [];
 
-    activeRules.forEach((rule) => {
-      const { fromId, toId } = resolveRuleIds(rule);
-      if (!fromId || !toId) return;
+    Object.keys(matrixByCostCenter).forEach((fromKey) => {
+      const fromId = Number(fromKey);
+      Object.keys(matrixByCostCenter[fromKey] || {}).forEach((toKey) => {
+        const toId = Number(toKey);
+        const byCc = matrixByCostCenter[fromKey][toKey] || {};
+        Object.entries(byCc).forEach(([centroCosto, baseAmountRaw]) => {
+          const baseAmount = Number(baseAmountRaw) || 0;
+          if (baseAmount <= 0) return;
 
-      const baseAmount = (matrix[fromId] && matrix[fromId][toId]) ? matrix[fromId][toId] : 0;
-      if (baseAmount <= 0) return;
+          const rule = findRule(fromId, toId);
+          if (!rule) return;
 
-      const marginPerc = Number(rule.marginPercentage) || 0;
-      const ivaRate = Number(rule.ivaRate ?? 0.12);
-      const marginAmount = round4(new Decimal(baseAmount).times(marginPerc).dividedBy(100));
-      const subtotal = new Decimal(baseAmount).plus(marginAmount);
-      const ivaAmount = rule.applyIva
-        ? round4(subtotal.times(ivaRate))
-        : 0;
-      const totalAmount = round4(subtotal.plus(ivaAmount));
+          const marginPerc = Number(rule.marginPercentage) || 0;
+          const ivaRate = Number(rule.ivaRate ?? 0.12);
+          const marginAmount = round4(new Decimal(baseAmount).times(marginPerc).dividedBy(100));
+          const subtotal = new Decimal(baseAmount).plus(marginAmount);
+          const ivaAmount = rule.applyIva ? round4(subtotal.times(ivaRate)) : 0;
+          const totalAmount = round4(subtotal.plus(ivaAmount));
+          const areaId = matchAreaIdForCentroCosto(centroCosto, areas);
+          const baseConcept = rule.concept || `Servicios de RRHH ${payroll.title}`;
+          const concept = `${baseConcept} — ${centroCosto}`;
 
-      lines.push({
-        ruleId: rule.id,
-        fromCompanyId: fromId,
-        toCompanyId: toId,
-        fromCompany: companyNames[fromId] || rule.fromCompany || String(fromId),
-        toCompany: companyNames[toId] || rule.toCompany || String(toId),
-        areaId: null,
-        concept: rule.concept || `Servicios de RRHH ${payroll.title}`,
-        baseAmount,
-        marginPercentage: marginPerc,
-        marginAmount,
-        ivaAmount,
-        totalAmount,
-        applyIva: rule.applyIva,
-        ivaRate
+          lines.push({
+            ruleId: rule.id,
+            fromCompanyId: fromId,
+            toCompanyId: toId,
+            fromCompany: companyNames[fromId] || rule.fromCompany || String(fromId),
+            toCompany: companyNames[toId] || rule.toCompany || String(toId),
+            areaId,
+            centroCosto,
+            concept,
+            baseAmount,
+            marginPercentage: marginPerc,
+            marginAmount,
+            ivaAmount,
+            totalAmount,
+            applyIva: rule.applyIva,
+            ivaRate
+          });
+        });
       });
+    });
+
+    lines.sort((a, b) => {
+      const cc = String(a.centroCosto).localeCompare(String(b.centroCosto), 'es');
+      if (cc !== 0) return cc;
+      if (a.fromCompanyId !== b.fromCompanyId) return a.fromCompanyId - b.fromCompanyId;
+      return a.toCompanyId - b.toCompanyId;
     });
 
     if (lines.length === 0 && details.length > 0) {
@@ -458,9 +538,12 @@ class BillingService {
       payrollId: payroll.id,
       payrollTitle: payroll.title,
       payrollStatus: payroll.status,
+      payrollPeriodType: payroll.periodType,
       employeeCount: employees.length,
       matrix,
+      matrixByCostCenter,
       companyNames,
+      billableCompanyIds: [...BILLABLE_COMPANY_IDS],
       lines,
       details,
       warnings,
@@ -470,12 +553,7 @@ class BillingService {
 
   static async confirmRun(payrollId, userId, notes = null) {
     const payroll = await PayrollHistory.findByPk(payrollId);
-    if (!payroll) {
-      throw new Error('Nómina no encontrada');
-    }
-    if (payroll.status !== 'cerrada') {
-      throw new Error('Solo se puede confirmar facturación de nóminas con estado cerrada');
-    }
+    assertPayrollEligibleForBilling(payroll, { requireClosed: true });
 
     const preview = await this.buildPreview(payrollId);
 
@@ -497,9 +575,11 @@ class BillingService {
       createdBy: userId || null,
       costMatrixJson: {
         matrix: preview.matrix,
+        matrixByCostCenter: preview.matrixByCostCenter,
         companyNames: preview.companyNames,
         warnings: preview.warnings,
-        details: preview.details
+        details: preview.details,
+        lines: preview.lines
       },
       notes
     });
@@ -555,7 +635,6 @@ class BillingService {
   static async enrichRunStatus(run) {
     const plain = run.toJSON ? run.toJSON() : { ...run };
 
-    // En MySQL la columna es LONGTEXT: Sequelize puede devolver string sin parsear.
     const parsedMatrix = parseJsonField(plain.costMatrixJson);
     plain.costMatrixJson = parsedMatrix || (typeof plain.costMatrixJson === 'object' ? plain.costMatrixJson : null);
 
@@ -570,6 +649,7 @@ class BillingService {
 
     plain.payrollExists = !!payroll;
     plain.payrollStatus = payroll ? payroll.status : null;
+    plain.payrollPeriodType = payroll ? payroll.periodType : null;
     return plain;
   }
 
@@ -588,6 +668,7 @@ class BillingService {
       payrollTitle: preview.payrollTitle,
       period: preview.payrollId,
       matrix: preview.matrix,
+      matrixByCostCenter: preview.matrixByCostCenter,
       companyCosts: preview.companyCosts,
       companyNames: preview.companyNames,
       lines: preview.lines,
@@ -597,6 +678,7 @@ class BillingService {
         ruleId: line.ruleId,
         fromCompany: line.fromCompany,
         toCompany: line.toCompany,
+        centroCosto: line.centroCosto,
         concept: line.concept,
         baseAmount: line.baseAmount,
         marginPercentage: line.marginPercentage,
@@ -609,3 +691,4 @@ class BillingService {
 }
 
 module.exports = BillingService;
+module.exports.BILLABLE_COMPANY_IDS = BILLABLE_COMPANY_IDS;
