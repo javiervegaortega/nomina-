@@ -8,8 +8,20 @@ import { AppContext } from '../App';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
 import { formatQ, calculateMonthlyISR } from '../data/mockData';
-import { getEmployeePayrollSnapshot, getCuotaLaboralRate } from '../utils/payrollCalculator';
-import { getNetPayable, inferPeriodTypeFromDate, buildPayrollDraftTitle } from '../utils/payrollPeriod';
+import {
+  getEmployeePayrollSnapshot,
+  getEmployeeBillingCostSnapshot,
+  getCuotaLaboralRate,
+  getRecurringDeductionFactor
+} from '../utils/payrollCalculator';
+import {
+  getNetPayable,
+  inferPeriodTypeFromDate,
+  buildPayrollDraftTitle,
+  formatLocalDateKey,
+  toPayrollDateISO,
+  formatPayrollDisplayDate
+} from '../utils/payrollPeriod';
 import EmployeeIncidences from '../components/EmployeeIncidences';
 import EmployeeDeductions from '../components/EmployeeDeductions';
 import EmployeeSummaryModal from '../components/EmployeeSummaryModal';
@@ -36,21 +48,46 @@ const TABS = [
 const monthlyIsrOf = (emp) =>
   (emp.isr !== undefined && emp.isr !== null && emp.isr !== '')
     ? (Number(emp.isr) || 0)
-    : calculateMonthlyISR(Number(emp.sueldo_ordinario) || 0, Number(emp.bon_dec_37_2001) || 0);
+    : calculateMonthlyISR(
+      Number(emp.sueldo_ordinario) || 0,
+      Number(emp.bon_dec_37_2001) || 0,
+      getCuotaLaboralRate(emp)
+    );
 
-/** ISR del período: en 2ª = Total ISR − ISR 1ª; en 1ª = mensual × (días/30). */
-const periodIsrOf = (emp, baseFactor, periodType) => {
+/** ISR acumulado: mitad con <=15 días y total mensual con >15 días. */
+const periodIsrOf = (emp, daysWorked, periodType) => {
   const isSecond = periodType === '2da'
     || emp.totalIsr !== undefined
     || emp.isr1ra !== undefined;
+  const factor = getRecurringDeductionFactor(daysWorked);
   if (isSecond) {
     const total = (emp.totalIsr !== undefined && emp.totalIsr !== null && emp.totalIsr !== '')
       ? (Number(emp.totalIsr) || 0)
       : monthlyIsrOf(emp);
-    const isr1ra = Number(emp.isr1ra) || 0;
-    return Math.max(0, Number((total - isr1ra).toFixed(2)));
+    return Math.max(0, Number((total * factor).toFixed(2)));
   }
-  return Number((monthlyIsrOf(emp) * baseFactor).toFixed(2)) || 0;
+  return Number((monthlyIsrOf(emp) * factor).toFixed(2)) || 0;
+};
+
+/** Recalcula solo descuentos que provienen de montos mensuales del maestro. */
+const masterRecurringDeductionsOf = (emp, daysWorked) => {
+  const factor = getRecurringDeductionFactor(daysWorked);
+  const result = {};
+  const assign = (key, amount) => {
+    const monthly = Number(amount) || 0;
+    if (monthly !== 0) result[key] = Number((monthly * factor).toFixed(2));
+  };
+  assign('bancos', (Number(emp.bantrab) || 0) + (Number(emp.bancos) || 0));
+  assign('prestamo_empresa', emp.prestamo_empresa);
+  assign('judiciales', emp.judiciales);
+  assign('seguro', emp.seguro);
+  assign('parqueo', emp.parqueo);
+  assign('boleto_de_ornato', emp.boleto_de_ornato);
+  assign(
+    'otros_egresos',
+    (Number(emp.otros_egresos) || 0) + (Number(emp.otro_descuentos) || 0)
+  );
+  return result;
 };
 
 /** Base afecta al IGSS del período: sueldo prorrateado + extras (sin bono decreto/incentivo). */
@@ -62,8 +99,7 @@ const igssBaseOf = (emp, baseSalary) => {
     + (Number(ex.comisiones) || 0)
     + (Number(ex.otrosIngresos) || 0)
     + (Number(ex.vacacionesVal) || 0)
-    + (Number(ex.ventasEconomicas) || 0)
-    + (Number(ex.bonos) || 0);
+    + (Number(ex.ventasEconomicas) || 0);
 };
 
 export default function PayrollProcessing() {
@@ -106,7 +142,7 @@ function PayrollHub({ onSelectDraft }) {
 
     if (editingDraftId) {
       try {
-        await updateDraftMetadata(editingDraftId, title, companiesPayload, draftDate ? new Date(draftDate).toISOString() : new Date().toISOString(), periodType, notes);
+        await updateDraftMetadata(editingDraftId, title, companiesPayload, draftDate ? toPayrollDateISO(draftDate) : toPayrollDateISO(), periodType, notes);
         setShowModal(false);
         showToast('Borrador actualizado', 'success');
       } catch (err) {
@@ -127,7 +163,7 @@ function PayrollHub({ onSelectDraft }) {
 
       const createAction = async () => {
         try {
-          const newId = await createActivePayroll(title, companiesPayload, periodType, draftDate ? new Date(draftDate).toISOString() : new Date().toISOString(), notes);
+          const newId = await createActivePayroll(title, companiesPayload, periodType, draftDate ? toPayrollDateISO(draftDate) : toPayrollDateISO(), notes);
           setShowModal(false);
           onSelectDraft(newId);
         } catch (err) {
@@ -147,8 +183,7 @@ function PayrollHub({ onSelectDraft }) {
     setEditingDraftId(draft.id);
     setTitle(draft.title || '');
     setPeriodType(draft.periodType || '1ra');
-    const dateStr = draft.createdAt ? new Date(draft.createdAt).toISOString().split('T')[0] : '';
-    setDraftDate(dateStr);
+    setDraftDate(draft.createdAt ? formatLocalDateKey(draft.createdAt) : '');
     setNotes(draft.notes || '');
     setTitleTouched(false);
     setPeriodTouched(true);
@@ -181,7 +216,7 @@ function PayrollHub({ onSelectDraft }) {
   };
 
   const openCreateModal = () => {
-    const today = new Date().toISOString().split('T')[0];
+    const today = formatLocalDateKey(new Date());
     const inferredPeriod = inferPeriodTypeFromDate(today);
     setEditingDraftId(null);
     setNotes('');
@@ -301,7 +336,7 @@ function PayrollHub({ onSelectDraft }) {
                     <Badge colorScheme="red" mt={1} mb={1}>Con Errores</Badge>
                   )}
                   <Text fontSize="xs" color="gray.500">
-                    Creada: {new Date(draft.createdAt).toLocaleDateString()}
+                    Creada: {formatPayrollDisplayDate(draft.createdAt)}
                   </Text>
                 </Box>
               </Flex>
@@ -323,9 +358,13 @@ function PayrollHub({ onSelectDraft }) {
                       variant="ghost"
                       size="sm"
                       onClick={() => {
-                        confirmAction('¿Eliminar este borrador? Se perderán todos los avances.', () => {
-                          deleteActivePayroll(draft.id);
-                          showToast('Borrador eliminado', 'info');
+                        confirmAction('¿Eliminar este borrador? Se perderán todos los avances.', async () => {
+                          try {
+                            await deleteActivePayroll(draft.id);
+                            showToast('Borrador eliminado', 'info');
+                          } catch (error) {
+                            showToast(error.message || 'No se pudo eliminar el borrador', 'error');
+                          }
                         });
                       }}
                     />
@@ -417,6 +456,7 @@ function PayrollHub({ onSelectDraft }) {
                   type="date"
                   value={draftDate}
                   onChange={e => handleDraftDateChange(e.target.value)}
+                  isDisabled={!!editingDraftId}
                 />
               </FormControl>
               <FormControl>
@@ -424,6 +464,7 @@ function PayrollHub({ onSelectDraft }) {
                 <Select
                   value={periodType}
                   onChange={e => handlePeriodTypeChange(e.target.value)}
+                  isDisabled={!!editingDraftId}
                 >
                   <option value="1ra">Primera Quincena</option>
                   <option value="2da">Segunda Quincena</option>
@@ -434,6 +475,7 @@ function PayrollHub({ onSelectDraft }) {
                 <Select
                   value={selectedCompany}
                   onChange={e => setSelectedCompany(e.target.value)}
+                  isDisabled={!!editingDraftId}
                 >
                   <option value="">Seleccione una empresa...</option>
                   {companies.map(c => (
@@ -542,7 +584,10 @@ function PayrollEditor({ draftId, onBack }) {
       let updated = { ...e };
 
       if (section === 'root') {
-        updated[field] = Number(value) || 0;
+        const numericValue = Number(value) || 0;
+        updated[field] = field === 'days'
+          ? Math.min(30, Math.max(0, numericValue))
+          : numericValue;
       } else if (section === 'extras') {
         updated.extras = { ...e.extras, [field]: Number(value) || 0 };
       } else if (section === 'deductions') {
@@ -556,47 +601,54 @@ function PayrollEditor({ draftId, onBack }) {
         const sueldoOrd = Number(e.sueldo_ordinario) || 0;
         const hourRate = sueldoOrd / 30 / 8;
         if (field === 'simplesQty') {
-          updated.extras.simplesVal = Number((hourRate * 1.5 * Number(value)).toFixed(2)) || 0;
+          updated.extras.simplesVal = (hourRate * 1.5 * Number(value)) || 0;
         } else {
-          updated.extras.doblesVal = Number((hourRate * 2 * Number(value)).toFixed(2)) || 0;
+          updated.extras.doblesVal = (hourRate * 2 * Number(value)) || 0;
         }
       }
 
       // 2. Recalculate igss / isr based on salary and days worked (3% si jubilado)
-      const currentDays = (section === 'root' && field === 'days') ? Number(value) || 0 : e.days || 30;
+      const currentDays = (section === 'root' && field === 'days')
+        ? updated.days
+        : (e.days ?? 30);
       const baseFactor = currentDays / 30;
       const sueldoOrd = Number(e.sueldo_ordinario) || 0;
       const baseSalary = sueldoOrd * baseFactor;
       const laboralRate = getCuotaLaboralRate(e);
 
-      // Total ISR (solo 2ª): recalcula ISR del período = Total − ISR 1ª
+      // Total ISR (solo 2ª): es el ISR mensual del cálculo acumulado.
       if (section === 'root' && field === 'totalIsr') {
         updated.deductions = {
           ...updated.deductions,
-          isr: periodIsrOf(updated, baseFactor, periodType)
+          isr: periodIsrOf(updated, currentDays, periodType)
         };
       }
 
       if (section === 'root' && field === 'days') {
         updated.deductions = {
           ...updated.deductions,
+          ...masterRecurringDeductionsOf(updated, currentDays),
           igss: laboralRate === 0 ? 0 : Number((igssBaseOf(updated, baseSalary) * laboralRate).toFixed(2)) || 0,
-          isr: periodIsrOf(updated, baseFactor, periodType)
+          isr: periodIsrOf(updated, currentDays, periodType)
         };
       }
 
       return updated;
     });
 
-    updateActivePayroll(draftId, newData);
+    updateActivePayroll(draftId, newData).then((result) => {
+      if (result?.success === false) {
+        showToast(result.error || 'No se pudieron validar los cálculos de nómina.', 'error');
+      }
+    });
   };
 
-  const handleSaveIncidence = (empId, newIncidence, dQ) => {
+  const handleSaveIncidence = async (empId, newIncidence, dQ) => {
     // Save directly to the local payroll draft since there's no global incidence API
     const periodType = draft?.periodType || '1ra';
     const newData = data.map(emp => {
       if (emp.id === empId) {
-        const currentDays = emp.days || 30;
+        const currentDays = emp.days ?? 30;
         const updated = {
           ...emp,
           days: Math.max(0, currentDays - dQ),
@@ -609,26 +661,30 @@ function PayrollEditor({ draftId, onBack }) {
         const laboralRate = getCuotaLaboralRate(emp);
         updated.deductions = {
           ...updated.deductions,
+          ...masterRecurringDeductionsOf(updated, updated.days),
           igss: laboralRate === 0 ? 0 : Number((igssBaseOf(updated, baseSalary) * laboralRate).toFixed(2)) || 0,
-          isr: periodIsrOf(updated, baseFactor, periodType)
+          isr: periodIsrOf(updated, updated.days, periodType)
         };
         
         return updated;
       }
       return emp;
     });
-    updateActivePayroll(draftId, newData);
-    showToast('Incidencia guardada', 'success');
+    const result = await updateActivePayroll(draftId, newData);
+    showToast(
+      result?.success === false ? (result.error || 'No se pudo validar la incidencia.') : 'Incidencia guardada',
+      result?.success === false ? 'error' : 'success'
+    );
   };
 
-  const handleDeleteIncidence = (empId, incId, daysToRestore) => {
+  const handleDeleteIncidence = async (empId, incId, daysToRestore) => {
     const periodType = draft?.periodType || '1ra';
     const newData = data.map(emp => {
       if (emp.id === empId) {
         const filtered = (emp.incidences || []).filter(i => i.id !== incId);
         const updated = {
           ...emp,
-          days: (emp.days || 30) + daysToRestore,
+          days: Math.min(30, (emp.days ?? 30) + daysToRestore),
           incidences: filtered
         };
         // Recalculate igss / isr based on new days (3% si jubilado)
@@ -638,19 +694,23 @@ function PayrollEditor({ draftId, onBack }) {
         const laboralRate = getCuotaLaboralRate(emp);
         updated.deductions = {
           ...updated.deductions,
+          ...masterRecurringDeductionsOf(updated, updated.days),
           igss: laboralRate === 0 ? 0 : Number((igssBaseOf(updated, baseSalary) * laboralRate).toFixed(2)) || 0,
-          isr: periodIsrOf(updated, baseFactor, periodType)
+          isr: periodIsrOf(updated, updated.days, periodType)
         };
 
         return updated;
       }
       return emp;
     });
-    updateActivePayroll(draftId, newData);
-    showToast('Incidencia eliminada', 'info');
+    const result = await updateActivePayroll(draftId, newData);
+    showToast(
+      result?.success === false ? (result.error || 'No se pudo validar la eliminación.') : 'Incidencia eliminada',
+      result?.success === false ? 'error' : 'info'
+    );
   };
 
-  const handleSaveDeduction = (empId, newDeduction) => {
+  const handleSaveDeduction = async (empId, newDeduction) => {
     const newData = data.map(emp => {
       if (emp.id === empId) {
         const currentDeductionTotal = Number(emp.deductions?.[newDeduction.type]) || 0;
@@ -666,11 +726,14 @@ function PayrollEditor({ draftId, onBack }) {
       }
       return emp;
     });
-    updateActivePayroll(draftId, newData);
-    showToast('Descuento guardado', 'success');
+    const result = await updateActivePayroll(draftId, newData);
+    showToast(
+      result?.success === false ? (result.error || 'No se pudo validar el descuento.') : 'Descuento guardado',
+      result?.success === false ? 'error' : 'success'
+    );
   };
 
-  const handleDeleteDeduction = (empId, dedId, dedType, quotaAmount) => {
+  const handleDeleteDeduction = async (empId, dedId, dedType, quotaAmount) => {
     const newData = data.map(emp => {
       if (emp.id === empId) {
         const filtered = (emp.deductionsHistory || []).filter(d => d.id !== dedId);
@@ -687,11 +750,22 @@ function PayrollEditor({ draftId, onBack }) {
       }
       return emp;
     });
-    updateActivePayroll(draftId, newData);
-    showToast('Descuento eliminado', 'info');
+    const result = await updateActivePayroll(draftId, newData);
+    showToast(
+      result?.success === false ? (result.error || 'No se pudo validar la eliminación.') : 'Descuento eliminado',
+      result?.success === false ? 'error' : 'info'
+    );
   };
 
   const confirmClose = async () => {
+    if (draft?.periodType === '2da' && draft?.missingAnticipoWarning) {
+      showToast(
+        'No se puede continuar: primero debe existir una 1ª quincena cerrada del mismo mes y empresa.',
+        'error'
+      );
+      onAlertClose();
+      return;
+    }
     const result = await closePayroll(draftId);
     if (result.success) {
       showToast('Nómina cerrada exitosamente', 'success');
@@ -770,7 +844,7 @@ function PayrollEditor({ draftId, onBack }) {
         dedTotal += e.calculated.ded || 0;
         patronalTotal += (e.calculated.patronal || 0) + (e.calculated.irtraIntecap || 0);
       } else {
-        const baseFactor = (e.days || 30) / 30;
+        const baseFactor = (e.days ?? 30) / 30;
         const sueldoOrd = Number(e.sueldo_ordinario) || 0;
         grossTotal += sueldoOrd * baseFactor;
       }
@@ -808,6 +882,7 @@ function PayrollEditor({ draftId, onBack }) {
               color="white"
               leftIcon={<CheckCircle2 size={16} />} 
               onClick={onAlertOpen}
+              isDisabled={draft.periodType === '2da' && draft.missingAnticipoWarning}
               _hover={{ bg: draft.isApproved ? 'green.600' : 'red.600', animation: 'none', transform: 'none' }}
             >
               {draft.isApproved ? 'Cerrar Definitivamente' : 'Enviar a Auditoría'}
@@ -821,7 +896,7 @@ function PayrollEditor({ draftId, onBack }) {
             <Text color="orange.800" fontWeight="bold" mb={1} _dark={{ color: 'orange.100' }}>Sin anticipo de 1ª quincena</Text>
             <Text color="orange.700" fontSize="sm" _dark={{ color: 'orange.200' }}>
               No se encontró una nómina de 1ª quincena cerrada del mismo mes/empresas.
-              El anticipo quedó en Q0; revise antes de cerrar.
+              El anticipo quedó en Q0 y la nómina no puede enviarse ni cerrarse hasta resolverlo.
             </Text>
           </Box>
         )}
@@ -1011,28 +1086,39 @@ function calculateGroupTotals(groupData, periodType) {
   let totHorasSimples = 0, totValSimple = 0, totHorasDobles = 0, totValDouble = 0, totOtrosIngresos = 0, totSalarioTotal = 0;
   let totIgss = 0, totTotalIsr = 0, totIsr = 0, totCafe = 0, totCell = 0, totUniform = 0, totShoes = 0, totEquipo = 0, totProduct = 0, totBancos = 0, totPrestamo = 0, totOtros = 0, totJudiciales = 0, totSeguro = 0, totParqueo = 0, totBoleta = 0, totOtrosEgresos = 0, totTotalEgresos = 0;
   let totLiquido = 0, totQuincena1 = 0, totQuincena2 = 0;
+  const money2 = (value) => Math.round(((Number(value) || 0) + Number.EPSILON) * 100) / 100;
 
   groupData.forEach(e => {
-    const baseFactor = (e.days || 30) / 30;
+    const baseFactor = (e.days ?? 30) / 30;
     const sueldoOrd = Number(e.sueldo_ordinario) || 0;
     const bonInc = Number(e.bon_incentivo) || 0;
     const bonDec = Number(e.bon_dec_37_2001) || 0;
+    const calc = e.calculated || {};
 
-    const baseSalary = sueldoOrd * baseFactor;
-    const bonusLey = bonInc * baseFactor;
-    const bonusDec = bonDec * baseFactor;
-    const bonos = (Number(e.extras?.bonos) || 0) + Object.values(e.appliedBonuses || {}).reduce((s, v) => s + (Number(v) || 0), 0);
-    const comisiones = Number(e.extras?.comisiones) || 0;
-    const vacacionesVal = Number(e.extras?.vacacionesVal) || 0;
-    const ventasEconomicas = Number(e.extras?.ventasEconomicas) || 0;
+    const baseSalary = calc.baseSalary != null
+      ? Number(calc.baseSalary)
+      : money2(sueldoOrd * baseFactor);
+    const bonusLey = calc.bonusLey != null
+      ? Number(calc.bonusLey)
+      : money2(bonInc * baseFactor);
+    const bonusDec = calc.bonusDec != null
+      ? Number(calc.bonusDec)
+      : money2(bonDec * baseFactor);
+    const bonos = calc.bonos != null || calc.bonusesSum != null
+      ? (Number(calc.bonos) || 0) + (Number(calc.bonusesSum) || 0)
+      : money2(e.extras?.bonos)
+        + Object.values(e.appliedBonuses || {}).reduce((s, v) => s + money2(v), 0);
+    const comisiones = money2(e.extras?.comisiones);
+    const vacacionesVal = money2(e.extras?.vacacionesVal);
+    const ventasEconomicas = money2(e.extras?.ventasEconomicas);
     // T. Devengado = sueldos + bonos (sin HE / otros / vacaciones / ventas)
     const devengado = baseSalary + bonusLey + bonusDec + bonos;
 
     const simplesQty = Number(e.extras?.simplesQty) || 0;
-    const simplesVal = Number(e.extras?.simplesVal) || 0;
+    const simplesVal = money2(e.extras?.simplesVal);
     const doblesQty = Number(e.extras?.doblesQty) || 0;
-    const doblesVal = Number(e.extras?.doblesVal) || 0;
-    const otrosIngresos = (Number(e.extras?.otrosIngresos) || 0) + vacacionesVal + ventasEconomicas;
+    const doblesVal = money2(e.extras?.doblesVal);
+    const otrosIngresos = money2(e.extras?.otrosIngresos) + vacacionesVal + ventasEconomicas;
     const salarioTotal = e.calculated?.gross != null
       ? Number(e.calculated.gross)
       : (devengado + simplesVal + doblesVal + otrosIngresos + comisiones);
@@ -1391,7 +1477,7 @@ function ListadoPagosTab({
 
       {periodType === '2da' && (
         <Text fontSize="sm" color="gray.500" mb={3}>
-          Total ISR: edítalo en Vista Detallada. ISR 2ª = Total − ISR de la 1ª. Al cerrar la nómina se guarda el total en la ficha del empleado.
+          Total ISR: edítalo en Vista Detallada. La 2ª quincena usa el ISR mensual completo y después descuenta el anticipo neto de la 1ª.
         </Text>
       )}
 
@@ -1440,7 +1526,7 @@ function ListadoPagosTab({
                       </Th>
                     )}
                     <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">
-                      {periodType === '2da' ? 'ISR 2ª' : 'ISR'}
+                      {periodType === '2da' ? 'ISR mensual' : 'ISR'}
                     </Th>
                     <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Cafetería</Th>
                     <Th w="95px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.400">Celular</Th>
@@ -1706,8 +1792,8 @@ function ListadoPagosTab({
                     const baseSalary = e.calculated?.baseSalary || 0;
                     const bonusLey = e.calculated?.bonusLey || 0;
                     const bonusDec = e.calculated?.bonusDec || 0;
-                    const bonos = e.calculated?.bonos || 0;
-                    const totalExtras = e.calculated?.extrasTotal || 0;
+                    const bonos = (e.calculated?.bonos || 0) + (e.calculated?.bonusesSum || 0);
+                    const totalExtras = bonos + (e.calculated?.extrasTotal || 0);
                     const devengado = e.calculated?.gross || 0;
                     const totalEgresos = e.calculated?.ded || 0;
                     const liquido = e.calculated?.net || 0;
@@ -1866,7 +1952,7 @@ function ListadoPagosTab({
                           <Text fontSize="xs" color="gray.500" mb={2}>Si necesitas sobrescribir el total de bonos aprobados, modifícalo aquí.</Text>
                           <Input size="sm" type="number" bg="white" _dark={{ bg: 'gray.800' }} borderRadius="md" value={selectedEmp.extras?.bonos ?? ''} 
                             onChange={(e) => {
-                              onChange(selectedEmp.id, 'bonos', e.target.value, 'extras');
+                              onChange(selectedEmp.id, 'extras', 'bonos', e.target.value);
                               setSelectedEmp(prev => ({...prev, extras: {...prev.extras, bonos: e.target.value}}));
                             }} 
                             placeholder="0.00"
@@ -1922,14 +2008,58 @@ function DistributionTab({ data, periodType = '1ra' }) {
     let salary = 0, bonus = 0, extras = 0, patronal = 0;
     const employees = [];
     data.filter(e => (e.estado || '').toUpperCase() === 'ACTIVO').forEach(e => {
-      const distData = typeof e.dist === 'string' ? JSON.parse(e.dist) : e.dist;
-      const pct = (distData?.[c.id] || 0) / 100;
-      if (pct > 0) {
-        const snap = getEmployeePayrollSnapshot(e, periodType);
-        const eSalary = snap.baseSalary * pct;
-        const eBonus = (snap.bonusDec + snap.bonusLey) * pct;
-        const eExtras = (snap.bonos + snap.extrasTotal + snap.bonusesSum) * pct;
-        const ePatronal = (snap.patronal + snap.irtraIntecap) * pct;
+      const parseDistribution = (value) => {
+        if (!value) return {};
+        if (typeof value === 'string') {
+          try {
+            const parsed = JSON.parse(value);
+            return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+          } catch {
+            return {};
+          }
+        }
+        return typeof value === 'object' && !Array.isArray(value) ? value : {};
+      };
+      const principalId = Number(e.empresa_principal || e.companyId || e.id_empresa);
+      const rawGeneralDist = parseDistribution(e.dist);
+      const hasGeneral = Object.values(rawGeneralDist).some(value => (Number(value) || 0) > 0);
+      const generalDist = hasGeneral ? rawGeneralDist : { [principalId]: 100 };
+      const componentDist = parseDistribution(e.component_dist);
+      const selectComponentDist = (key) => {
+        const override = parseDistribution(componentDist[key]);
+        return Object.values(override).some(value => (Number(value) || 0) > 0)
+          ? override
+          : generalDist;
+      };
+      const bonusDist = selectComponentDist('bonuses');
+      const extrasDist = selectComponentDist('extras');
+      const generalPct = (Number(generalDist[c.id]) || 0) / 100;
+      const bonusesPct = (Number(bonusDist[c.id]) || 0) / 100;
+      const extrasPct = (Number(extrasDist[c.id]) || 0) / 100;
+
+      if (generalPct > 0 || bonusesPct > 0 || extrasPct > 0) {
+        const payrollSnap = getEmployeePayrollSnapshot(e, periodType);
+        const snap = getEmployeeBillingCostSnapshot(e, payrollSnap);
+        const employerTotal = (snap.patronal || 0) + (snap.irtraIntecap || 0);
+        const igssBase = (snap.igssBase || 0) || ((snap.baseSalary || 0) + (snap.extrasTotal || 0));
+        const extrasEmployer = igssBase > 0
+          ? employerTotal * (snap.extrasTotal || 0) / igssBase
+          : 0;
+        const generalEmployer = employerTotal - extrasEmployer;
+        const bonusesCost = (snap.bonos || 0) + (snap.bonusesSum || 0);
+        const extrasCost = (snap.extrasTotal || 0) + extrasEmployer;
+        // El componente general absorbe solo el residuo contable de redondeo,
+        // igual que el servicio de facturación.
+        const generalCost = (snap.companyCost || 0) - bonusesCost - extrasCost;
+        const eTotal = (generalCost * generalPct)
+          + (bonusesCost * bonusesPct)
+          + (extrasCost * extrasPct);
+        let eSalary = snap.baseSalary * generalPct;
+        const eBonus = (snap.bonusDec + snap.bonusLey) * generalPct;
+        const eExtras = ((snap.bonos + snap.bonusesSum) * bonusesPct)
+          + (snap.extrasTotal * extrasPct);
+        const ePatronal = (generalEmployer * generalPct) + (extrasEmployer * extrasPct);
+        eSalary += eTotal - (eSalary + eBonus + eExtras + ePatronal);
         
         salary += eSalary;
         bonus += eBonus;
@@ -1941,12 +2071,15 @@ function DistributionTab({ data, periodType = '1ra' }) {
         employees.push({
            ...e,
            fullName,
-           pct,
+           pct: snap.companyCost > 0 ? eTotal / snap.companyCost : 0,
+           generalPct,
+           bonusesPct,
+           extrasPct,
            eSalary,
            eBonus,
            eExtras,
            ePatronal,
-           eTotal: snap.companyCost * pct
+           eTotal
         });
       }
     });
@@ -2030,7 +2163,7 @@ function DistributionTab({ data, periodType = '1ra' }) {
                           <Thead>
                             <Tr>
                               <Th fontSize="xs">Empleado</Th>
-                              <Th fontSize="xs">% Pago</Th>
+                              <Th fontSize="xs">% Efectivo</Th>
                               <Th fontSize="xs">Salario Ord.</Th>
                               <Th fontSize="xs">Bonos Ley</Th>
                               <Th fontSize="xs">Extras</Th>

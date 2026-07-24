@@ -1,6 +1,16 @@
-const { OperationLog, OperationBatch, Employee, Company, User } = require('../models');
+const {
+  OperationLog,
+  OperationBatch,
+  Employee,
+  Company,
+  User,
+  sequelize
+} = require('../models');
 const { sendOperationLogEmail, sendOperationRejectToManagerEmail } = require('../services/email.service');
 const { assertActivePayrollForLog } = require('../services/operationPayroll.service');
+const {
+  syncOperationLogTransition
+} = require('../services/payrollDraftInputs.service');
 
 const NOMINA_ROLES = ['ADMIN', 'NOMINA', 'AUDITOR'];
 
@@ -21,6 +31,7 @@ const getAll = async (req, res) => {
 };
 
 const create = async (req, res) => {
+  let transaction;
   try {
     const { type, hoursQty, hourType, bonusAmount, date, companyId } = req.body;
 
@@ -42,10 +53,17 @@ const create = async (req, res) => {
     const isGlobalRole = ['admin', 'nomina', 'gerente general'].includes(req.user?.role?.toLowerCase());
     const status = isGlobalRole ? 'APPROVED_MANAGER' : 'PENDING_MANAGER';
     
+    transaction = await sequelize.transaction();
     const newLog = await OperationLog.create({
       ...req.body,
       status: status
+    }, { transaction });
+    await syncOperationLogTransition({
+      current: newLog,
+      transaction
     });
+    await transaction.commit();
+
     const populatedLog = await OperationLog.findByPk(newLog.id, {
       include: [
         { model: Employee, attributes: ['id', 'primer_nombre', 'segundo_nombre', 'otro_nombre', 'primer_apellido', 'segundo_apellido', 'empresa_principal'] },
@@ -54,21 +72,25 @@ const create = async (req, res) => {
     });
     res.status(201).json(populatedLog);
   } catch (err) {
+    if (transaction && !transaction.finished) await transaction.rollback();
     res.status(err.statusCode || 400).json({ error: err.message });
   }
 };
 
 const updateStatus = async (req, res) => {
+  let transaction;
   try {
+    transaction = await sequelize.transaction();
     const log = await OperationLog.findByPk(req.params.id, {
-      include: [{
-        model: OperationBatch,
-        as: 'batch',
-        include: [{ model: User, as: 'user' }]
-      }]
+      transaction,
+      lock: transaction.LOCK.UPDATE
     });
-    if (!log) return res.status(404).json({ error: 'No encontrado' });
+    if (!log) {
+      await transaction.rollback();
+      return res.status(404).json({ error: 'No encontrado' });
+    }
 
+    const previous = log.toJSON();
     const previousStatus = log.status;
     const { status, periodAssigned, justification, rejectionFromNomina } = req.body;
     
@@ -76,25 +98,39 @@ const updateStatus = async (req, res) => {
       status, 
       periodAssigned: periodAssigned || log.periodAssigned,
       justification: justification !== undefined ? justification : log.justification 
+    }, { transaction });
+    await syncOperationLogTransition({
+      previous,
+      current: log,
+      transaction
+    });
+    await transaction.commit();
+
+    const populatedLog = await OperationLog.findByPk(log.id, {
+      include: [{
+        model: OperationBatch,
+        as: 'batch',
+        include: [{ model: User, as: 'user' }]
+      }]
     });
 
     const isNominaReject = status === 'PENDING_MANAGER' &&
       (previousStatus === 'APPROVED_MANAGER' || rejectionFromNomina) &&
       isNominaRole(req.user?.role);
 
-    if (isNominaReject && log.batch?.user?.idDepartamento) {
+    if (isNominaReject && populatedLog?.batch?.user?.idDepartamento) {
       try {
         const gerentes = await User.findAll({
-          where: { role: 'GERENTE', idDepartamento: log.batch.user.idDepartamento }
+          where: { role: 'GERENTE', idDepartamento: populatedLog.batch.user.idDepartamento }
         });
         await Promise.all(
           gerentes
             .filter(g => g.email)
             .map(gerente => sendOperationRejectToManagerEmail(gerente.name, gerente.email, {
-              solicitanteName: log.batch.user.name,
+              solicitanteName: populatedLog.batch.user.name,
               count: 1,
-              justification: log.justification,
-              batchTitle: log.batch.title,
+              justification: populatedLog.justification,
+              batchTitle: populatedLog.batch.title,
               rejectedBy: req.user?.name || 'Nómina'
             }))
         );
@@ -103,27 +139,50 @@ const updateStatus = async (req, res) => {
       }
     }
 
-    res.json(log);
+    res.json(populatedLog || log);
   } catch (err) {
+    if (transaction && !transaction.finished) await transaction.rollback();
     res.status(400).json({ error: err.message });
   }
 };
 
 const remove = async (req, res) => {
+  let transaction;
   try {
-    const log = await OperationLog.findByPk(req.params.id);
-    if (!log) return res.status(404).json({ error: 'No encontrado' });
-    await log.destroy();
+    transaction = await sequelize.transaction();
+    const log = await OperationLog.findByPk(req.params.id, {
+      transaction,
+      lock: transaction.LOCK.UPDATE
+    });
+    if (!log) {
+      await transaction.rollback();
+      return res.status(404).json({ error: 'No encontrado' });
+    }
+    await syncOperationLogTransition({
+      previous: log,
+      transaction
+    });
+    await log.destroy({ transaction });
+    await transaction.commit();
     res.json({ message: 'Eliminado' });
   } catch (err) {
+    if (transaction && !transaction.finished) await transaction.rollback();
     res.status(400).json({ error: err.message });
   }
 };
 
 const update = async (req, res) => {
+  let transaction;
   try {
-    const log = await OperationLog.findByPk(req.params.id);
-    if (!log) return res.status(404).json({ error: 'No encontrado' });
+    transaction = await sequelize.transaction();
+    const log = await OperationLog.findByPk(req.params.id, {
+      transaction,
+      lock: transaction.LOCK.UPDATE
+    });
+    if (!log) {
+      await transaction.rollback();
+      return res.status(404).json({ error: 'No encontrado' });
+    }
 
     const type = req.body.type || log.type;
     const hoursQty = req.body.hoursQty !== undefined ? req.body.hoursQty : log.hoursQty;
@@ -134,13 +193,16 @@ const update = async (req, res) => {
 
     if (type === 'HORA_EXTRA') {
       if (!hourType || !['SIMPLE', 'DOBLE', 'NOCTURNA'].includes(hourType)) {
+        await transaction.rollback();
         return res.status(400).json({ error: 'hourType es requerido (SIMPLE, DOBLE o NOCTURNA) para horas extra.' });
       }
       if (!hoursQty || Number(hoursQty) <= 0) {
+        await transaction.rollback();
         return res.status(400).json({ error: 'hoursQty debe ser mayor a 0 para horas extra.' });
       }
     } else if (type === 'BONO') {
       if (!bonusAmount || Number(bonusAmount) <= 0) {
+        await transaction.rollback();
         return res.status(400).json({ error: 'bonusAmount debe ser mayor a 0 para bonos.' });
       }
     }
@@ -150,12 +212,19 @@ const update = async (req, res) => {
     const isGlobalRole = ['admin', 'nomina', 'gerente general'].includes(req.user?.role?.toLowerCase());
     const newStatus = isGlobalRole ? 'APPROVED_MANAGER' : 'PENDING_MANAGER';
 
+    const previous = log.toJSON();
     await log.update({
       ...req.body,
       status: newStatus,
       justification: null
+    }, { transaction });
+    await syncOperationLogTransition({
+      previous,
+      current: log,
+      transaction
     });
-    
+    await transaction.commit();
+
     const populatedLog = await OperationLog.findByPk(log.id, {
       include: [
         { model: Employee, attributes: ['id', 'primer_nombre', 'segundo_nombre', 'otro_nombre', 'primer_apellido', 'segundo_apellido', 'empresa_principal'] },
@@ -165,6 +234,7 @@ const update = async (req, res) => {
 
     res.json(populatedLog);
   } catch (err) {
+    if (transaction && !transaction.finished) await transaction.rollback();
     res.status(err.statusCode || 400).json({ error: err.message });
   }
 };

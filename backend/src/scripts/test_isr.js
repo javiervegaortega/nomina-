@@ -21,6 +21,8 @@ assertClose(calculateMonthlyISR(1000, 250), 0, 'renta imponible 0');
 // base 5000 + 250 = 63000 anual; IGSS=5000*0.0483*12=2898; imponible=63000-2898-48000=12102
 // anual ISR = 12102*0.05 = 605.1; mensual = 50.425 → 50.43
 assertClose(calculateMonthlyISR(5000, 250), 50.43, 'tramo 5%');
+assertClose(calculateMonthlyISR(5000, 250, 0.03), 55, 'tramo 5% jubilado con IGSS 3%');
+assertClose(calculateMonthlyISR(5000, 250, 0), 62.5, 'tramo 5% exento de IGSS');
 
 // Caso tramo 7%: sueldo alto
 // base 30000 + 250 = 363000; IGSS=30000*0.0483*12=17388; imponible=363000-17388-48000=297612

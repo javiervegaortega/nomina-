@@ -31,6 +31,41 @@ async function ensureBillingSchema(sequelize) {
     allowNull: false,
     defaultValue: 0.12
   });
+  await addColumnIfMissing('billing_run_lines', 'centroCosto', {
+    type: sequelize.Sequelize.STRING,
+    allowNull: true
+  });
+  await addColumnIfMissing('billing_run_lines', 'subtotalAmount', {
+    type: sequelize.Sequelize.DECIMAL(15, 4),
+    allowNull: false,
+    defaultValue: 0
+  });
+  await addColumnIfMissing('billing_run_lines', 'applyIva', {
+    type: sequelize.Sequelize.BOOLEAN,
+    allowNull: false,
+    defaultValue: true
+  });
+  await addColumnIfMissing('billing_run_lines', 'ivaRate', {
+    type: sequelize.Sequelize.DECIMAL(5, 4),
+    allowNull: false,
+    defaultValue: 0.12
+  });
+
+  try {
+    const indexes = await qi.showIndex('billing_runs');
+    const hasPayrollVersionUnique = indexes.some(
+      (index) => index.name === 'billing_runs_payroll_version_unique'
+    );
+    if (!hasPayrollVersionUnique) {
+      await qi.addIndex('billing_runs', ['payrollId', 'version'], {
+        unique: true,
+        name: 'billing_runs_payroll_version_unique'
+      });
+      console.log('[billing] Índice único payrollId/version agregado.');
+    }
+  } catch (err) {
+    console.warn('[billing] índice único payrollId/version:', err.message);
+  }
 
   try {
     await qi.changeColumn('billing_rules', 'fromCompany', {
@@ -47,7 +82,10 @@ async function ensureBillingSchema(sequelize) {
 
   try {
     const [rules] = await sequelize.query(
-      'SELECT id, fromCompany, toCompany, fromCompanyId, toCompanyId, isActive, marginPercentage, applyIva, ivaRate, concept FROM billing_rules'
+      `SELECT id, fromCompany, toCompany, fromCompanyId, toCompanyId, isActive,
+              marginPercentage, applyIva, ivaRate, concept
+       FROM billing_rules
+       ORDER BY id ASC`
     );
     const [companies] = await sequelize.query(
       'SELECT id, nombre_comercial, razon_social FROM empresa'
@@ -71,10 +109,23 @@ async function ensureBillingSchema(sequelize) {
       }
     }
 
-    // Facturación solo entre Proquima (1), Unhesa (2), Econacional (3).
-    // Desactivar reglas que involucren otras empresas; asegurar pares del trío.
-    const BILLABLE = new Set([1, 2, 3]);
+    // Rutas observadas en los Excel. Proquima/Unhesa no llevan margen;
+    // Econacional lleva 4%, y Econacional → Cleartec no lleva IVA.
+    const ROUTE_DEFAULTS = [
+      { fromId: 1, toId: 2, margin: 0, applyIva: 1, ivaRate: 0.12 },
+      { fromId: 1, toId: 3, margin: 0, applyIva: 1, ivaRate: 0.12 },
+      { fromId: 2, toId: 1, margin: 0, applyIva: 1, ivaRate: 0.12 },
+      { fromId: 2, toId: 3, margin: 0, applyIva: 1, ivaRate: 0.12 },
+      { fromId: 3, toId: 1, margin: 4, applyIva: 1, ivaRate: 0.12 },
+      { fromId: 3, toId: 2, margin: 4, applyIva: 1, ivaRate: 0.12 },
+      { fromId: 3, toId: 4, margin: 4, applyIva: 0, ivaRate: 0 }
+    ];
+    const ROUTES_BY_KEY = new Map(
+      ROUTE_DEFAULTS.map((route) => [`${route.fromId}->${route.toId}`, route])
+    );
+    let aligned = 0;
     let deactivated = 0;
+    const seenAllowedRoutes = new Set();
     for (const rule of rules) {
       const fromId = Number(rule.fromCompanyId)
         || nameToId[String(rule.fromCompany || '').trim().toUpperCase()]
@@ -82,83 +133,115 @@ async function ensureBillingSchema(sequelize) {
       const toId = Number(rule.toCompanyId)
         || nameToId[String(rule.toCompany || '').trim().toUpperCase()]
         || 0;
-      const shouldBeActive = BILLABLE.has(fromId) && BILLABLE.has(toId) && fromId !== toId;
-      if (rule.isActive && !shouldBeActive) {
+      const route = ROUTES_BY_KEY.get(`${fromId}->${toId}`);
+
+      if (route) {
+        const routeKey = `${route.fromId}->${route.toId}`;
+        if (seenAllowedRoutes.has(routeKey)) {
+          if (Number(rule.isActive) !== 0) {
+            await sequelize.query(
+              'UPDATE billing_rules SET isActive = 0, updatedAt = NOW() WHERE id = ?',
+              { replacements: [rule.id] }
+            );
+            deactivated += 1;
+          }
+          continue;
+        }
+        seenAllowedRoutes.add(routeKey);
+
+        const needsAlignment = Number(rule.fromCompanyId) !== route.fromId
+          || Number(rule.toCompanyId) !== route.toId
+          || Number(rule.marginPercentage) !== route.margin
+          || Number(rule.applyIva) !== route.applyIva
+          || Number(rule.ivaRate) !== route.ivaRate
+          || Number(rule.isActive) !== 1
+          || !String(rule.fromCompany || '').trim()
+          || !String(rule.toCompany || '').trim();
+
+        if (needsAlignment) {
+          await sequelize.query(
+            `UPDATE billing_rules
+             SET fromCompanyId = ?,
+                 toCompanyId = ?,
+                 fromCompany = COALESCE(NULLIF(TRIM(fromCompany), ''), ?),
+                 toCompany = COALESCE(NULLIF(TRIM(toCompany), ''), ?),
+                 marginPercentage = ?,
+                 applyIva = ?,
+                 ivaRate = ?,
+                 isActive = 1,
+                 updatedAt = NOW()
+             WHERE id = ?`,
+            {
+              replacements: [
+                route.fromId,
+                route.toId,
+                idToName[route.fromId],
+                idToName[route.toId],
+                route.margin,
+                route.applyIva,
+                route.ivaRate,
+                rule.id
+              ]
+            }
+          );
+          aligned += 1;
+        }
+      } else if (Number(rule.isActive) !== 0) {
         await sequelize.query(
-          'UPDATE billing_rules SET isActive = 0 WHERE id = ?',
+          'UPDATE billing_rules SET isActive = 0, updatedAt = NOW() WHERE id = ?',
           { replacements: [rule.id] }
         );
         deactivated += 1;
       }
     }
+    if (aligned > 0) {
+      console.log(`[billing] Reglas existentes alineadas con los Excel: ${aligned}`);
+    }
     if (deactivated > 0) {
-      console.log(`[billing] Reglas fuera del trío desactivadas: ${deactivated}`);
+      console.log(`[billing] Reglas fuera de las rutas de Excel desactivadas: ${deactivated}`);
     }
 
     const [freshRules] = await sequelize.query(
       'SELECT fromCompanyId, toCompanyId, isActive FROM billing_rules'
     );
-    const activePairs = new Set(
+    const existingPairs = new Set(
       freshRules
-        .filter((r) => r.isActive && r.fromCompanyId && r.toCompanyId)
+        .filter((r) => r.fromCompanyId && r.toCompanyId)
         .map((r) => `${r.fromCompanyId}->${r.toCompanyId}`)
     );
 
-    const template = rules.find((r) => {
-      const fromId = Number(r.fromCompanyId) || 0;
-      const toId = Number(r.toCompanyId) || 0;
-      return BILLABLE.has(fromId) && BILLABLE.has(toId);
-    }) || {};
-
-    const margin = template.marginPercentage != null ? template.marginPercentage : 4;
-    const applyIva = template.applyIva != null ? (template.applyIva ? 1 : 0) : 1;
-    const ivaRate = template.ivaRate != null ? template.ivaRate : 0.12;
-    const billableIds = [1, 2, 3].filter((id) => idToName[id]);
     let created = 0;
 
-    for (const fromId of billableIds) {
-      for (const toId of billableIds) {
-        if (fromId === toId) continue;
-        const key = `${fromId}->${toId}`;
-        if (activePairs.has(key)) continue;
+    for (const route of ROUTE_DEFAULTS) {
+      const { fromId, toId, margin, applyIva, ivaRate } = route;
+      if (!idToName[fromId] || !idToName[toId]) continue;
+      const key = `${fromId}->${toId}`;
+      if (existingPairs.has(key)) continue;
 
-        const inactive = freshRules.find(
-          (r) => Number(r.fromCompanyId) === fromId && Number(r.toCompanyId) === toId && !r.isActive
-        );
-        if (inactive) {
-          await sequelize.query(
-            'UPDATE billing_rules SET isActive = 1 WHERE fromCompanyId = ? AND toCompanyId = ?',
-            { replacements: [fromId, toId] }
-          );
-          created += 1;
-          continue;
+      await sequelize.query(
+        `INSERT INTO billing_rules
+          (fromCompanyId, toCompanyId, fromCompany, toCompany, concept, marginPercentage, applyIva, ivaRate, isActive, createdAt, updatedAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())`,
+        {
+          replacements: [
+            fromId,
+            toId,
+            idToName[fromId],
+            idToName[toId],
+            'Servicios de RRHH',
+            margin,
+            applyIva,
+            ivaRate
+          ]
         }
-
-        await sequelize.query(
-          `INSERT INTO billing_rules
-            (fromCompanyId, toCompanyId, fromCompany, toCompany, concept, marginPercentage, applyIva, ivaRate, isActive, createdAt, updatedAt)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())`,
-          {
-            replacements: [
-              fromId,
-              toId,
-              idToName[fromId],
-              idToName[toId],
-              'Servicios de RRHH',
-              margin,
-              applyIva,
-              ivaRate
-            ]
-          }
-        );
-        created += 1;
-      }
+      );
+      created += 1;
     }
     if (created > 0) {
-      console.log(`[billing] Reglas del trío creadas/reactivadas: ${created}`);
+      console.log(`[billing] Reglas iniciales según Excel creadas: ${created}`);
     }
   } catch (err) {
-    console.warn('[billing] migrate rule IDs / billable trio:', err.message);
+    console.warn('[billing] migrate rule IDs / rutas Excel:', err.message);
   }
 }
 

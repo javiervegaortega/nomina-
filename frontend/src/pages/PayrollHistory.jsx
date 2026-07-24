@@ -7,6 +7,7 @@ import { AuthContext } from '../context/AuthContext';
 import { History, Calendar, Trash2, Eye, Download, FileText, ArrowLeft, Building2, X, Search, ChevronDown, LayoutGrid, RotateCcw } from 'lucide-react';
 import { formatQ, CUOTA_LABORAL_RATE, CUOTA_PATRONAL_RATE, IRTRA_INTECAP_RATE } from '../data/mockData';
 import { getNetPayable } from '../utils/payrollPeriod';
+import { calculateEmployeePayroll } from '../utils/payrollCalculator';
 import { exportPayrollReportExcel } from '../utils/payrollReports';
 import { matchesDepartmentFilter, normalizeMultiFilter, resolveEmployeeDepartment } from '../utils/orgFilters';
 import ReportPreviewModal from '../components/ReportPreviewModal';
@@ -66,6 +67,26 @@ export const getEmployeeFullName = (e) => {
   return `${e.nombres || ''} ${e.apellidos || ''}`.trim() || 'Empleado';
 };
 
+const ensureEmployeeCalculation = (employee, periodType) => {
+  const calculated = employee?.calculated;
+  if (
+    calculated?.gross != null
+    && calculated?.ded != null
+    && calculated?.net != null
+  ) {
+    return employee;
+  }
+  return calculateEmployeePayroll(employee || {}, periodType);
+};
+
+const getCatalogBonuses = (employee) => {
+  if (employee?.calculated?.bonusesSum != null) {
+    return Number(employee.calculated.bonusesSum) || 0;
+  }
+  return Object.values(employee?.appliedBonuses || {})
+    .reduce((sum, value) => sum + (Number(value) || 0), 0);
+};
+
 /** ID de la nómina en historial (grupos se arman por título, no tienen id propio). */
 export const resolveGroupPayrollId = (group) => {
   if (!group?.records?.length) return null;
@@ -100,9 +121,12 @@ export default function PayrollHistory() {
     payrollHistory.forEach(p => {
       const t = p.title || 'Nómina sin título';
       if (!groups[t]) {
+        const periodDate = p.createdAt || p.closedAt || new Date().toISOString();
         groups[t] = {
           title: t,
-          date: p.closedAt || new Date().toISOString(), // use most recent date
+          date: periodDate,
+          createdAt: periodDate,
+          closedAt: p.closedAt || null,
           periodType: p.periodType || '1ra',
           records: [],
           status: p.status || 'cerrada',
@@ -149,32 +173,11 @@ export default function PayrollHistory() {
       let dedSum = 0;
       let netSum = 0;
       const periodType = p.periodType || groups[t].periodType || '1ra';
-      emps.forEach(e => {
-        if (e.calculated?.gross != null) {
-          grossSum += Number(e.calculated.gross) || 0;
-          dedSum += Number(e.calculated.ded) || 0;
-          netSum += getNetPayable(e, periodType);
-          return;
-        }
-        const baseFactor = (e.days || 30) / 30;
-        const sueldoOrd = Number(e.sueldo_ordinario) || 0;
-        const bonInc = Number(e.bon_incentivo) || 0;
-        const bonDec = Number(e.bon_dec_37_2001) || 0;
-
-        const baseSalary = sueldoOrd * baseFactor;
-        const bonusLey = bonInc * baseFactor;
-        const bonusDec = bonDec * baseFactor;
-        
-        const bonos = Number(e.extras?.bonos) || 0;
-        const bonusesSum = Object.values(e.appliedBonuses || {}).reduce((a, b) => a + b, 0);
-        const extrasTotal = (e.extras?.simplesVal || 0) + (e.extras?.doblesVal || 0) + (e.extras?.comisiones || 0) + (e.extras?.otrosIngresos || 0);
-
-        const eGross = baseSalary + bonusLey + bonusDec + bonos + extrasTotal + bonusesSum;
-        grossSum += eGross;
-
-        const ded = Object.values(e.deductions || {}).reduce((a, b) => a + Number(b), 0);
-        dedSum += ded;
-        netSum += getNetPayable({ ...e, calculated: { gross: eGross, ded, net: eGross - ded } }, periodType);
+      emps.forEach(rawEmployee => {
+        const e = ensureEmployeeCalculation(rawEmployee, periodType);
+        grossSum += Number(e.calculated.gross) || 0;
+        dedSum += Number(e.calculated.ded) || 0;
+        netSum += getNetPayable(e, periodType);
       });
       
       groups[t].grossTotal += grossSum;
@@ -187,8 +190,16 @@ export default function PayrollHistory() {
       });
       }
       
-      if (new Date(p.closedAt || new Date()) > new Date(groups[t].date)) {
-        groups[t].date = p.closedAt || new Date().toISOString();
+      const recordPeriodDate = p.createdAt || p.closedAt;
+      if (recordPeriodDate && new Date(recordPeriodDate) > new Date(groups[t].date)) {
+        groups[t].date = recordPeriodDate;
+        groups[t].createdAt = recordPeriodDate;
+      }
+      if (
+        p.closedAt
+        && (!groups[t].closedAt || new Date(p.closedAt) > new Date(groups[t].closedAt))
+      ) {
+        groups[t].closedAt = p.closedAt;
       }
       if (p.status === 'auditoria') {
         groups[t].status = 'auditoria';
@@ -697,16 +708,13 @@ function calculateGroupTotals(groupData, periodType) {
   let totIgss = 0, totIsr = 0, totCafe = 0, totCell = 0, totUniform = 0, totShoes = 0, totEquipo = 0, totProduct = 0, totBancos = 0, totPrestamo = 0, totOtros = 0, totJudiciales = 0, totSeguro = 0, totParqueo = 0, totBoleta = 0, totOtrosEgresos = 0, totTotalEgresos = 0;
   let totLiquido = 0, totQuincena1 = 0, totQuincena2 = 0;
 
-  groupData.forEach(e => {
-    const baseFactor = (e.days || 30) / 30;
-    const sueldoOrd = Number(e.sueldo_ordinario) || 0;
-    const bonInc = Number(e.bon_incentivo) || 0;
-    const bonDec = Number(e.bon_dec_37_2001) || 0;
-
-    const baseSalary = sueldoOrd * baseFactor;
-    const bonusLey = bonInc * baseFactor;
-    const bonusDec = bonDec * baseFactor;
-    const bonos = (Number(e.extras?.bonos) || 0) + Object.values(e.appliedBonuses || {}).reduce((s, v) => s + (Number(v) || 0), 0);
+  groupData.forEach(rawEmployee => {
+    const e = ensureEmployeeCalculation(rawEmployee, periodType);
+    const calculated = e.calculated;
+    const baseSalary = Number(calculated.baseSalary) || 0;
+    const bonusLey = Number(calculated.bonusLey) || 0;
+    const bonusDec = Number(calculated.bonusDec) || 0;
+    const bonos = (Number(calculated.bonos) || 0) + getCatalogBonuses(e);
     const comisiones = Number(e.extras?.comisiones) || 0;
     const devengado = baseSalary + bonusLey + bonusDec + bonos;
 
@@ -714,12 +722,13 @@ function calculateGroupTotals(groupData, periodType) {
     const simplesVal = Number(e.extras?.simplesVal) || 0;
     const doblesQty = Number(e.extras?.doblesQty) || 0;
     const doblesVal = Number(e.extras?.doblesVal) || 0;
-    const otrosIngresos = Number(e.extras?.otrosIngresos) || 0;
-    const salarioTotal = e.calculated?.gross != null
-      ? Number(e.calculated.gross)
-      : (devengado + simplesVal + doblesVal + otrosIngresos + comisiones);
+    const otrosIngresos = (Number(e.extras?.otrosIngresos) || 0)
+      + (Number(e.extras?.vacacionesVal) || 0)
+      + (Number(e.extras?.ventasEconomicas) || 0)
+      + comisiones;
+    const salarioTotal = Number(calculated.gross) || 0;
 
-    const proDedRow = e.calculated?.proratedDeductions || e.deductions || {};
+    const proDedRow = calculated.proratedDeductions || e.deductions || {};
     const igss = Number(proDedRow.igss) || 0;
     const isr = Number(proDedRow.isr) || 0;
     const cafe = Number(proDedRow.cafe) || 0;
@@ -738,13 +747,11 @@ function calculateGroupTotals(groupData, periodType) {
     const otros_egresos = Number(proDedRow.otros_egresos) || 0;
     const anticipo = Number(e.anticipo1ra) || 0;
     
-    const totalEgresos = e.calculated?.ded != null
-      ? Number(e.calculated.ded)
-      : (igss + isr + cafe + cell + uniform + shoes + equipo + product + bancos + prestamo_empresa + otros + judiciales + seguro + parqueo + boleto_de_ornato + otros_egresos);
-    const liquido = e.calculated?.net != null ? Number(e.calculated.net) : (salarioTotal - totalEgresos);
+    const totalEgresos = Number(calculated.ded) || 0;
+    const liquido = Number(calculated.net) || 0;
     const q1 = periodType === '2da' ? anticipo : liquido;
-    const q2 = periodType === '2da' ? liquido - anticipo : 0;
     const liquidoPagar = getNetPayable(e, periodType);
+    const q2 = periodType === '2da' ? liquidoPagar : 0;
 
     totSalarioOrd += baseSalary;
     totBonInc += bonusLey;
@@ -890,14 +897,15 @@ function PayrollHistoryDetail({ group, onBack }) {
       
       const companyName = activeGroup.companies.size > 0 ? Array.from(activeGroup.companies)[0] : 'Sin empresa';
       
-      list.forEach(e => {
+      list.forEach(rawEmployee => {
+        const e = ensureEmployeeCalculation(rawEmployee, activeGroup.periodType);
         const empCompany = companyMap.get(String(e.empresa_principal))
           || e.company
           || companyName;
-        // Enforce backend calculated properties
-        const gross = e.calculated?.gross || 0;
-        const ded = e.calculated?.ded || 0;
-        const patronal = (e.calculated?.patronal || 0) + (e.calculated?.irtraIntecap || 0);
+        const gross = Number(e.calculated.gross) || 0;
+        const ded = Number(e.calculated.ded) || 0;
+        const patronal = (Number(e.calculated.patronal) || 0)
+          + (Number(e.calculated.irtraIntecap) || 0);
         
         grossTotal += gross;
         dedTotal += ded;
@@ -905,11 +913,7 @@ function PayrollHistoryDetail({ group, onBack }) {
         
         emps.push({
           ...e,
-          company: empCompany,
-          // Ensure e.calculated is preserved, fallback if needed
-          calculated: e.calculated || {
-             baseSalary: 0, bonusLey: 0, bonusDec: 0, bonos: 0, extrasTotal: 0, bonusesSum: 0, gross, ded, net: gross - ded, patronal
-          }
+          company: empCompany
         });
       });
     });
@@ -1022,12 +1026,18 @@ function PayrollHistoryDetail({ group, onBack }) {
         'Nombre': getEmployeeFullName(e),
         'Empresa': e.company,
         'Puesto': e.puesto || 'N/A',
-        'Días Laborados': e.days || 30,
+        'Días Laborados': e.days ?? 30,
         'Salario Ordinario': e.calculated.baseSalary,
         'Bono Incentivo': e.calculated.bonusLey,
         'Bono Decreto 37-2001': e.calculated.bonusDec,
-        'Bonos': e.calculated.bonos,
-        'Total Devengado': e.calculated.gross,
+        'Bonos': (Number(e.calculated.bonos) || 0) + getCatalogBonuses(e),
+        'Total Devengado': (
+          (Number(e.calculated.baseSalary) || 0)
+          + (Number(e.calculated.bonusLey) || 0)
+          + (Number(e.calculated.bonusDec) || 0)
+          + (Number(e.calculated.bonos) || 0)
+          + getCatalogBonuses(e)
+        ),
         'Horas Simples': e.extras?.simplesQty || 0,
         'Valor Horas Simples': e.extras?.simplesVal || 0,
         'Horas Dobles': e.extras?.doblesQty || 0,
@@ -1055,7 +1065,10 @@ function PayrollHistoryDetail({ group, onBack }) {
         'Líquido a Recibir': getNetPayable(e, group.periodType),
         '1ra Quincena': group.periodType === '2da' ? (e.anticipo1ra || 0) : getNetPayable(e, group.periodType),
         '2da Quincena': group.periodType === '2da' ? getNetPayable(e, group.periodType) : 0,
-        'Detalle Bonos': (e.operationLogs || []).filter(l => l.type === 'BONO').map(l => `Q${Number(l.bonusAmount||0).toFixed(2)}`).join('; '),
+        'Detalle Bonos': [...(e.priorOperationLogs || []), ...(e.operationLogs || [])]
+          .filter(l => l.type === 'BONO')
+          .map(l => `Q${Number(l.bonusAmount || 0).toFixed(2)}`)
+          .join('; '),
         'Banco Deposito': e.banco || 'N/A',
         'Cuenta Bancaria': e.no_cuenta || 'N/A',
       };
@@ -1112,6 +1125,7 @@ function PayrollHistoryDetail({ group, onBack }) {
 
       let companyTotal = 0;
       comps[compName].forEach(e => {
+        const netPayable = getNetPayable(e, group.periodType);
         aoa.push([
           getEmployeeFullName(e),
           '',
@@ -1120,10 +1134,10 @@ function PayrollHistoryDetail({ group, onBack }) {
           '',
           '',
           'cheque',
-          e.calculated.net,
+          netPayable,
           ''
         ]);
-        companyTotal += e.calculated.net;
+        companyTotal += netPayable;
       });
 
       // Subtotal row — value in "Monto Total" column (I)
@@ -1208,7 +1222,10 @@ function PayrollHistoryDetail({ group, onBack }) {
 
       // Consolidated transfer row: "Varios Plantilla"
       if (compData.transfers.length > 0) {
-        const sumTransfers = compData.transfers.reduce((acc, e) => acc + e.calculated.net, 0);
+        const sumTransfers = compData.transfers.reduce(
+          (acc, e) => acc + getNetPayable(e, group.periodType),
+          0
+        );
         aoa.push([
           'Varios Plantilla',
           '',
@@ -1227,6 +1244,7 @@ function PayrollHistoryDetail({ group, onBack }) {
       // Individual cheque rows
       let chequeSubtotal = 0;
       compData.cheques.forEach(e => {
+        const netPayable = getNetPayable(e, group.periodType);
         aoa.push([
           getEmployeeFullName(e),
           compName.toUpperCase(),
@@ -1236,11 +1254,11 @@ function PayrollHistoryDetail({ group, onBack }) {
           '',
           '',
           'CHEQUE',
-          `Q ${e.calculated.net.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+          `Q ${netPayable.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
           ''
         ]);
-        chequeSubtotal += e.calculated.net;
-        grandTotal += e.calculated.net;
+        chequeSubtotal += netPayable;
+        grandTotal += netPayable;
       });
 
       // Cheque subtotal in "Monto Total" column (J) if there are cheques
@@ -1308,9 +1326,10 @@ function PayrollHistoryDetail({ group, onBack }) {
     Object.keys(comps).forEach(compName => {
       const rows = comps[compName].map((e, idx) => {
         const anticipo = e.anticipo1ra || 0;
-        const net = e.calculated.net;
+        const net = Number(e.calculated.net) || 0;
+        const netPayable = getNetPayable(e, group.periodType);
         const q1 = group.periodType === '2da' ? anticipo : net;
-        const q2 = group.periodType === '2da' ? net - anticipo : 0;
+        const q2 = group.periodType === '2da' ? netPayable : 0;
         // gross ya incluye HE y otros ingresos — no sumar de nuevo
         const totalIngresos = e.calculated.gross;
         const proDed = e.calculated?.proratedDeductions || e.deductions || {};
@@ -1321,9 +1340,12 @@ function PayrollHistoryDetail({ group, onBack }) {
           'NUMERO DE CUENTA': e.no_cuenta || '',
           'NOMBRE EN BANCO': getEmployeeFullName(e),
           'PUESTO': e.puesto || 'N/A',
-          'Dias laborados': e.days || 30,
+          'Dias laborados': e.days ?? 30,
           'Salario ordinario': e.calculated.baseSalary,
-          'bono': e.calculated.bonusLey + e.calculated.bonusDec + e.calculated.bonos + (e.calculated.bonusesSum || 0),
+          'bono': (Number(e.calculated.bonusLey) || 0)
+            + (Number(e.calculated.bonusDec) || 0)
+            + (Number(e.calculated.bonos) || 0)
+            + getCatalogBonuses(e),
           'horas simples': e.extras?.simplesQty || 0,
           'total  horas simples': e.extras?.simplesVal || 0,
           'horas dobles': e.extras?.doblesQty || 0,
@@ -1374,18 +1396,23 @@ function PayrollHistoryDetail({ group, onBack }) {
     Object.keys(comps).forEach(compName => {
       let counter = 1;
       const rows = comps[compName].map(e => {
-        const net = e.calculated?.net || 0;
-        const base = e.salario_base || 0;
-        const devengado = e.calculated?.proportionalSalary || 0;
-        const isr = e.calculated?.isr || 0;
-        const igss = e.calculated?.igss || 0;
-        const bono = e.calculated?.bono || e.bono_incentivo || 0;
-        const anticipo = e.calculated?.deduction_anticipo || 0;
-        const otherDed = e.calculated?.deduction_other || 0;
-        const totalDed = e.calculated?.totalDeductions || 0;
-        const totalDev = e.calculated?.gross || 0;
+        const calculated = e.calculated;
+        const proDed = calculated.proratedDeductions || e.deductions || {};
+        const base = Number(e.sueldo_ordinario) || 0;
+        const devengado = Number(calculated.baseSalary) || 0;
+        const isr = Number(proDed.isr) || 0;
+        const igss = Number(proDed.igss) || 0;
+        const bono = (Number(calculated.bonusLey) || 0)
+          + (Number(calculated.bonusDec) || 0)
+          + (Number(calculated.bonos) || 0)
+          + getCatalogBonuses(e);
+        const anticipo = group.periodType === '2da' ? (Number(e.anticipo1ra) || 0) : 0;
+        const payrollDeductions = Number(calculated.ded) || 0;
+        const otherDed = Math.max(0, payrollDeductions - igss - isr);
+        const totalDed = payrollDeductions + anticipo;
+        const totalDev = Number(calculated.gross) || 0;
         const horasExtra = (Number(e.extras?.simplesVal) || 0) + (Number(e.extras?.doblesVal) || 0);
-        const days = e.calculated?.workedDays || 15;
+        const days = e.days ?? 30;
 
         return {
           'No.': counter++,
@@ -1401,7 +1428,7 @@ function PayrollHistoryDetail({ group, onBack }) {
           'Descuento ISR': isr,
           'Otros Descuentos': anticipo + otherDed,
           'Total Descuentos': totalDed,
-          'Sueldo Líquido a Recibir': net,
+          'Sueldo Líquido a Recibir': getNetPayable(e, group.periodType),
           'Firma del Empleado': '_______________________'
         };
       });
@@ -1460,7 +1487,7 @@ function PayrollHistoryDetail({ group, onBack }) {
       const cheques = comps[compName].filter(e => String(e.tipo_de_pago).toLowerCase() === 'cheque');
 
       transfers.forEach(e => {
-        const net = e.calculated?.net || 0;
+        const net = getNetPayable(e, group.periodType);
         totalPlantilla += net;
         aoa.push([
           e.numero_cuenta || '',
@@ -1476,7 +1503,7 @@ function PayrollHistoryDetail({ group, onBack }) {
 
       if (cheques.length > 0) {
         cheques.forEach(e => {
-          const net = e.calculated?.net || 0;
+          const net = getNetPayable(e, group.periodType);
           totalCheques += net;
           aoa.push([
             'CHEQUE',
@@ -1526,7 +1553,7 @@ function PayrollHistoryDetail({ group, onBack }) {
       const cheques = comps[compName].filter(e => String(e.tipo_de_pago).toLowerCase() === 'cheque');
 
       transfers.forEach(e => {
-        const net = e.calculated?.net || 0;
+        const net = getNetPayable(e, group.periodType);
         totalPlantilla += net;
         const ind = e.tipo_cuenta?.toLowerCase() === 'ahorro' ? 2 : 1;
         aoa.push([
@@ -1545,7 +1572,7 @@ function PayrollHistoryDetail({ group, onBack }) {
 
       if (cheques.length > 0) {
         cheques.forEach(e => {
-          const net = e.calculated?.net || 0;
+          const net = getNetPayable(e, group.periodType);
           totalCheques += net;
           aoa.push([
             1, // Assuming 1 for checks
@@ -1937,14 +1964,15 @@ function PayrollHistoryDetail({ group, onBack }) {
           </Thead>
           <Tbody>
             {displayRows.map((e, idx) => {
-              const { baseSalary, bonusLey, bonusDec, bonos, bonusesSum, gross, ded, net } = e.calculated || {};
-              const bonosTotal = (bonos || 0) + (bonusesSum || 0);
+              const { baseSalary, bonusLey, bonusDec, bonos, gross, ded, net } = e.calculated || {};
+              const bonosTotal = (bonos || 0) + getCatalogBonuses(e);
               const tDevengado = (baseSalary || 0) + (bonusLey || 0) + (bonusDec || 0) + bonosTotal;
               const proDed = e.calculated?.proratedDeductions || e.deductions || {};
               const anticipo = e.anticipo1ra || 0;
               const is2da = payrollGroup.periodType === '2da';
               const q1 = is2da ? anticipo : net;
-              const q2 = is2da ? net - anticipo : 0;
+              const liquidoPagar = getNetPayable(e, payrollGroup.periodType);
+              const q2 = is2da ? liquidoPagar : 0;
               const otrosIngresosShow = (Number(e.extras?.otrosIngresos) || 0)
                 + (Number(e.extras?.vacacionesVal) || 0)
                 + (Number(e.extras?.ventasEconomicas) || 0);
@@ -1964,7 +1992,7 @@ function PayrollHistoryDetail({ group, onBack }) {
                     {e.puesto || 'Sin Puesto'}
                   </Td>
 
-                  <Td fontSize="xs">{e.days || 30}</Td>
+                  <Td fontSize="xs">{e.days ?? 30}</Td>
                   <Td fontFamily="mono" fontSize="xs">{formatQ(baseSalary)}</Td>
                   {viewMode === 'detailed' && (
                     <>
@@ -2004,7 +2032,7 @@ function PayrollHistoryDetail({ group, onBack }) {
                   )}
                   <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="red.500">{formatQ(ded)}</Td>
                   
-                  <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500">{formatQ(net)}</Td>
+                  <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500">{formatQ(liquidoPagar)}</Td>
                   {is2da && (
                     <>
                       <Td fontFamily="mono" fontSize="xs" color="gray.500">{formatQ(q1)}</Td>
@@ -2266,16 +2294,17 @@ function BoletaTemplate({ emp, group, isPrint, companies }) {
   const periodo = group?.title || 'PERÍODO';
   const fechaPago = group?.date ? new Date(group.date).toLocaleDateString('es-GT') : new Date().toLocaleDateString('es-GT');
 
-  const days = emp.days || 30;
+  const days = emp.days ?? 30;
   const baseSalary = emp.calculated?.baseSalary || 0;
   const bonusLey = emp.calculated?.bonusLey || 0;
   const bonusDec = emp.calculated?.bonusDec || 0;
-  const bonos = emp.calculated?.bonos || 0;
+  const bonos = (Number(emp.calculated?.bonos) || 0) + getCatalogBonuses(emp);
   const simplesQty = emp.extras?.simplesQty || 0;
   const simplesVal = emp.extras?.simplesVal || 0;
   const doblesQty = emp.extras?.doblesQty || 0;
   const doblesVal = emp.extras?.doblesVal || 0;
-  const otrosIngresos = emp.extras?.otrosIngresos || 0;
+  const otrosIngresos = (Number(emp.extras?.otrosIngresos) || 0)
+    + (Number(emp.extras?.comisiones) || 0);
   const gross = emp.calculated?.gross || 0;
 
   const proDedBoleta = emp.calculated?.proratedDeductions || emp.deductions || {};
@@ -2294,10 +2323,7 @@ function BoletaTemplate({ emp, group, isPrint, companies }) {
     (Number(proDedBoleta.judiciales) || 0) + (Number(proDedBoleta.seguro) || 0) +
     (Number(proDedBoleta.parqueo) || 0) + (Number(proDedBoleta.boleto_de_ornato) || 0) +
     prestamoBoleta;
-  const baseNet = emp.calculated?.net || 0;
-  
-  // En la 2da quincena, el líquido final debe restar el anticipo de la 1ra
-  const net = group?.periodType === '2da' ? baseNet - anticipo : baseNet;
+  const net = getNetPayable(emp, group?.periodType);
 
   const fmt = (n) => (typeof n === 'number' ? n.toLocaleString('es-GT', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00');
 

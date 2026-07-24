@@ -191,13 +191,17 @@ const buildFacturasSheet = (wb, { payrollTitle, lines }) => {
   return ws;
 };
 
-const buildPorCentroCostoSheet = (wb, { payrollTitle, lines, companyNames }) => {
+const buildPorCentroCostoSheet = (
+  wb,
+  { payrollTitle, lines, operationalDetails, companyNames }
+) => {
   const byCc = {};
   const receiverIds = new Set();
+  const sourceRows = operationalDetails?.length ? operationalDetails : (lines || []);
 
-  (lines || []).forEach((line) => {
+  sourceRows.forEach((line) => {
     const cc = line.centroCosto || 'SIN CENTRO DE COSTO';
-    const toId = line.toCompanyId != null ? String(line.toCompanyId) : (line.toCompany || 'destino');
+    const toId = line.operationalToCompanyId ?? line.toCompanyId;
     const toLabel = line.toCompany || companyNames?.[toId] || toId;
     if (!byCc[cc]) byCc[cc] = {};
     if (!byCc[cc][toLabel]) byCc[cc][toLabel] = 0;
@@ -210,7 +214,7 @@ const buildPorCentroCostoSheet = (wb, { payrollTitle, lines, companyNames }) => 
   const ws = wb.addWorksheet('Por Centro de Costo', { views: [{ state: 'frozen', ySplit: 4, xSplit: 1 }] });
   setCols(ws, [32, ...receivers.map(() => 16), 16]);
 
-  const title = ws.addRow(['Costos por Centro de Costo (distribución REAL facturable)']);
+  const title = ws.addRow(['Costos por Centro Operativo (bruto antes de mapeo legal y neteo)']);
   styleTitleRow(title, colCount);
   ws.mergeCells(1, 1, 1, colCount);
 
@@ -445,6 +449,184 @@ const buildDetalleSheet = (wb, { payrollTitle, details }) => {
   return ws;
 };
 
+const MONTH_NAMES_ES_UPPER = [
+  'ENERO', 'FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO',
+  'JULIO', 'AGOSTO', 'SEPTIEMBRE', 'OCTUBRE', 'NOVIEMBRE', 'DICIEMBRE'
+];
+
+const ZONA_FRANCA_NOTE = 'No afecta al IVA (Decreto 65-89 Ley de Zonas Francas)';
+
+const shortCompanyName = (name) => {
+  if (!name) return '';
+  return String(name)
+    .replace(/,?\s*S\.?\s*A\.?\s*$/i, '')
+    .replace(/,?\s*SOCIEDAD\s+AN[OÓ]NIMA\s*$/i, '')
+    .trim()
+    .toUpperCase();
+};
+
+const resolveBillingPeriod = (data) => {
+  const monthKey = String(data?.billingMonth || '').trim();
+  const keyMatch = /^(\d{4})-(\d{2})$/.exec(monthKey);
+  if (keyMatch) {
+    const year = Number(keyMatch[1]);
+    const monthIdx = Number(keyMatch[2]) - 1;
+    if (monthIdx >= 0 && monthIdx < 12) {
+      return { year, monthName: MONTH_NAMES_ES_UPPER[monthIdx] };
+    }
+  }
+  const title = String(data?.payrollTitle || '');
+  const fromTitle = title.match(
+    /\b(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+(\d{4})\b/i
+  );
+  if (fromTitle) {
+    const idx = MONTH_NAMES_ES_UPPER.findIndex((m) => m === fromTitle[1].toUpperCase());
+    if (idx >= 0) return { year: Number(fromTitle[2]), monthName: MONTH_NAMES_ES_UPPER[idx] };
+  }
+  const now = new Date();
+  return { year: now.getFullYear(), monthName: MONTH_NAMES_ES_UPPER[now.getMonth()] };
+};
+
+const buildFacturarInstruction = (line, period) => {
+  const from = shortCompanyName(line.fromCompany);
+  const to = shortCompanyName(line.toCompany);
+  return `FACTURAR CON FECHA ${period.monthName} SERVICIOS DE RRHH DE ${period.monthName} ${period.year} DE ${from} A ${to}`;
+};
+
+const lineSkipsIva = (line) => {
+  if (line?.applyIva === false || line?.applyIva === 0 || line?.applyIva === '0') return true;
+  // Historial antiguo sin flag: si hay base y IVA en 0, asumir zona franca
+  if (line?.applyIva == null) {
+    return Number(line?.ivaAmount) === 0 && Number(line?.baseAmount) > 0;
+  }
+  return false;
+};
+
+/**
+ * Hoja "Vista Previa 2": instrucciones de facturación por bloque
+ * (como el Excel operativo: texto amarillo + tabla BASE/MARGEN/IVA/TOTAL).
+ */
+const buildVistaPrevia2Sheet = (wb, data) => {
+  const lines = Array.isArray(data?.lines) ? data.lines : [];
+  const period = resolveBillingPeriod(data);
+  const ws = wb.addWorksheet('Vista Previa 2');
+
+  // Dos columnas de bloques: A–D (izq) y F–I (der)
+  setCols(ws, [16, 14, 14, 16, 3, 16, 14, 14, 16]);
+
+  const yellowFill = {
+    type: 'pattern',
+    pattern: 'solid',
+    fgColor: { argb: 'FFFFFF00' }
+  };
+  const headerFill = {
+    type: 'pattern',
+    pattern: 'solid',
+    fgColor: { argb: 'D9E2F3' }
+  };
+  const blockBorder = {
+    top: { style: 'thin', color: { argb: '000000' } },
+    left: { style: 'thin', color: { argb: '000000' } },
+    bottom: { style: 'thin', color: { argb: '000000' } },
+    right: { style: 'thin', color: { argb: '000000' } }
+  };
+  const vistaMoneyFmt = '#,##0.00';
+
+  const styleInstruction = (row, startCol) => {
+    for (let c = 0; c < 4; c += 1) {
+      const cell = row.getCell(startCol + c);
+      cell.fill = yellowFill;
+      cell.font = { bold: true, size: 10, name: 'Calibri', color: { argb: '000000' } };
+      cell.alignment = { vertical: 'middle', wrapText: true };
+    }
+    row.height = 32;
+  };
+
+  const writeBlock = (startRow, startCol, line) => {
+    let r = startRow;
+    const instruction = buildFacturarInstruction(line, period);
+    const instrRow = ws.getRow(r);
+    instrRow.getCell(startCol).value = instruction;
+    styleInstruction(instrRow, startCol);
+    ws.mergeCells(r, startCol, r, startCol + 3);
+    r += 1;
+
+    if (lineSkipsIva(line)) {
+      const noteRow = ws.getRow(r);
+      noteRow.getCell(startCol).value = ZONA_FRANCA_NOTE;
+      noteRow.getCell(startCol).font = {
+        bold: true,
+        size: 9,
+        name: 'Calibri',
+        color: { argb: '000000' }
+      };
+      noteRow.getCell(startCol).alignment = { vertical: 'middle', wrapText: true };
+      ws.mergeCells(r, startCol, r, startCol + 3);
+      noteRow.height = 18;
+      r += 1;
+    }
+
+    const headers = ['BASE', 'MARGEN', 'IVA', 'TOTAL'];
+    const headerRow = ws.getRow(r);
+    headers.forEach((label, i) => {
+      const cell = headerRow.getCell(startCol + i);
+      cell.value = label;
+      cell.fill = headerFill;
+      cell.font = { bold: true, size: 10, name: 'Calibri' };
+      cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      cell.border = blockBorder;
+    });
+    headerRow.height = 18;
+    r += 1;
+
+    const values = [
+      Number(line.baseAmount) || 0,
+      Number(line.marginAmount) || 0,
+      Number(line.ivaAmount) || 0,
+      Number(line.totalAmount) || 0
+    ];
+    const valueRow = ws.getRow(r);
+    values.forEach((val, i) => {
+      const cell = valueRow.getCell(startCol + i);
+      cell.value = val;
+      cell.numFmt = vistaMoneyFmt;
+      cell.font = { size: 10, name: 'Calibri' };
+      cell.alignment = { horizontal: 'right', vertical: 'middle' };
+      cell.border = blockBorder;
+      if (i === 3) cell.font = { bold: true, size: 10, name: 'Calibri' };
+    });
+    valueRow.height = 18;
+    r += 1;
+
+    return r; // next free row after block (no spacer yet)
+  };
+
+  if (lines.length === 0) {
+    const empty = ws.addRow(['Sin facturas para vista previa. Genere el cálculo de facturación primero.']);
+    empty.getCell(1).font = { size: 11, name: 'Calibri', color: { argb: COLORS.muted } };
+    ws.mergeCells(1, 1, 1, 4);
+    return ws;
+  }
+
+  // Emparejar facturas en dos columnas (como el Excel de referencia)
+  let leftRow = 1;
+  let rightRow = 1;
+  const blockGap = 2; // filas en blanco entre bloques
+
+  lines.forEach((line, idx) => {
+    const useLeft = idx % 2 === 0;
+    if (useLeft) {
+      const end = writeBlock(leftRow, 1, line);
+      leftRow = end + blockGap;
+    } else {
+      const end = writeBlock(rightRow, 6, line);
+      rightRow = end + blockGap;
+    }
+  });
+
+  return ws;
+};
+
 const buildResumenSheet = (wb, data) => {
   const { payrollTitle, lines = [], matrix = {}, details = [], warnings = [] } = data;
   const ws = wb.addWorksheet('Resumen', { views: [{ state: 'frozen', ySplit: 1 }] });
@@ -496,10 +678,12 @@ const buildResumenSheet = (wb, data) => {
 export const exportBillingExcel = async (data, filename) => {
   const payload = {
     payrollTitle: data?.payrollTitle,
+    billingMonth: data?.billingMonth,
     lines: data?.lines || [],
     matrix: data?.matrix || {},
     companyNames: data?.companyNames || {},
     details: data?.details || [],
+    operationalDetails: data?.operationalDetails || [],
     warnings: data?.warnings || []
   };
 
@@ -508,6 +692,7 @@ export const exportBillingExcel = async (data, filename) => {
   wb.created = new Date();
   wb.modified = new Date();
 
+  buildVistaPrevia2Sheet(wb, payload);
   buildResumenSheet(wb, payload);
   buildFacturasSheet(wb, payload);
   buildPorCentroCostoSheet(wb, payload);
@@ -521,7 +706,7 @@ export const exportBillingExcel = async (data, filename) => {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = filename || 'Facturacion_Intercompania.xlsx';
+  a.download = filename || 'Vista_Previa_2_Facturacion.xlsx';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -533,6 +718,9 @@ export const buildExportFromRun = (run) => {
   const matrix = costMatrix.matrix || {};
   const companyNames = costMatrix.companyNames || {};
   const details = Array.isArray(costMatrix.details) ? costMatrix.details : [];
+  const operationalDetails = Array.isArray(costMatrix.operationalDetails)
+    ? costMatrix.operationalDetails
+    : [];
   const warnings = Array.isArray(costMatrix.warnings) ? costMatrix.warnings : [];
 
   const storedLines = Array.isArray(costMatrix.lines) ? costMatrix.lines : [];
@@ -559,16 +747,19 @@ export const buildExportFromRun = (run) => {
       marginPercentage: Number(l.marginPercentage),
       marginAmount: Number(l.marginAmount),
       ivaAmount: Number(l.ivaAmount),
-      totalAmount: Number(l.totalAmount)
+      totalAmount: Number(l.totalAmount),
+      applyIva: l.applyIva != null ? l.applyIva : stored.applyIva
     };
   });
 
   return {
     payrollTitle: run.payrollTitle,
+    billingMonth: costMatrix.billingMonth,
     lines,
     matrix,
     companyNames,
     details,
+    operationalDetails,
     warnings
   };
 };

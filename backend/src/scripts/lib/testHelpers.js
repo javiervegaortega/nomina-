@@ -123,22 +123,46 @@ function buildDraftEmployee(emp, ctx) {
 
   const monthNames = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
   const currentMonth = monthNames[new Date(draftRefDate).getMonth()];
+  const isInInputWindow = (dateValue) => {
+    if (periodType !== '2da') {
+      return isDateInQuincena(dateValue, draftRefDate, periodType);
+    }
+    const input = new Date(`${String(dateValue).slice(0, 10)}T12:00:00`);
+    const reference = new Date(draftRefDate);
+    return input.getFullYear() === reference.getFullYear()
+      && input.getMonth() === reference.getMonth();
+  };
 
   let qtySimples = 0;
   let qtyDobles = 0;
   let totalBonos = 0;
   const attachedLogs = [];
 
-  commissions
-    .filter((c) => c.employee_id === emp.id && c.estado !== 'Aplicado' && c.mes === currentMonth)
+  const employeeCommissions = commissions
+    .filter((c) => (
+      String(c.employee_id) === String(emp.id)
+      && c.estado !== 'Aplicado'
+      && (!c.empresa_id || String(c.empresa_id) === String(companyId))
+      && (
+        c.fecha
+          ? isInInputWindow(c.fecha)
+          : c.mes === currentMonth
+      )
+    ));
+  employeeCommissions
     .forEach((c) => {
       totalBonos += Number(c.monto_bono) || 0;
+      if (String(c.tipo_hora || '').toUpperCase() === 'D') {
+        qtySimples += Number(c.horas) || 0;
+      } else if (String(c.tipo_hora || '').toUpperCase() === 'N') {
+        qtyDobles += Number(c.horas) || 0;
+      }
     });
 
   operationLogs
     .filter((l) => {
       if (String(l.employeeId) !== String(emp.id) || l.status !== 'APPROVED_MANAGER') return false;
-      return isDateInQuincena(l.date, draftRefDate, periodType);
+      return isInInputWindow(l.date);
     })
     .forEach((l) => {
       attachedLogs.push(l);
@@ -176,6 +200,7 @@ function buildDraftEmployee(emp, ctx) {
       comisiones: 0,
       otrosIngresos: Number(emp.otro_ingresos) || 0
     },
+    commissionIds: employeeCommissions.map(c => c.id),
     appliedBonuses,
     operationLogs: attachedLogs,
     deductions: emp.deductions || {}

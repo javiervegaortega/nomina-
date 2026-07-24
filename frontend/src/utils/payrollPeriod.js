@@ -11,13 +11,50 @@ const MONTH_NAMES_ES = [
   'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
 ];
 
-function parseLocalDate(dateStr) {
+export function parseLocalDate(dateStr) {
   if (!dateStr) return new Date();
+  if (dateStr instanceof Date) {
+    return Number.isNaN(dateStr.getTime()) ? new Date() : dateStr;
+  }
   const parts = String(dateStr).slice(0, 10).split('-');
   if (parts.length >= 3) {
     return new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
   }
   return new Date(dateStr);
+}
+
+/** YYYY-MM-DD en calendario local (evita el desfase UTC de toISOString().slice). */
+export function formatLocalDateKey(dateOrStr) {
+  const d = dateOrStr instanceof Date && !Number.isNaN(dateOrStr.getTime())
+    ? dateOrStr
+    : parseLocalDate(dateOrStr);
+  if (Number.isNaN(d.getTime())) return '';
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/**
+ * Convierte YYYY-MM-DD (o ISO) a timestamp ISO preservando el día local.
+ * Usa mediodía local para que la conversión a UTC no cambie el calendario
+ * en zonas como America/Guatemala (UTC−6).
+ */
+export function toPayrollDateISO(dateStr) {
+  if (!dateStr) {
+    const now = new Date();
+    now.setHours(12, 0, 0, 0);
+    return now.toISOString();
+  }
+  const d = parseLocalDate(dateStr);
+  d.setHours(12, 0, 0, 0);
+  return d.toISOString();
+}
+
+/** Fecha de periodo para UI (día local, no UTC). */
+export function formatPayrollDisplayDate(dateStr, locale) {
+  if (!dateStr) return '';
+  return parseLocalDate(dateStr).toLocaleDateString(locale);
 }
 
 /** Infere '1ra' o '2da' según el día del mes (1–15 → 1ra, 16–fin → 2da). */
@@ -85,7 +122,7 @@ export function buildPayrollDraftTitle(dateStr, periodType) {
 }
 
 export function getQuincenaDateRange(draftDateStr, periodType) {
-  const d = draftDateStr ? new Date(draftDateStr) : new Date();
+  const d = parseLocalDate(draftDateStr);
   const year = d.getFullYear();
   const month = d.getMonth();
   if (periodType === '2da') {

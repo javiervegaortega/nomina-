@@ -23,7 +23,8 @@ export default function OperationLogs() {
   const {
     employees, departments, areas, divisions, subdivisions, dimension5s, companies,
     addOperationLog, updateOperationLogStatus, deleteOperationLog, updateOperationLog,
-    activePayrolls, injectApprovedLogIntoActiveDrafts, revertLogFromActiveDrafts, isLoading
+    activePayrolls, injectApprovedLogIntoActiveDrafts, revertLogFromActiveDrafts,
+    flushPendingDraftSaves, isLoading
   } = useContext(DataContext);
   const { user } = useContext(AuthContext);
 
@@ -468,6 +469,7 @@ export default function OperationLogs() {
       return;
     }
     try {
+      await flushPendingDraftSaves();
       const token = localStorage.getItem('nomina-token');
       const res = await fetch(`http://localhost:3000/api/operation-batches/${batchId}/status`, {
         method: 'PATCH',
@@ -495,6 +497,7 @@ export default function OperationLogs() {
       return;
     }
     try {
+      await flushPendingDraftSaves();
       const token = localStorage.getItem('nomina-token');
       const res = await fetch(`http://localhost:3000/api/operation-batches/${batchId}/status`, {
         method: 'PATCH',
@@ -522,6 +525,7 @@ export default function OperationLogs() {
     const note = prompt('Razón del rechazo:');
     if (!note) return;
     try {
+      await flushPendingDraftSaves();
       const token = localStorage.getItem('nomina-token');
       const res = await fetch(`http://localhost:3000/api/operation-batches/${batchId}/status`, {
         method: 'PATCH',
@@ -547,6 +551,7 @@ export default function OperationLogs() {
     const note = prompt('Justificación del rechazo al gerente:');
     if (!note) return;
     try {
+      await flushPendingDraftSaves();
       const token = localStorage.getItem('nomina-token');
       const res = await fetch(`http://localhost:3000/api/operation-batches/${batchId}/status`, {
         method: 'PATCH',

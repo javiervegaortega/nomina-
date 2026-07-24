@@ -13,10 +13,21 @@ const isJubilado = (e) => !!(e && (e.jubilacion === true || e.jubilacion === 1))
 
 /**
  * Exento total de IGSS (flag explícito). Los jubilados NO son exentos: cotizan 3% laboral.
- * Sin cuota patronal / IRTRA-INTECAP cuando es jubilado o exento.
+ * El Excel mantiene cuota patronal / IRTRA-INTECAP normal para jubilados.
  */
 const isIgssExempt = (e) => !!(e && (e.igss_exempt === true || e.igss_exempt === 1));
-const skipsIgssPatronal = (e) => isJubilado(e) || isIgssExempt(e);
+const skipsIgssPatronal = (e) => isIgssExempt(e);
+
+/**
+ * Los Excel cobran la mitad de las deducciones mensuales cuando días <= 15
+ * y el total mensual cuando días > 15 (no usan días/30 para estos descuentos).
+ */
+const getRecurringDeductionFactor = (daysWorked) => {
+  const days = new Decimal(
+    daysWorked === undefined || daysWorked === null || daysWorked === '' ? 30 : daysWorked
+  );
+  return days.lte(15) ? new Decimal('0.5') : new Decimal(1);
+};
 
 /** Tasa laboral aplicable: 0 (exento), 3% (jubilado) o 4.83% (normal). */
 const getCuotaLaboralRate = (e) => {
@@ -36,12 +47,22 @@ const getCompanyCost = (calculated) => {
   return gross.plus(patronal).plus(irtraIntecap).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber();
 };
 
+const parseLocalPayrollDate = (dateValue) => {
+  if (!dateValue) return new Date();
+  const dateText = String(dateValue);
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateText);
+  if (match) {
+    return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  }
+  return new Date(dateValue);
+};
+
 /**
  * Rango de fechas de una quincena a partir de una fecha de referencia.
  * 1ra = días 1–15; 2da = 16–último día del mes.
  */
 const getQuincenaDateRange = (draftDateStr, periodType) => {
-  const d = draftDateStr ? new Date(draftDateStr) : new Date();
+  const d = parseLocalPayrollDate(draftDateStr);
   const year = d.getFullYear();
   const month = d.getMonth();
   if (periodType === '2da') {
@@ -76,16 +97,26 @@ const isDateInQuincena = (dateStr, draftDateStr, periodType) => {
  * @returns {Object} - The employee object updated with precise 'calculated' fields.
  */
 const calculateEmployeePayroll = (e, periodType) => {
-  const days = new Decimal(e.days || 30);
+  const rawDays = e.days;
+  const days = new Decimal(
+    rawDays === undefined || rawDays === null || rawDays === '' ? 30 : rawDays
+  );
+  if (days.lt(0) || days.gt(30)) {
+    throw new Error('Los días laborados deben estar entre 0 y 30.');
+  }
   const baseFactor = days.dividedBy(30);
+  const recurringDeductionFactor = getRecurringDeductionFactor(days);
 
   const sueldoOrd = new Decimal(e.sueldo_ordinario || 0);
   const bonInc = new Decimal(e.bon_incentivo || 0);
   const bonDec = new Decimal(e.bon_dec_37_2001 || 0);
+  const roundMoney = (value) => new Decimal(value || 0)
+    .toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
 
-  const baseSalary = sueldoOrd.times(baseFactor);
-  const bonusLey = bonInc.times(baseFactor);
-  const bonusDec = bonDec.times(baseFactor);
+  // El Excel redondea cada columna monetaria antes de totalizar el devengado.
+  const baseSalary = roundMoney(sueldoOrd.times(baseFactor));
+  const bonusLey = roundMoney(bonInc.times(baseFactor));
+  const bonusDec = roundMoney(bonDec.times(baseFactor));
 
   // Extras de período (+ backfill maestro para borradores antiguos)
   const extrasObj = { ...(e.extras || {}) };
@@ -98,13 +129,13 @@ const calculateEmployeePayroll = (e, periodType) => {
       .toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber();
   }
 
-  const extrasBonos = new Decimal(extrasObj.bonos || 0);
-  const extrasSimples = new Decimal(extrasObj.simplesVal || 0);
-  const extrasDobles = new Decimal(extrasObj.doblesVal || 0);
-  const comisiones = new Decimal(extrasObj.comisiones || 0);
-  const otrosIngresos = new Decimal(extrasObj.otrosIngresos || 0);
-  const vacacionesVal = new Decimal(extrasObj.vacacionesVal || 0);
-  const ventasEconomicas = new Decimal(extrasObj.ventasEconomicas || 0);
+  const extrasBonos = roundMoney(extrasObj.bonos);
+  const extrasSimples = roundMoney(extrasObj.simplesVal);
+  const extrasDobles = roundMoney(extrasObj.doblesVal);
+  const comisiones = roundMoney(extrasObj.comisiones);
+  const otrosIngresos = roundMoney(extrasObj.otrosIngresos);
+  const vacacionesVal = roundMoney(extrasObj.vacacionesVal);
+  const ventasEconomicas = roundMoney(extrasObj.ventasEconomicas);
 
   const extrasTotal = extrasSimples
     .plus(extrasDobles)
@@ -116,14 +147,13 @@ const calculateEmployeePayroll = (e, periodType) => {
   const appliedBonusesValues = Object.values(e.appliedBonuses || {});
   let bonusesSum = new Decimal(0);
   for (const val of appliedBonusesValues) {
-    bonusesSum = bonusesSum.plus(new Decimal(val || 0));
+    bonusesSum = bonusesSum.plus(roundMoney(val));
   }
 
   const gross = baseSalary.plus(bonusLey).plus(bonusDec).plus(extrasBonos).plus(extrasTotal).plus(bonusesSum);
 
-  // Base afecta al IGSS: todo lo devengado excepto bonificación decreto/incentivo
-  // (igual que el Excel: sueldo + hrs extra + comisiones + otros)
-  const igssBase = baseSalary.plus(extrasTotal).plus(extrasBonos).plus(bonusesSum);
+  // Los Excel acumulan los bonos en lo devengado, pero los excluyen de IGSS.
+  const igssBase = baseSalary.plus(extrasTotal);
 
   const laboralRate = getCuotaLaboralRate(e);
   const noPatronal = skipsIgssPatronal(e);
@@ -139,12 +169,18 @@ const calculateEmployeePayroll = (e, periodType) => {
 
   // ISR: manda el valor del maestro del empleado (retención mensual definida por
   // contabilidad, como en el Excel). La fórmula 5%-7% es solo fallback/sugerencia.
-  // En 2ª quincena: ISR periodo = Total ISR − ISR ya retenido en 1ª.
+  // En la 2ª quincena el Excel calcula el neto mensual completo y después resta
+  // el anticipo neto de la 1ª. Por eso aquí se descuenta el ISR mensual completo
+  // (o la mitad si los días son <= 15), sin volver a restar el ISR de la 1ª.
   const { calculateMonthlyISR } = require('./isr.service');
   const hasMasterIsr = e.isr !== undefined && e.isr !== null && e.isr !== '';
   const monthlyIsr = hasMasterIsr
     ? (Number(e.isr) || 0)
-    : calculateMonthlyISR(sueldoOrd.toNumber(), bonDec.toNumber());
+    : calculateMonthlyISR(
+      sueldoOrd.toNumber(),
+      bonDec.toNumber(),
+      laboralRate.toNumber()
+    );
 
   const isSecondQuincena = periodType === '2da'
     || e.totalIsr !== undefined
@@ -156,12 +192,11 @@ const calculateEmployeePayroll = (e, periodType) => {
         ? e.totalIsr
         : monthlyIsr
     );
-    const isr1ra = new Decimal(e.isr1ra || 0);
-    isrValue = Decimal.max(0, totalIsr.minus(isr1ra))
+    isrValue = Decimal.max(0, totalIsr.times(recurringDeductionFactor))
       .toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
   } else {
     isrValue = new Decimal(monthlyIsr)
-      .times(baseFactor)
+      .times(recurringDeductionFactor)
       .toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
   }
 
@@ -170,27 +205,32 @@ const calculateEmployeePayroll = (e, periodType) => {
   currentDeductions.isr = isrValue.toNumber();
 
   // Backfill Bantrab/bancos/préstamo/otros desde maestro (borradores antiguos sin cablear)
-  const masterBancos = new Decimal(e.bantrab || 0).plus(e.bancos || 0);
-  if (masterBancos.gt(0) && !(new Decimal(currentDeductions.bancos || 0).gt(0))) {
-    currentDeductions.bancos = masterBancos
-      .times(baseFactor)
-      .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
-      .toNumber();
-  }
-  if (!Object.prototype.hasOwnProperty.call(currentDeductions, 'prestamo_empresa')
-      && new Decimal(e.prestamo_empresa || 0).gt(0)) {
-    currentDeductions.prestamo_empresa = new Decimal(e.prestamo_empresa)
-      .times(baseFactor)
-      .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
-      .toNumber();
-  }
-  const masterOtros = new Decimal(e.otros_egresos || 0).plus(e.otro_descuentos || 0);
-  if (masterOtros.gt(0) && !(new Decimal(currentDeductions.otros_egresos || 0).gt(0))) {
-    currentDeductions.otros_egresos = masterOtros
-      .times(baseFactor)
-      .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
-      .toNumber();
-  }
+  const backfillPeriodDeduction = (key, monthlyAmount) => {
+    const master = new Decimal(monthlyAmount || 0);
+    const hasPeriodValue = Object.prototype.hasOwnProperty.call(currentDeductions, key)
+      && currentDeductions[key] !== null
+      && currentDeductions[key] !== '';
+    if (master.gt(0) && !hasPeriodValue) {
+      currentDeductions[key] = master
+        .times(recurringDeductionFactor)
+        .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
+        .toNumber();
+    }
+  };
+
+  backfillPeriodDeduction(
+    'bancos',
+    new Decimal(e.bantrab || 0).plus(e.bancos || 0)
+  );
+  backfillPeriodDeduction('prestamo_empresa', e.prestamo_empresa);
+  backfillPeriodDeduction('judiciales', e.judiciales);
+  backfillPeriodDeduction('seguro', e.seguro);
+  backfillPeriodDeduction('parqueo', e.parqueo);
+  backfillPeriodDeduction('boleto_de_ornato', e.boleto_de_ornato);
+  backfillPeriodDeduction(
+    'otros_egresos',
+    new Decimal(e.otros_egresos || 0).plus(e.otro_descuentos || 0)
+  );
 
   // Deducciones ya son del período (semilla FE o edición); no re-prorratear
   const proratedDeductions = {};
@@ -224,6 +264,7 @@ const calculateEmployeePayroll = (e, periodType) => {
     bonos: extrasBonos.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(),
     extrasTotal: extrasTotal.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(),
     bonusesSum: bonusesSum.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(),
+    igssBase: igssBase.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(),
     gross: grossRounded,
     ded: totalDeductions.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(),
     net: net.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(),
@@ -262,7 +303,9 @@ module.exports = {
   isIgssExempt,
   isJubilado,
   skipsIgssPatronal,
+  getRecurringDeductionFactor,
   getCuotaLaboralRate,
+  parseLocalPayrollDate,
   getQuincenaDateRange,
   isDateInQuincena,
   CUOTA_PATRONAL_RATE,

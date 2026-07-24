@@ -5415,9 +5415,13 @@ export const IVA_RATE = 0.12;
 
 // Cálculo de ISR Mensual (Régimen de Asalariados - Guatemala)
 // Misma fórmula que backend/src/services/isr.service.js
-export const calculateMonthlyISR = (baseMonthly, bonusMonthly = 250) => {
+export const calculateMonthlyISR = (
+  baseMonthly,
+  bonusMonthly = 250,
+  laborIgssRate = CUOTA_LABORAL_RATE
+) => {
   const annualIncome = (baseMonthly + bonusMonthly) * 12;
-  const annualIgss = baseMonthly * CUOTA_LABORAL_RATE * 12;
+  const annualIgss = baseMonthly * (Number(laborIgssRate) || 0) * 12;
   const personalExpenses = 48000;
   const taxableIncome = annualIncome - annualIgss - personalExpenses;
 
@@ -5435,7 +5439,7 @@ export const calculateMonthlyISR = (baseMonthly, bonusMonthly = 250) => {
 
 export function calcTotal(emp) {
   // Proporción de días laborados
-  const baseFactor = (emp.days || 30) / 30;
+  const baseFactor = (emp.days ?? 30) / 30;
   
   // Ingresos
   const baseSalary = emp.base * baseFactor;

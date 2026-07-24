@@ -12,7 +12,7 @@ const MASTER_FIELDS = [
   'igss_laboral', 'igss_patronal', 'bantrab', 'bancos', 'prestamo_empresa',
   'otro_descuentos', 'otros_egresos', 'seguro', 'boleto_de_ornato',
   'judiciales', 'parqueo', 'vacaciones', 'ventas_economicas', 'otro_ingresos',
-  'jubilacion', 'dist', 'anticipo_quincenal'
+  'jubilacion', 'igss_exempt', 'dist', 'component_dist', 'anticipo_quincenal'
 ];
 
 async function main() {

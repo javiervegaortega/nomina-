@@ -1,10 +1,13 @@
 const { Op } = require('sequelize');
+const Decimal = require('decimal.js');
 const { Employee, EmployeeRecord, EmployeeIncidence, Department } = require('../models');
 const { calculateMonthlyISR } = require('../services/isr.service');
 
 const CUOTA_LABORAL = 0.0483;
 const CUOTA_LABORAL_JUBILADO = 0.03;
 const CUOTA_PATRONAL = 0.1067;
+const IRTRA_RATE = 0.01;
+const INTECAP_RATE = 0.01;
 
 /**
  * Sincroniza IGSS automático desde sueldo / jubilación.
@@ -17,17 +20,26 @@ const applyAutoPayrollFields = (body) => {
   const hasSueldo = next.sueldo_ordinario !== undefined && next.sueldo_ordinario !== null;
   const hasBono = next.bon_dec_37_2001 !== undefined && next.bon_dec_37_2001 !== null;
   const hasJub = next.jubilacion !== undefined && next.jubilacion !== null;
-  if (!hasSueldo && !hasBono && !hasJub) return next;
+  const hasExempt = next.igss_exempt !== undefined && next.igss_exempt !== null;
+  if (!hasSueldo && !hasBono && !hasJub && !hasExempt) return next;
 
   const base = Number(next.sueldo_ordinario) || 0;
   const bonus = Number(next.bon_dec_37_2001) || 0;
   const jubilado = !!(next.jubilacion === true || next.jubilacion === 1);
-  const laboralRate = jubilado ? CUOTA_LABORAL_JUBILADO : CUOTA_LABORAL;
+  const igssExempt = !!(next.igss_exempt === true || next.igss_exempt === 1);
+  const laboralRate = igssExempt
+    ? 0
+    : (jubilado ? CUOTA_LABORAL_JUBILADO : CUOTA_LABORAL);
 
   const hasManualIsr = next.isr !== undefined && next.isr !== null && next.isr !== '';
-  next.isr = hasManualIsr ? (Number(next.isr) || 0) : calculateMonthlyISR(base, bonus);
+  next.isr = hasManualIsr
+    ? (Number(next.isr) || 0)
+    : calculateMonthlyISR(base, bonus, laboralRate);
   next.igss_laboral = Number((base * laboralRate).toFixed(2));
-  next.igss_patronal = jubilado ? 0 : Number((base * CUOTA_PATRONAL).toFixed(2));
+  // Jubilados conservan 10.67% patronal; solo la exención explícita la elimina.
+  next.igss_patronal = igssExempt ? 0 : Number((base * CUOTA_PATRONAL).toFixed(2));
+  next.irtra = igssExempt ? 0 : Number((base * IRTRA_RATE).toFixed(2));
+  next.intecap = igssExempt ? 0 : Number((base * INTECAP_RATE).toFixed(2));
   return next;
 };
 
@@ -45,15 +57,97 @@ const validateDist = (dist) => {
   const keys = Object.keys(distObj);
   if (keys.length === 0) return null;
 
-  const values = keys.map((k) => Number(distObj[k]) || 0);
+  const invalidCompany = keys.some((k) => !Number.isInteger(Number(k)) || Number(k) <= 0);
+  const values = keys.map((k) => Number(distObj[k]));
+  const invalidPercentage = values.some((v) => !Number.isFinite(v) || v < 0 || v > 100);
+  if (invalidCompany || invalidPercentage) {
+    return 'La distribución intercompañía solo acepta empresas válidas y porcentajes entre 0% y 100%.';
+  }
+
   const allZero = values.every((v) => v === 0);
   if (allZero) return null;
 
-  const sum = values.reduce((a, b) => a + b, 0);
-  if (Math.abs(sum - 100) > 0.01) {
-    return `La distribución intercompañía debe sumar 100% (actual: ${sum.toFixed(2)}%). Deje todos en 0 para asignar 100% a la empresa principal.`;
+  const sum = values.reduce((total, value) => total.plus(value), new Decimal(0));
+  if (!sum.equals(100)) {
+    return `La distribución intercompañía debe sumar exactamente 100% (actual: ${sum.toString()}%). Deje todos en 0 para asignar 100% a la empresa principal.`;
   }
   return null;
+};
+
+const parseJsonObject = (value) => {
+  if (value === undefined || value === null || value === '') return {};
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+  return typeof value === 'object' && !Array.isArray(value) ? value : null;
+};
+
+const normalizeAndValidateComponentDist = (componentDist) => {
+  if (componentDist === undefined || componentDist === null || componentDist === '') {
+    return { value: {}, error: null };
+  }
+
+  const parsed = parseJsonObject(componentDist);
+  if (parsed === null) {
+    return {
+      value: null,
+      error: 'Distribución por componente inválida (JSON mal formado).'
+    };
+  }
+
+  const allowedComponents = new Set(['bonuses', 'extras']);
+  const unexpected = Object.keys(parsed).filter((key) => !allowedComponents.has(key));
+  if (unexpected.length > 0) {
+    return {
+      value: null,
+      error: `Distribución por componente inválida: solo acepta "bonuses" y "extras" (recibido: ${unexpected.join(', ')}).`
+    };
+  }
+
+  const normalized = {};
+  for (const component of allowedComponents) {
+    if (parsed[component] === undefined || parsed[component] === null || parsed[component] === '') {
+      continue;
+    }
+
+    const override = parseJsonObject(parsed[component]);
+    if (override === null) {
+      return {
+        value: null,
+        error: `La distribución de ${component === 'bonuses' ? 'bonos' : 'extras'} debe ser un objeto por empresa.`
+      };
+    }
+
+    const error = validateDist(override);
+    if (error) {
+      return {
+        value: null,
+        error: error
+          .replace('distribución intercompañía', `distribución de ${component === 'bonuses' ? 'bonos' : 'extras'}`)
+          .replace('Distribución intercompañía', `Distribución de ${component === 'bonuses' ? 'bonos' : 'extras'}`)
+      };
+    }
+    const values = Object.values(override).map((value) => Number(value));
+    const hasOverride = values.some((value) => value !== 0);
+    const exactTotal = values.reduce(
+      (sum, value) => sum.plus(Number.isFinite(value) ? value : 0),
+      new Decimal(0)
+    );
+    if (hasOverride && !exactTotal.equals(100)) {
+      return {
+        value: null,
+        error: `La distribución de ${component === 'bonuses' ? 'bonos' : 'extras'} debe sumar exactamente 100% (actual: ${exactTotal.toString()}%).`
+      };
+    }
+    normalized[component] = override;
+  }
+
+  return { value: normalized, error: null };
 };
 
 const getEmployees = async (req, res) => {
@@ -78,7 +172,14 @@ const createEmployee = async (req, res) => {
   try {
     const distError = validateDist(req.body.dist);
     if (distError) return res.status(400).json({ error: distError });
-    const payload = applyAutoPayrollFields(req.body);
+    const componentResult = normalizeAndValidateComponentDist(req.body.component_dist);
+    if (componentResult.error) return res.status(400).json({ error: componentResult.error });
+    const payload = applyAutoPayrollFields({
+      ...req.body,
+      ...(req.body.component_dist !== undefined
+        ? { component_dist: componentResult.value }
+        : {})
+    });
     const newEmployee = await Employee.create(payload);
     res.status(201).json(newEmployee);
   } catch (err) {
@@ -94,13 +195,19 @@ const updateEmployee = async (req, res) => {
       const distError = validateDist(req.body.dist);
       if (distError) return res.status(400).json({ error: distError });
     }
+    const componentResult = normalizeAndValidateComponentDist(req.body.component_dist);
+    if (componentResult.error) return res.status(400).json({ error: componentResult.error });
     const merged = {
       sueldo_ordinario: employee.sueldo_ordinario,
       bon_dec_37_2001: employee.bon_dec_37_2001,
       jubilacion: employee.jubilacion,
+      igss_exempt: employee.igss_exempt,
       // Preserva la retención ISR manual si el payload no la trae
       isr: employee.isr,
-      ...req.body
+      ...req.body,
+      ...(req.body.component_dist !== undefined
+        ? { component_dist: componentResult.value }
+        : {})
     };
     const payload = applyAutoPayrollFields(merged);
     await employee.update(payload);

@@ -1,6 +1,16 @@
 const { BillingRule, BillingDistribution, Company } = require('../models');
 const BillingService = require('../services/billing.service');
 
+const EXCEL_ROUTE_FORMULAS = {
+  '1->2': { marginPercentage: 0, applyIva: true, ivaRate: 0.12 },
+  '1->3': { marginPercentage: 0, applyIva: true, ivaRate: 0.12 },
+  '2->1': { marginPercentage: 0, applyIva: true, ivaRate: 0.12 },
+  '2->3': { marginPercentage: 0, applyIva: true, ivaRate: 0.12 },
+  '3->1': { marginPercentage: 4, applyIva: true, ivaRate: 0.12 },
+  '3->2': { marginPercentage: 4, applyIva: true, ivaRate: 0.12 },
+  '3->4': { marginPercentage: 4, applyIva: false, ivaRate: 0 }
+};
+
 const validateRuleBody = async (body, ruleId = null) => {
   const fromCompanyId = Number(body.fromCompanyId);
   const toCompanyId = Number(body.toCompanyId);
@@ -10,6 +20,17 @@ const validateRuleBody = async (body, ruleId = null) => {
   }
   if (fromCompanyId === toCompanyId) {
     throw new Error('La empresa emisora y receptora deben ser distintas');
+  }
+  if (!BillingService.isAllowedBillingRoute(fromCompanyId, toCompanyId)) {
+    throw new Error('La relación emisora → receptora no está habilitada según los Excel de facturación');
+  }
+  const routeFormula = EXCEL_ROUTE_FORMULAS[`${fromCompanyId}->${toCompanyId}`];
+
+  const duplicate = await BillingRule.findOne({
+    where: { fromCompanyId, toCompanyId }
+  });
+  if (duplicate && String(duplicate.id) !== String(ruleId || '')) {
+    throw new Error('Ya existe una regla para esa relación entre empresas');
   }
 
   const fromCo = await Company.findByPk(fromCompanyId);
@@ -24,9 +45,10 @@ const validateRuleBody = async (body, ruleId = null) => {
     fromCompany: fromCo.nombre_comercial,
     toCompany: toCo.nombre_comercial,
     concept: body.concept || 'Servicios de RRHH',
-    marginPercentage: body.marginPercentage ?? 0,
-    applyIva: body.applyIva !== undefined ? !!body.applyIva : true,
-    ivaRate: body.ivaRate ?? 0.12,
+    // Margen e IVA son parte de la fórmula conciliada, no parámetros libres.
+    marginPercentage: routeFormula.marginPercentage,
+    applyIva: routeFormula.applyIva,
+    ivaRate: routeFormula.ivaRate,
     isActive: body.isActive !== undefined ? !!body.isActive : true
   };
 };
@@ -73,8 +95,8 @@ class BillingController {
     try {
       const rule = await BillingRule.findByPk(req.params.id);
       if (!rule) return res.status(404).json({ error: 'Regla no encontrada' });
-      await rule.destroy();
-      res.json({ message: 'Regla eliminada' });
+      await rule.update({ isActive: false });
+      res.json({ message: 'Regla desactivada' });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -96,6 +118,7 @@ class BillingController {
           baseAmount: line.baseAmount,
           marginPercentage: line.marginPercentage,
           marginAmount: line.marginAmount,
+          subtotalAmount: line.subtotalAmount,
           ivaAmount: line.ivaAmount,
           totalAmount: line.totalAmount
         }))

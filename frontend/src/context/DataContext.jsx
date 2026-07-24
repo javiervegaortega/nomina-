@@ -1,7 +1,12 @@
 import React, { createContext, useState, useEffect, useRef, useContext, useMemo } from 'react';
 import { AuthContext } from './AuthContext';
-import { isDateInQuincena, findMatchingActiveDraft } from '../utils/payrollPeriod';
-import { getCuotaLaboralRate } from '../utils/payrollCalculator';
+import {
+  isDateInQuincena,
+  parseLocalDate,
+  formatLocalDateKey,
+  toPayrollDateISO
+} from '../utils/payrollPeriod';
+import { getCuotaLaboralRate, getRecurringDeductionFactor } from '../utils/payrollCalculator';
 import { calculateMonthlyISR } from '../data/mockData';
 
 export const DataContext = createContext();
@@ -51,8 +56,25 @@ export function DataProvider({ children }) {
   // --- STATE ---
   const { token } = useContext(AuthContext);
   const saveTimeouts = useRef({});
+  const draftSyncChains = useRef(new Map());
+  const draftSyncRevisions = useRef(new Map());
+  const draftServerRevisions = useRef(new Map());
+  const draftConflictIds = useRef(new Set());
+  const deletingDraftIds = useRef(new Set());
+  const draftRefreshTask = useRef(null);
+  const pendingDraftSaves = useRef(new Map());
   const persistTimer = useRef(null);
   const persistSnapshot = useRef({});
+
+  const rememberDraftServerRevisions = (drafts) => {
+    (Array.isArray(drafts) ? drafts : []).forEach((draft) => {
+      const key = String(draft?.id ?? '');
+      const revision = Number(draft?.revision);
+      if (!key || !Number.isInteger(revision) || revision < 0) return;
+      draftServerRevisions.current.set(key, revision);
+      draftConflictIds.current.delete(key);
+    });
+  };
 
   const [companies, setCompanies] = useState(() => readCache(CACHE_KEYS.companies));
   const [departments, setDepartments] = useState(() => readCache(CACHE_KEYS.departments));
@@ -119,7 +141,8 @@ export function DataProvider({ children }) {
 
         // Carga crítica primero (sin historial/logs pesados ni SAP no usado)
         const [
-          compRes, empRes, deptRes, areaRes, divRes, subdivRes, dim5Res, draftsRes
+          compRes, empRes, deptRes, areaRes, divRes, subdivRes, dim5Res,
+          draftsRes, bonusesRes, commissionsRes, opLogsRes
         ] = await Promise.all([
           fetch('http://localhost:3000/api/companies', fetchOpts),
           fetch('http://localhost:3000/api/employees', fetchOpts),
@@ -129,13 +152,18 @@ export function DataProvider({ children }) {
           fetch('http://localhost:3000/api/subdivisions', fetchOpts),
           fetch('http://localhost:3000/api/dimension5', fetchOpts),
           fetch('http://localhost:3000/api/payroll-drafts', fetchOpts),
+          fetch('http://localhost:3000/api/bonuses', fetchOpts),
+          fetch('http://localhost:3000/api/commissions', fetchOpts),
+          fetch('http://localhost:3000/api/operation-logs', fetchOpts),
         ]);
 
         const [
-          apiCompanies, apiEmployees, apiDepts, apiAreas, apiDivs, apiSubdivs, apiDim5s, apiDrafts
+          apiCompanies, apiEmployees, apiDepts, apiAreas, apiDivs, apiSubdivs,
+          apiDim5s, apiDrafts, apiBonuses, apiCommissions, apiOperationLogs
         ] = await Promise.all([
           safeJson(compRes), safeJson(empRes), safeJson(deptRes), safeJson(areaRes),
-          safeJson(divRes), safeJson(subdivRes), safeJson(dim5Res), safeJson(draftsRes)
+          safeJson(divRes), safeJson(subdivRes), safeJson(dim5Res), safeJson(draftsRes),
+          safeJson(bonusesRes), safeJson(commissionsRes), safeJson(opLogsRes)
         ]);
 
         if (cancelled) return;
@@ -148,24 +176,22 @@ export function DataProvider({ children }) {
         if (Array.isArray(apiDivs)) setDivisions(apiDivs);
         if (Array.isArray(apiSubdivs)) setSubdivisions(apiSubdivs);
         if (Array.isArray(apiDim5s)) setDimension5s(apiDim5s);
-        if (Array.isArray(apiDrafts)) setActivePayrolls(parseDrafts(apiDrafts));
-        setBonuses([]);
-        setCommissions([]);
+        if (Array.isArray(apiDrafts)) {
+          rememberDraftServerRevisions(apiDrafts);
+          setActivePayrolls(parseDrafts(apiDrafts));
+        }
+        if (Array.isArray(apiBonuses)) setBonuses(apiBonuses);
+        if (Array.isArray(apiCommissions)) setCommissions(apiCommissions);
+        if (Array.isArray(apiOperationLogs)) setOperationLogs(apiOperationLogs);
         setIsLoading(false);
 
-        // Historial y logs en segundo plano (payloads grandes)
+        // Historial en segundo plano (payload grande)
         const deferHeavy = async () => {
           try {
-            const [histRes, opLogsRes] = await Promise.all([
-              fetch('http://localhost:3000/api/payrolls?summary=1', fetchOpts),
-              fetch('http://localhost:3000/api/operation-logs', fetchOpts),
-            ]);
-            const [apiHistory, apiOperationLogs] = await Promise.all([
-              safeJson(histRes), safeJson(opLogsRes)
-            ]);
+            const histRes = await fetch('http://localhost:3000/api/payrolls', fetchOpts);
+            const apiHistory = await safeJson(histRes);
             if (cancelled) return;
             if (Array.isArray(apiHistory)) setPayrollHistory(apiHistory);
-            if (Array.isArray(apiOperationLogs)) setOperationLogs(apiOperationLogs);
           } catch {
             // no-op
           }
@@ -200,7 +226,7 @@ export function DataProvider({ children }) {
 
   const fetchPayrollHistory = async () => {
     try {
-      const res = await fetch('http://localhost:3000/api/payrolls?summary=1', { headers: getAuthHeader() });
+      const res = await fetch('http://localhost:3000/api/payrolls', { headers: getAuthHeader() });
       if (res.ok) {
         const apiHistory = await res.json();
         if (Array.isArray(apiHistory)) setPayrollHistory(apiHistory);
@@ -215,11 +241,25 @@ export function DataProvider({ children }) {
       const res = await fetch('http://localhost:3000/api/payroll-drafts', { headers: getAuthHeader() });
       if (res.ok) {
         const apiDrafts = await res.json();
-        if (Array.isArray(apiDrafts)) setActivePayrolls(parseDrafts(apiDrafts));
+        if (Array.isArray(apiDrafts)) {
+          rememberDraftServerRevisions(apiDrafts);
+          setActivePayrolls(parseDrafts(apiDrafts));
+        }
       }
     } catch (err) {
       console.error('fetchActivePayrolls:', err);
     }
+  };
+
+  // Agrupa refrescos solicitados por altas/aprobaciones masivas en el mismo tick.
+  const refreshDraftsAfterPayrollInput = () => {
+    if (draftRefreshTask.current) return draftRefreshTask.current;
+    draftRefreshTask.current = Promise.resolve()
+      .then(fetchActivePayrolls)
+      .finally(() => {
+        draftRefreshTask.current = null;
+      });
+    return draftRefreshTask.current;
   };
 
   // Companies
@@ -500,140 +540,223 @@ export function DataProvider({ children }) {
 
   // Commissions
   const addCommission = async (comm) => {
-    try {
-      const res = await fetch('http://localhost:3000/api/commissions', {
-        method: 'POST',
-        headers: getAuthHeader(),
-        body: JSON.stringify(comm)
-      });
-      if (res.ok) {
-        const newC = await res.json();
-        setCommissions([...commissions, newC]);
-      }
-    } catch (err) {
-      setCommissions([...commissions, { ...comm, id: Date.now() }]);
+    await flushPendingDraftSaves();
+    const res = await fetch('http://localhost:3000/api/commissions', {
+      method: 'POST',
+      headers: getAuthHeader(),
+      body: JSON.stringify(comm)
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || 'No se pudo guardar la solicitud.');
     }
+    const newC = await res.json();
+    setCommissions((current) => [...current, newC]);
+    await refreshDraftsAfterPayrollInput();
+    return newC;
   };
 
   const updateCommission = async (id, data) => {
-    try {
-      const res = await fetch(`http://localhost:3000/api/commissions/${id}`, {
-        method: 'PUT',
-        headers: getAuthHeader(),
-        body: JSON.stringify(data)
-      });
-      if (res.ok) {
-        setCommissions(commissions.map(c => c.id === id ? { ...c, ...data } : c));
-      }
-    } catch (err) {
-      setCommissions(commissions.map(c => c.id === id ? { ...c, ...data } : c));
+    await flushPendingDraftSaves();
+    const res = await fetch(`http://localhost:3000/api/commissions/${id}`, {
+      method: 'PUT',
+      headers: getAuthHeader(),
+      body: JSON.stringify(data)
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || 'No se pudo actualizar la solicitud.');
     }
+    const updated = await res.json();
+    setCommissions((current) => current.map(
+      c => String(c.id) === String(id) ? updated : c
+    ));
+    await refreshDraftsAfterPayrollInput();
+    return updated;
   };
 
   const deleteCommission = async (id) => {
-    try {
-      const res = await fetch(`http://localhost:3000/api/commissions/${id}`, {
-        method: 'DELETE',
-        headers: getAuthHeader()
-      });
-      if (res.ok) {
-        setCommissions(commissions.filter(c => c.id !== id));
-      }
-    } catch (err) {
-      setCommissions(commissions.filter(c => c.id !== id));
-    }
-  };
-
-  // --- Operation Logs ↔ Active Payroll drafts ---
-  const computeLogMoney = (log, emp) => {
-    const baseSalary = Number(emp.sueldo_ordinario) || 0;
-    const hourlyRate = baseSalary / 30 / 8;
-    let valSimples = 0;
-    let valDobles = 0;
-    let totalBonos = 0;
-    let qtySimples = 0;
-    let qtyDobles = 0;
-    if (log.type === 'HORA_EXTRA') {
-      if (log.hourType === 'SIMPLE') {
-        qtySimples = Number(log.hoursQty) || 0;
-        valSimples = qtySimples * hourlyRate * 1.5;
-      } else if (log.hourType === 'DOBLE' || log.hourType === 'NOCTURNA') {
-        qtyDobles = Number(log.hoursQty) || 0;
-        valDobles = qtyDobles * hourlyRate * 2;
-      }
-    } else if (log.type === 'BONO') {
-      totalBonos = Number(log.bonusAmount) || 0;
-    }
-    return { valSimples, valDobles, totalBonos, qtySimples, qtyDobles };
-  };
-
-  const applyLogToDraftEmployee = (emp, log, mode) => {
-    const already = (emp.operationLogs || []).some((l) => String(l.id) === String(log.id));
-    if (mode === 'add' && already) return { emp, changed: false };
-    if (mode === 'remove' && !already) return { emp, changed: false };
-
-    const { valSimples, valDobles, totalBonos, qtySimples, qtyDobles } = computeLogMoney(log, emp);
-    const sign = mode === 'add' ? 1 : -1;
-    const next = { ...emp, extras: { ...(emp.extras || {}) } };
-
-    if (qtySimples || valSimples) {
-      next.extras.simplesQty = Math.max(0, (Number(next.extras.simplesQty) || 0) + sign * qtySimples);
-      next.extras.simplesVal = Math.max(0, (Number(next.extras.simplesVal) || 0) + sign * valSimples);
-    }
-    if (qtyDobles || valDobles) {
-      next.extras.doblesQty = Math.max(0, (Number(next.extras.doblesQty) || 0) + sign * qtyDobles);
-      next.extras.doblesVal = Math.max(0, (Number(next.extras.doblesVal) || 0) + sign * valDobles);
-    }
-    if (totalBonos) {
-      next.extras.bonos = Math.max(0, (Number(next.extras.bonos) || 0) + sign * totalBonos);
-    }
-    if (next.netTotal !== undefined) {
-      next.netTotal = (Number(next.netTotal) || 0) + sign * (valSimples + valDobles + totalBonos);
-    }
-    if (mode === 'add') {
-      next.operationLogs = [...(next.operationLogs || []), { ...log, status: 'APPROVED_MANAGER' }];
-    } else {
-      next.operationLogs = (next.operationLogs || []).filter((l) => String(l.id) !== String(log.id));
-    }
-    return { emp: next, changed: true };
-  };
-
-  const persistDraftPatch = (draft) => {
-    fetch(`http://localhost:3000/api/payroll-drafts/${draft.id}`, {
-      method: 'PUT',
-      headers: getAuthHeader(),
-      body: JSON.stringify(draft),
-    }).catch(() => {});
-  };
-
-  const syncLogWithActiveDrafts = (log, mode) => {
-    if (!log) return;
-    setActivePayrolls((currentDrafts) => {
-      const draftsToPersist = [];
-      const next = currentDrafts.map((draft) => {
-        const match = findMatchingActiveDraft([draft], log.date, log.companyId, companies);
-        if (!match) return draft;
-        const empIndex = (draft.employees || []).findIndex((e) => String(e.id) === String(log.employeeId));
-        if (empIndex < 0) return draft;
-        const { emp, changed } = applyLogToDraftEmployee(draft.employees[empIndex], log, mode);
-        if (!changed) return draft;
-        const newEmployees = [...draft.employees];
-        newEmployees[empIndex] = emp;
-        const newDraft = { ...draft, employees: newEmployees };
-        draftsToPersist.push(newDraft);
-        return newDraft;
-      });
-      if (draftsToPersist.length > 0) {
-        queueMicrotask(() => draftsToPersist.forEach(persistDraftPatch));
-      }
-      return next;
+    await flushPendingDraftSaves();
+    const res = await fetch(`http://localhost:3000/api/commissions/${id}`, {
+      method: 'DELETE',
+      headers: getAuthHeader()
     });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || 'No se pudo eliminar la solicitud.');
+    }
+    setCommissions((current) => current.filter(
+      c => String(c.id) !== String(id)
+    ));
+    await refreshDraftsAfterPayrollInput();
   };
 
-  const injectApprovedLogIntoActiveDrafts = (log) => syncLogWithActiveDrafts(log, 'add');
-  const revertLogFromActiveDrafts = (log) => syncLogWithActiveDrafts(log, 'remove');
+  const bumpDraftSyncRevision = (draftId) => {
+    const key = String(draftId);
+    const nextRevision = (draftSyncRevisions.current.get(key) || 0) + 1;
+    draftSyncRevisions.current.set(key, nextRevision);
+    return nextRevision;
+  };
+
+  /**
+   * Serializa los PUT completos por borrador. Varias aprobaciones o cambios
+   * consecutivos pueden producir snapshots acumulativos; nunca deben llegar
+   * fuera de orden ni permitir que una respuesta antigua reemplace la UI.
+   */
+  const persistDraftPatch = (
+    draft,
+    requestedRevision = null,
+    expectedRevisionOverride = null
+  ) => {
+    const key = String(draft?.id ?? '');
+    if (!key) return Promise.resolve(null);
+    if (deletingDraftIds.current.has(key) || draftConflictIds.current.has(key)) {
+      return Promise.resolve(null);
+    }
+
+    const revision = requestedRevision ?? bumpDraftSyncRevision(key);
+    const snapshot = JSON.parse(JSON.stringify(draft));
+    const snapshotRevision = Number(snapshot.revision);
+    const overrideRevision = Number(expectedRevisionOverride);
+    const capturedServerRevision = Number.isInteger(overrideRevision)
+      ? overrideRevision
+      : (
+          Number.isInteger(snapshotRevision)
+            ? snapshotRevision
+            : (draftServerRevisions.current.get(key) ?? 0)
+        );
+    const previousTask = draftSyncChains.current.get(key) || Promise.resolve();
+
+    const task = previousTask
+      .catch(() => null)
+      .then(async (previousSaved) => {
+        // Si todavía no comenzó y ya existe un snapshot posterior, se agrupa.
+        if (draftSyncRevisions.current.get(key) !== revision) return null;
+        if (deletingDraftIds.current.has(key) || draftConflictIds.current.has(key)) return null;
+
+        try {
+          // Solo una escritura local anterior de esta misma cola puede
+          // rebasar el snapshot. Un refresco externo nunca debe convertir un
+          // snapshot viejo en una escritura válida contra una revisión nueva.
+          const previousSavedRevision = Number(previousSaved?.revision);
+          const expectedServerRevision = Number.isInteger(previousSavedRevision)
+            ? previousSavedRevision
+            : capturedServerRevision;
+          const response = await fetch(`http://localhost:3000/api/payroll-drafts/${key}`, {
+            method: 'PUT',
+            headers: getAuthHeader(),
+            body: JSON.stringify({
+              ...snapshot,
+              revision: expectedServerRevision
+            }),
+          });
+          if (response.status === 409) {
+            const body = await response.json().catch(() => ({}));
+            const currentRevision = Number(body.currentRevision);
+            if (Number.isInteger(currentRevision) && currentRevision >= 0) {
+              draftServerRevisions.current.set(key, currentRevision);
+            }
+            draftConflictIds.current.add(key);
+            console.error(
+              'El borrador cambió en otra pestaña o sesión. Debe recargarse antes de guardar.',
+              body.error || ''
+            );
+            return null;
+          }
+          if (!response.ok) {
+            const body = await response.json().catch(() => ({}));
+            throw new Error(body.error || `HTTP ${response.status}`);
+          }
+          const saved = await response.json();
+          const savedRevision = Number(saved?.revision);
+          if (Number.isInteger(savedRevision) && savedRevision >= 0) {
+            draftServerRevisions.current.set(key, savedRevision);
+            const pending = pendingDraftSaves.current.get(key);
+            if (
+              pending
+              && pending.localRevision > revision
+              && Number(pending.serverRevision) === expectedServerRevision
+            ) {
+              // El snapshot pendiente nació sobre esta escritura local. Puede
+              // continuar desde la revisión confirmada sin aceptar cambios
+              // provenientes de otra pestaña.
+              pendingDraftSaves.current.set(key, {
+                ...pending,
+                serverRevision: savedRevision
+              });
+            }
+          }
+          draftConflictIds.current.delete(key);
+
+          // Solo la respuesta del snapshot vigente puede actualizar la UI.
+          if (draftSyncRevisions.current.get(key) === revision) {
+            setActivePayrolls((current) => current.map((row) => (
+              String(row.id) === key
+                ? {
+                    ...row,
+                    ...saved,
+                    employees: saved.employees || row.employees
+                  }
+                : row
+            )));
+          }
+          return saved;
+        } catch (error) {
+          console.error('No se pudo recalcular/persistir el borrador:', error);
+          return null;
+        }
+      });
+
+    let trackedTask;
+    trackedTask = task.finally(() => {
+      if (draftSyncChains.current.get(key) === trackedTask) {
+        draftSyncChains.current.delete(key);
+      }
+    });
+    draftSyncChains.current.set(key, trackedTask);
+    return trackedTask;
+  };
+
+  const flushPendingDraftSaves = async () => {
+    let failed = false;
+
+    // Normalmente basta una vuelta. La segunda cubre una edición que haya
+    // entrado mientras se esperaba una escritura ya iniciada.
+    for (let round = 0; round < 2; round += 1) {
+      const pending = [...pendingDraftSaves.current.entries()];
+      pendingDraftSaves.current.clear();
+
+      const started = pending.map(([key, item]) => {
+        if (saveTimeouts.current[key]) {
+          clearTimeout(saveTimeouts.current[key]);
+          delete saveTimeouts.current[key];
+        }
+        return persistDraftPatch(
+          item.draft,
+          item.localRevision,
+          item.serverRevision
+        );
+      });
+      const inFlight = [...draftSyncChains.current.values()];
+      const results = await Promise.all([...started, ...inFlight]);
+      if (results.some((result) => result === null)) failed = true;
+      if (pendingDraftSaves.current.size === 0) break;
+    }
+
+    if (failed || draftConflictIds.current.size > 0) {
+      throw new Error(
+        'Una nómina cambió en otra pestaña o sesión. Recárguela y revise los datos antes de continuar.'
+      );
+    }
+  };
+
+  // Las APIs de novedades actualizan el borrador dentro de su propia
+  // transacción. Estos alias solo refrescan la copia visible del servidor.
+  const injectApprovedLogIntoActiveDrafts = () => refreshDraftsAfterPayrollInput();
+  const revertLogFromActiveDrafts = () => refreshDraftsAfterPayrollInput();
 
   const addOperationLog = async (data) => {
+    await flushPendingDraftSaves();
     const res = await fetch('http://localhost:3000/api/operation-logs', {
       method: 'POST',
       headers: getAuthHeader(),
@@ -655,12 +778,13 @@ export function DataProvider({ children }) {
     }
     setOperationLogs((prev) => [...prev, newLog]);
     if (newLog.status === 'APPROVED_MANAGER') {
-      injectApprovedLogIntoActiveDrafts(newLog);
+      await refreshDraftsAfterPayrollInput();
     }
     return newLog;
   };
 
   const updateOperationLogStatus = async (id, status, periodAssigned = null, justification = null, rejectionFromNomina = false, logSnapshot = null) => {
+    await flushPendingDraftSaves();
     const res = await fetch(`http://localhost:3000/api/operation-logs/${id}/status`, {
       method: 'PUT',
       headers: getAuthHeader(),
@@ -671,27 +795,30 @@ export function DataProvider({ children }) {
       throw new Error(errBody.error || 'Error al actualizar estado');
     }
 
-    let prevLog = logSnapshot;
-    setOperationLogs((prev) => {
-      if (!prevLog) prevLog = prev.find((l) => String(l.id) === String(id)) || null;
-      return prev.map((l) =>
-        String(l.id) === String(id) ? { ...l, status, periodAssigned, justification } : l
-      );
-    });
-    if (!prevLog && logSnapshot) prevLog = logSnapshot;
+    const updatedLog = await res.json();
+    const prevLog = logSnapshot
+      || operationLogs.find((log) => String(log.id) === String(id))
+      || null;
+    setOperationLogs((prev) => prev.map((log) => (
+      String(log.id) === String(id) ? { ...log, ...updatedLog } : log
+    )));
 
-    const logForSync = prevLog
-      ? { ...prevLog, status, periodAssigned, justification }
-      : { id, status, periodAssigned, justification };
-
-    if (status === 'APPROVED_MANAGER') {
-      injectApprovedLogIntoActiveDrafts(logForSync);
-    } else if (prevLog?.status === 'APPROVED_MANAGER' && status !== 'APPROVED_MANAGER' && status !== 'PROCESSED_PAYROLL') {
-      revertLogFromActiveDrafts(prevLog);
+    const changedPayrollInput = (
+      status === 'APPROVED_MANAGER'
+      || (
+        prevLog?.status === 'APPROVED_MANAGER'
+        && status !== 'APPROVED_MANAGER'
+        && status !== 'PROCESSED_PAYROLL'
+      )
+    );
+    if (changedPayrollInput) {
+      await refreshDraftsAfterPayrollInput();
     }
+    return updatedLog;
   };
 
   const deleteOperationLog = async (id) => {
+    await flushPendingDraftSaves();
     const prevLog = operationLogs.find((l) => String(l.id) === String(id));
     const res = await fetch(`http://localhost:3000/api/operation-logs/${id}`, {
       method: 'DELETE',
@@ -701,13 +828,14 @@ export function DataProvider({ children }) {
       const errBody = await res.json().catch(() => ({}));
       throw new Error(errBody.error || 'Error al eliminar');
     }
-    if (prevLog?.status === 'APPROVED_MANAGER') {
-      revertLogFromActiveDrafts(prevLog);
-    }
     setOperationLogs((prev) => prev.filter((l) => String(l.id) !== String(id)));
+    if (prevLog?.status === 'APPROVED_MANAGER') {
+      await refreshDraftsAfterPayrollInput();
+    }
   };
 
   const updateOperationLog = async (id, data) => {
+    await flushPendingDraftSaves();
     const prevLog = operationLogs.find((l) => String(l.id) === String(id));
     const res = await fetch(`http://localhost:3000/api/operation-logs/${id}`, {
       method: 'PUT',
@@ -719,12 +847,12 @@ export function DataProvider({ children }) {
       throw new Error(errBody.error || 'Error al actualizar el registro');
     }
     const updatedLog = await res.json();
-    if (prevLog?.status === 'APPROVED_MANAGER') {
-      revertLogFromActiveDrafts(prevLog);
-    }
     setOperationLogs((prev) => prev.map((l) => (String(l.id) === String(id) ? updatedLog : l)));
-    if (updatedLog.status === 'APPROVED_MANAGER') {
-      injectApprovedLogIntoActiveDrafts(updatedLog);
+    if (
+      prevLog?.status === 'APPROVED_MANAGER'
+      || updatedLog.status === 'APPROVED_MANAGER'
+    ) {
+      await refreshDraftsAfterPayrollInput();
     }
     return updatedLog;
   };
@@ -761,7 +889,7 @@ export function DataProvider({ children }) {
           cleanedData[key] = null;
         }
       });
-      
+
       const res = await fetch(`http://localhost:3000/api/employees/${id}`, {
         method: 'PUT',
         headers: getAuthHeader(),
@@ -896,7 +1024,13 @@ export function DataProvider({ children }) {
   };
 
   // Payroll
-  const createActivePayroll = async (title, selectedCompanies, periodType = '1ra', draftDateStr = null) => {
+  const createActivePayroll = async (
+    title,
+    selectedCompanies,
+    periodType = '1ra',
+    draftDateStr = null,
+    notes = null
+  ) => {
     // Obligatorio: exactamente una empresa (no se permite "todas")
     const rawCompanies = Array.isArray(selectedCompanies) ? selectedCompanies : [];
     const hasAllToken = rawCompanies.some(c => {
@@ -919,16 +1053,35 @@ export function DataProvider({ children }) {
     }
 
     const draftRefDate = draftDateStr || new Date().toISOString();
+    const isInPayrollInputWindow = (dateValue) => {
+      if (!dateValue) return false;
+      if (periodType !== '2da') {
+        return isDateInQuincena(dateValue, draftRefDate, periodType);
+      }
+      // 2ª es el acumulado mensual. Los registros de 1–15 ya procesados
+      // tienen otro estado y no se duplican; los aprobados tarde sí deben entrar.
+      const inputDate = parseLocalDate(dateValue);
+      const referenceDate = parseLocalDate(draftRefDate);
+      return inputDate.getFullYear() === referenceDate.getFullYear()
+        && inputDate.getMonth() === referenceDate.getMonth();
+    };
 
     // If 2nd quincena, find 1st quincena payouts + ISR (prefer cerrada, most recent)
     let firstQuincenaPayouts = {};
     let firstQuincenaIsr = {};
+    let firstQuincenaExtras = {};
+    let firstQuincenaAppliedBonuses = {};
+    let firstQuincenaOperationLogs = {};
+    let firstQuincenaDays = {};
+    let firstQuincenaIncidences = {};
+    let firstQuincenaEmployees = {};
+    let firstQuincenaCommissionIds = {};
     let missingAnticipoWarning = false;
     if (periodType === '2da') {
       // Refrescar historial para no perder 1ras recién cerradas
       let historySource = payrollHistory;
       try {
-        const histRes = await fetch('http://localhost:3000/api/payrolls?summary=1', { headers: getAuthHeader() });
+        const histRes = await fetch('http://localhost:3000/api/payrolls', { headers: getAuthHeader() });
         if (histRes.ok) {
           const apiHistory = await histRes.json();
           if (Array.isArray(apiHistory)) {
@@ -940,7 +1093,7 @@ export function DataProvider({ children }) {
         console.warn('No se pudo refrescar historial para anticipo 1ra:', e);
       }
 
-      const targetDate = new Date(draftRefDate);
+      const targetDate = parseLocalDate(draftRefDate);
       const month = targetDate.getMonth();
       const year = targetDate.getFullYear();
 
@@ -1000,7 +1153,7 @@ export function DataProvider({ children }) {
       };
 
       const matchesMonth = (h) => {
-        const hDate = new Date(h.closedAt || h.createdAt || Date.now());
+        const hDate = parseLocalDate(h.createdAt || h.closedAt || Date.now());
         return hDate.getMonth() === month && hDate.getFullYear() === year;
       };
 
@@ -1014,14 +1167,12 @@ export function DataProvider({ children }) {
         isFirstQuincena(h)
         && matchesMonth(h)
         && matchesCompanies(h)
+        && h.status === 'cerrada'
       );
 
-      // Prefer cerrada over auditoria; then most recent
+      // La 2ª solo puede tomar una 1ª cerrada y definitiva.
       histories1ra = histories1ra.sort((a, b) => {
-        const statusScore = (s) => (s === 'cerrada' ? 2 : s === 'auditoria' ? 1 : 0);
-        const ds = statusScore(b.status) - statusScore(a.status);
-        if (ds !== 0) return ds;
-        return new Date(b.closedAt || b.createdAt || 0) - new Date(a.closedAt || a.createdAt || 0);
+        return new Date(b.createdAt || b.closedAt || 0) - new Date(a.createdAt || a.closedAt || 0);
       });
 
       // Use only the best matching history (avoid overwriting with older ones)
@@ -1058,10 +1209,11 @@ export function DataProvider({ children }) {
         }
 
         emps.forEach(emp => {
+          firstQuincenaEmployees[String(emp.id)] = emp;
           const payout = emp.netTotal != null
             ? Number(emp.netTotal)
             : (Number(emp.calculated?.netPayable) || Number(emp.calculated?.net) || 0);
-          if (payout) firstQuincenaPayouts[String(emp.id)] = payout;
+          firstQuincenaPayouts[String(emp.id)] = payout;
 
           const isr1raPaid = Number(
             emp.calculated?.proratedDeductions?.isr
@@ -1071,9 +1223,45 @@ export function DataProvider({ children }) {
           if (isr1raPaid || firstQuincenaIsr[String(emp.id)] == null) {
             firstQuincenaIsr[String(emp.id)] = isr1raPaid;
           }
+
+          const firstExtras = emp.extras || {};
+          firstQuincenaExtras[String(emp.id)] = {
+            bonos: Number(firstExtras.bonos) || 0,
+            simplesQty: Number(firstExtras.simplesQty) || 0,
+            simplesVal: Number(firstExtras.simplesVal) || 0,
+            doblesQty: Number(firstExtras.doblesQty) || 0,
+            doblesVal: Number(firstExtras.doblesVal) || 0,
+            comisiones: Number(firstExtras.comisiones) || 0
+          };
+          firstQuincenaAppliedBonuses[String(emp.id)] = {
+            ...(emp.appliedBonuses || {})
+          };
+          firstQuincenaDays[String(emp.id)] = Number(
+            emp.days === undefined || emp.days === null || emp.days === ''
+              ? 15
+              : emp.days
+          );
+          firstQuincenaIncidences[String(emp.id)] = (
+            Array.isArray(emp.incidences) ? emp.incidences : []
+          ).map(incidence => ({
+            ...incidence,
+            carriedFromFirstQuincena: true,
+            periodOrigin: '1ra'
+          }));
+          firstQuincenaOperationLogs[String(emp.id)] = (Array.isArray(emp.operationLogs)
+            ? emp.operationLogs
+            : []
+          ).map(log => ({
+            ...log,
+            carriedFromFirstQuincena: true,
+            periodOrigin: '1ra'
+          }));
+          firstQuincenaCommissionIds[String(emp.id)] = Array.isArray(emp.commissionIds)
+            ? emp.commissionIds
+            : [];
         });
 
-        if (Object.keys(firstQuincenaPayouts).length === 0) {
+        if (emps.length === 0) {
           missingAnticipoWarning = true;
         }
       } else {
@@ -1081,22 +1269,162 @@ export function DataProvider({ children }) {
       }
     }
 
-    const frozenEmployees = employees
-      .filter(e => selectedCompanyIds.some(id => String(id) === String(e.empresa_principal)))
+    const isActiveEmployee = (employee) => {
+      const status = String(employee?.estado || employee?.status || 'ACTIVO')
+        .trim()
+        .toUpperCase();
+      return status === 'ACTIVO' || status === 'ACTIVE';
+    };
+    const belongsToSelectedCompany = (employee) => selectedCompanyIds.some(
+      id => String(id) === String(employee?.empresa_principal ?? employee?.companyId)
+    );
+
+    // En 2ª la nómina es acumulada: deben sobrevivir quienes cobraron en la
+    // 1ª aunque hayan sido dados de baja (o ya no estén en el maestro).
+    const employeeSources = periodType === '2da'
+      ? (() => {
+          const merged = new Map();
+          employees.forEach((current) => {
+            if (!belongsToSelectedCompany(current)) return;
+            const first = firstQuincenaEmployees[String(current.id)];
+            if (!isActiveEmployee(current) && !first) return;
+            merged.set(String(current.id), {
+              ...(first || {}),
+              ...current,
+              _hasCurrentMaster: true
+            });
+          });
+          Object.values(firstQuincenaEmployees).forEach((first) => {
+            if (!belongsToSelectedCompany(first) || merged.has(String(first.id))) return;
+            merged.set(String(first.id), { ...first, _hasCurrentMaster: false });
+          });
+          return [...merged.values()];
+        })()
+      : employees
+          .filter(e => isActiveEmployee(e) && belongsToSelectedCompany(e))
+          .map(e => ({ ...e, _hasCurrentMaster: true }));
+
+    const payrollMonth = parseLocalDate(draftRefDate);
+    const employmentDaysInRange = (
+      employee,
+      startDay,
+      endDay,
+      allowOpenEnded
+    ) => {
+      let firstDay = startDay;
+      let lastDay = endDay;
+      const startDate = employee?.fecha_inicio
+        ? parseLocalDate(employee.fecha_inicio)
+        : null;
+      const endDate = employee?.fecha_baja
+        ? parseLocalDate(employee.fecha_baja)
+        : null;
+      const samePayrollMonth = date => (
+        date
+        && date.getFullYear() === payrollMonth.getFullYear()
+        && date.getMonth() === payrollMonth.getMonth()
+      );
+
+      if (startDate) {
+        const startsAfterMonth = (
+          startDate.getFullYear() > payrollMonth.getFullYear()
+          || (
+            startDate.getFullYear() === payrollMonth.getFullYear()
+            && startDate.getMonth() > payrollMonth.getMonth()
+          )
+        );
+        if (startsAfterMonth) return 0;
+        if (samePayrollMonth(startDate)) firstDay = Math.max(firstDay, Math.min(30, startDate.getDate()));
+      }
+
+      if (endDate) {
+        const endedBeforeMonth = (
+          endDate.getFullYear() < payrollMonth.getFullYear()
+          || (
+            endDate.getFullYear() === payrollMonth.getFullYear()
+            && endDate.getMonth() < payrollMonth.getMonth()
+          )
+        );
+        if (endedBeforeMonth) return 0;
+        if (samePayrollMonth(endDate)) lastDay = Math.min(lastDay, Math.min(30, endDate.getDate()));
+      } else if (!allowOpenEnded) {
+        return 0;
+      }
+
+      return Math.max(0, lastDay - firstDay + 1);
+    };
+
+    const frozenEmployees = employeeSources
       .map(e => {
-        const days = periodType === '1ra' ? 15 : 30;
+        const firstDaysKey = String(e.id);
+        const hasFirstDays = Object.prototype.hasOwnProperty.call(
+          firstQuincenaDays,
+          firstDaysKey
+        );
+        const currentlyActive = e._hasCurrentMaster && isActiveEmployee(e);
+        const periodDays = periodType === '1ra'
+          ? employmentDaysInRange(e, 1, 15, true)
+          : employmentDaysInRange(
+              e,
+              hasFirstDays ? 16 : 1,
+              30,
+              currentlyActive
+            );
+        const days = periodType === '1ra'
+          ? periodDays
+          : Math.min(
+              30,
+              Math.max(
+                0,
+                (hasFirstDays ? firstQuincenaDays[firstDaysKey] : 0) + periodDays
+              )
+            );
+        // Una alta futura que no estaba en la 1ª no debe entrar con salario Q0
+        // y media cuota de deducciones. Un snapshot heredado sí se conserva.
+        if (days === 0 && !hasFirstDays) return null;
         const baseSalary = Number(e.sueldo_ordinario) || 0;
         const baseFactor = days / 30;
+        const recurringDeductionFactor = getRecurringDeductionFactor(days);
         const laboralRate = getCuotaLaboralRate(e);
 
-        // Solo Reporte Operativo (APPROVED_MANAGER) alimenta horas/bonos extras
+        // Reporte Operativo y registros de comisiones pendientes alimentan
+        // horas/bonos extras de la quincena.
         let qtySimples = 0;
         let qtyDobles = 0;
         let totalBonos = 0;
 
+        const draftMonthNames = [
+          'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+          'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
+        ];
+        const draftMonthName = draftMonthNames[parseLocalDate(draftRefDate).getMonth()];
+        const empCommissions = commissions.filter((commission) => {
+          if (String(commission.employee_id) !== String(e.id)) return false;
+          if (String(commission.estado || '').trim().toLowerCase() === 'aplicado') return false;
+          if (
+            commission.empresa_id
+            && !selectedCompanyIds.some(id => String(id) === String(commission.empresa_id))
+          ) {
+            return false;
+          }
+          return commission.fecha
+            ? isInPayrollInputWindow(commission.fecha)
+            : String(commission.mes || '').trim().toLowerCase()
+              === draftMonthName.toLowerCase();
+        });
+        empCommissions.forEach((commission) => {
+          totalBonos += Number(commission.monto_bono) || 0;
+          const hours = Number(commission.horas) || 0;
+          if (String(commission.tipo_hora || '').trim().toUpperCase() === 'D') {
+            qtySimples += hours;
+          } else if (String(commission.tipo_hora || '').trim().toUpperCase() === 'N') {
+            qtyDobles += hours;
+          }
+        });
+
         const empOpLogs = operationLogs.filter(l => {
           if (String(l.employeeId) !== String(e.id) || l.status !== 'APPROVED_MANAGER') return false;
-          if (!isDateInQuincena(l.date, draftRefDate, periodType)) return false;
+          if (!isInPayrollInputWindow(l.date)) return false;
           if (selectedCompanyIds.length > 0 && l.companyId) {
             return selectedCompanyIds.some(id => String(id) === String(l.companyId));
           }
@@ -1113,41 +1441,94 @@ export function DataProvider({ children }) {
 
         // 1 normal hour = BaseSalary / 30 / 8 (sobre sueldo mensual)
         const hourlyRate = baseSalary / 30 / 8;
-        const simplesQtyTotal = (Number(e.horas_extras_simples) || 0) + qtySimples;
-        const doblesQtyTotal = (Number(e.horas_extras_dobles) || 0) + qtyDobles;
-        const valSimples = simplesQtyTotal * hourlyRate * 1.5;
-        const valDobles = doblesQtyTotal * hourlyRate * 2;
+        const carriedExtras = periodType === '2da'
+          ? firstQuincenaExtras[String(e.id)]
+          : null;
+        const carriedSimplesQty = carriedExtras
+          ? (Number(carriedExtras.simplesQty) || 0)
+          : (Number(e.horas_extras_simples) || 0);
+        const carriedDoblesQty = carriedExtras
+          ? (Number(carriedExtras.doblesQty) || 0)
+          : (Number(e.horas_extras_dobles) || 0);
+        const carriedSimplesVal = carriedExtras
+          ? (Number(carriedExtras.simplesVal) || 0)
+          : carriedSimplesQty * hourlyRate * 1.5;
+        const carriedDoblesVal = carriedExtras
+          ? (Number(carriedExtras.doblesVal) || 0)
+          : carriedDoblesQty * hourlyRate * 2;
+        const simplesQtyTotal = carriedSimplesQty + qtySimples;
+        const doblesQtyTotal = carriedDoblesQty + qtyDobles;
+        const valSimples = carriedSimplesVal + (qtySimples * hourlyRate * 1.5);
+        const valDobles = carriedDoblesVal + (qtyDobles * hourlyRate * 2);
+        const bonosAcumulados = (Number(carriedExtras?.bonos) || 0) + totalBonos;
 
-        // Catálogo de bonos / comisiones ya no se auto-aplican
-        const appliedBonuses = {};
+        // Bonos del catálogo: se autoaplican por fecha/asignación. La segunda
+        // quincena es acumulada y conserva también los aplicados en la primera.
+        const periodAppliedBonuses = bonuses.reduce((assigned, bonus) => {
+          if (!isDateInQuincena(bonus.date, draftRefDate, periodType)) return assigned;
+          const assignments = bonus.assignments || {};
+          const rawAmount = assignments[String(e.id)] ?? assignments[e.id];
+          if (rawAmount === undefined || rawAmount === null || rawAmount === '') return assigned;
+          const amount = Number(rawAmount);
+          if (!Number.isFinite(amount) || amount === 0) return assigned;
+          assigned[String(bonus.id)] = amount;
+          return assigned;
+        }, {});
+        const appliedBonuses = periodType === '2da'
+          ? {
+              ...(firstQuincenaAppliedBonuses[String(e.id)] || {}),
+              ...periodAppliedBonuses
+            }
+          : periodAppliedBonuses;
+        const carriedOperationLogs = periodType === '2da'
+          ? (firstQuincenaOperationLogs[String(e.id)] || [])
+          : [];
+        const combinedOperationLogs = [
+          ...carriedOperationLogs,
+          ...empOpLogs.map(log => ({ ...log, periodOrigin: periodType }))
+        ].filter((log, index, all) => (
+          all.findIndex(candidate => String(candidate.id) === String(log.id)) === index
+        ));
+        const combinedIncidences = periodType === '2da'
+          ? [
+              ...(firstQuincenaIncidences[String(e.id)] || []),
+              ...(Array.isArray(e.incidences) ? e.incidences : [])
+            ].filter((incidence, index, all) => (
+              all.findIndex(candidate => String(candidate.id) === String(incidence.id)) === index
+            ))
+          : e.incidences;
 
         // Bantrab del maestro (campo bantrab) + bancos; ambos alimentan la columna Bancos/Bantrab
         const bantrabMensual = (Number(e.bantrab) || 0) + (Number(e.bancos) || 0);
         const vacacionesPeriodo = (Number(e.vacaciones) || 0) * baseFactor;
         const ventasPeriodo = (Number(e.ventas_economicas) || 0) * baseFactor;
 
-        // Base afecta al IGSS: sueldo + hrs extra + bonos/comisiones + otros (sin bono decreto)
+        // Base afecta al IGSS: sueldo + horas extra + otros; bonos fuera de la base.
         const otrosIngresosVal = Number(e.otro_ingresos) || 0;
-        const igssBase = (baseSalary * baseFactor) + valSimples + valDobles + totalBonos
+        const igssBase = (baseSalary * baseFactor) + valSimples + valDobles
           + otrosIngresosVal + vacacionesPeriodo + ventasPeriodo;
         const igssVal = laboralRate === 0 ? 0 : igssBase * laboralRate;
 
         // ISR: manda la retención mensual del maestro (como en el Excel); fórmula solo de fallback
         const monthlyIsr = (e.isr !== undefined && e.isr !== null && e.isr !== '')
           ? (Number(e.isr) || 0)
-          : calculateMonthlyISR(baseSalary, Number(e.bon_dec_37_2001) || 0);
+          : calculateMonthlyISR(
+            baseSalary,
+            Number(e.bon_dec_37_2001) || 0,
+            laboralRate
+          );
 
-        // 2ª: Total ISR (editable) − ISR ya retenido en 1ª; 1ª: mitad del mensual
+        // El Excel descuenta mitad con <=15 días y el total mensual con >15.
+        // En 2ª no se resta ISR 1ª aquí: el anticipo neto se resta al final.
         const isr1ra = periodType === '2da'
           ? (Number(firstQuincenaIsr[String(e.id)] ?? firstQuincenaIsr[e.id]) || 0)
           : 0;
         const totalIsr = periodType === '2da' ? monthlyIsr : undefined;
-        const periodIsr = periodType === '2da'
-          ? Math.max(0, Number((monthlyIsr - isr1ra).toFixed(2)))
-          : Number((monthlyIsr * baseFactor).toFixed(2));
+        const periodIsr = Number((monthlyIsr * recurringDeductionFactor).toFixed(2));
 
+        const { _hasCurrentMaster, ...employeeSnapshot } = e;
         return {
-          ...e,
+          ...employeeSnapshot,
           days,
           company: e.company || (companies.find(c => c.id === e.companyId)?.nombre_comercial || ''),
           ...(periodType === '2da' ? { totalIsr, isr1ra } : {}),
@@ -1160,32 +1541,41 @@ export function DataProvider({ children }) {
             shoes: 0,
             equipo: 0,
             product: 0,
-            bancos: bantrabMensual * baseFactor,
-            prestamo_empresa: (Number(e.prestamo_empresa) || 0) * baseFactor,
+            bancos: bantrabMensual * recurringDeductionFactor,
+            prestamo_empresa: (Number(e.prestamo_empresa) || 0) * recurringDeductionFactor,
             otros: 0,
-            judiciales: (Number(e.judiciales) || 0) * baseFactor,
-            seguro: (Number(e.seguro) || 0) * baseFactor,
-            parqueo: (Number(e.parqueo) || 0) * baseFactor,
-            boleto_de_ornato: (Number(e.boleto_de_ornato) || 0) * baseFactor,
-            otros_egresos: ((Number(e.otros_egresos) || 0) + (Number(e.otro_descuentos) || 0)) * baseFactor,
+            judiciales: (Number(e.judiciales) || 0) * recurringDeductionFactor,
+            seguro: (Number(e.seguro) || 0) * recurringDeductionFactor,
+            parqueo: (Number(e.parqueo) || 0) * recurringDeductionFactor,
+            boleto_de_ornato: (Number(e.boleto_de_ornato) || 0) * recurringDeductionFactor,
+            otros_egresos: ((Number(e.otros_egresos) || 0) + (Number(e.otro_descuentos) || 0)) * recurringDeductionFactor,
           },
           anticipo1ra: firstQuincenaPayouts[String(e.id)] || firstQuincenaPayouts[e.id] || 0,
           missingAnticipoWarning: periodType === '2da' && missingAnticipoWarning,
           extras: {
-            bonos: totalBonos,
+            bonos: bonosAcumulados,
             simplesQty: simplesQtyTotal,
             simplesVal: valSimples,
             doblesQty: doblesQtyTotal,
             doblesVal: valDobles,
-            comisiones: 0,
+            comisiones: Number(carriedExtras?.comisiones) || 0,
             otrosIngresos: otrosIngresosVal,
             vacacionesVal: vacacionesPeriodo,
             ventasEconomicas: ventasPeriodo,
           },
-          operationLogs: empOpLogs,
+          operationLogs: combinedOperationLogs,
+          commissionIds: empCommissions.map(commission => commission.id),
+          carriedCommissionIds: periodType === '2da'
+            ? (firstQuincenaCommissionIds[String(e.id)] || [])
+            : [],
+          incidences: combinedIncidences,
+          carriedAppliedBonuses: periodType === '2da'
+            ? (firstQuincenaAppliedBonuses[String(e.id)] || {})
+            : {},
           appliedBonuses
         };
-      });
+      })
+      .filter(Boolean);
 
     if (frozenEmployees.length === 0) {
       throw new Error('No hay empleados registrados cuya empresa principal coincida con la seleccionada.');
@@ -1196,8 +1586,9 @@ export function DataProvider({ children }) {
       title,
       periodType,
       companies: selectedCompanyIds,
-      createdAt: draftDateStr ? new Date(draftDateStr).toISOString() : new Date().toISOString(),
+      createdAt: draftDateStr ? toPayrollDateISO(draftDateStr) : toPayrollDateISO(),
       employees: frozenEmployees,
+      notes,
       missingAnticipoWarning: periodType === '2da' && missingAnticipoWarning
     };
 
@@ -1209,6 +1600,7 @@ export function DataProvider({ children }) {
       });
       if (res.ok) {
         const savedDraft = await res.json();
+        rememberDraftServerRevisions([savedDraft]);
         setActivePayrolls([savedDraft, ...activePayrolls]);
         return savedDraft.id;
       } else {
@@ -1222,6 +1614,10 @@ export function DataProvider({ children }) {
 
   const updateActivePayroll = async (id, newEmployeesData) => {
     try {
+      const draftKey = String(id);
+      if (deletingDraftIds.current.has(draftKey)) {
+        throw new Error('La nómina se está eliminando y ya no admite cambios.');
+      }
       const draftToUpdate = activePayrolls.find(p => p.id === id);
       if (draftToUpdate?.isApproved) return;
       const periodType = draftToUpdate ? draftToUpdate.periodType : 'mensual';
@@ -1244,16 +1640,17 @@ export function DataProvider({ children }) {
         body: JSON.stringify({ employees: employeesToCalculate, periodType })
       });
 
-      let calculatedEmployees = newEmployeesData;
-      if (previewRes.ok) {
-        const calculatedResults = await previewRes.json();
-        
-        // Merge the newly calculated rows back into the full list
-        calculatedEmployees = newEmployeesData.map(emp => {
-          const calcEmp = calculatedResults.find(c => c.id === emp.id);
-          return calcEmp ? calcEmp : emp;
-        });
+      if (!previewRes.ok) {
+        const errBody = await previewRes.json().catch(() => null);
+        throw new Error(errBody?.error || 'El servidor no pudo validar los cálculos de nómina.');
       }
+      const calculatedResults = await previewRes.json();
+
+      // Merge the newly calculated rows back into the full list
+      const calculatedEmployees = newEmployeesData.map(emp => {
+        const calcEmp = calculatedResults.find(c => String(c.id) === String(emp.id));
+        return calcEmp ? calcEmp : emp;
+      });
 
       // 2. Update React state immediately for UI response
       const updatedDrafts = activePayrolls.map(p => p.id === id ? { ...p, employees: calculatedEmployees } : p);
@@ -1261,6 +1658,19 @@ export function DataProvider({ children }) {
 
       const draft = updatedDrafts.find(p => p.id === id);
       if (draft) {
+        // Invalida cualquier respuesta anterior desde el momento de la edición,
+        // aunque este guardado permanezca diferido por 1.5 segundos.
+        const revision = bumpDraftSyncRevision(id);
+        const draftServerRevision = Number(draft.revision);
+        const serverRevision = Number.isInteger(draftServerRevision)
+          ? draftServerRevision
+          : (draftServerRevisions.current.get(draftKey) ?? 0);
+        pendingDraftSaves.current.set(draftKey, {
+          draft,
+          localRevision: revision,
+          serverRevision
+        });
+
         // 3. Clear existing timeout for this draft
         if (saveTimeouts.current[id]) {
           clearTimeout(saveTimeouts.current[id]);
@@ -1268,25 +1678,31 @@ export function DataProvider({ children }) {
         
         // 4. Set a new timeout to persist to the database after 1.5 seconds of inactivity
         saveTimeouts.current[id] = setTimeout(async () => {
-          try {
-            const res = await fetch(`http://localhost:3000/api/payroll-drafts/${id}`, {
-              method: 'PUT',
-              headers: getAuthHeader(),
-              body: JSON.stringify(draft)
-            });
-          if (!res.ok) {
-            await res.json().catch(() => null);
-          }
-        } catch(e) {
-          console.error("Error saving draft in background:", e);
-        }
-      }, 1500);
+          delete saveTimeouts.current[id];
+          const pending = pendingDraftSaves.current.get(draftKey);
+          if (!pending || pending.localRevision !== revision) return;
+          pendingDraftSaves.current.delete(draftKey);
+          await persistDraftPatch(
+            pending.draft,
+            pending.localRevision,
+            pending.serverRevision
+          );
+        }, 1500);
+      }
+      return { success: true };
+    } catch(err) {
+      console.error("Error in updateActivePayroll:", err);
+      return { success: false, error: err.message };
     }
-  } catch(err) {
-    console.error("Error in updateActivePayroll:", err);
-  }
-};
-  const updateDraftMetadata = async (id, title, companiesPayload, createdAt, periodType) => {
+  };
+  const updateDraftMetadata = async (
+    id,
+    title,
+    companiesPayload,
+    createdAt,
+    periodType,
+    notes
+  ) => {
     const rawCompanies = Array.isArray(companiesPayload) ? companiesPayload : [];
     const hasAllToken = rawCompanies.some(c => {
       const s = String(c ?? '').trim().toLowerCase();
@@ -1301,35 +1717,82 @@ export function DataProvider({ children }) {
       return comp ? comp.id : name;
     });
 
-    const updatedDrafts = activePayrolls.map(p => p.id === id ? { ...p, title, companies: resolved, createdAt, periodType } : p);
-    setActivePayrolls(updatedDrafts);
-
-    const draft = updatedDrafts.find(p => p.id === id);
-    if (draft) {
-      try {
-        const res = await fetch(`http://localhost:3000/api/payroll-drafts/${id}`, {
-          method: 'PUT',
-          headers: getAuthHeader(),
-          body: JSON.stringify(draft)
-        });
-        if (!res.ok) {
-          const errBody = await res.json().catch(() => null);
-          throw new Error(errBody?.error || 'No se pudo actualizar el borrador');
-        }
-      } catch(e) {
-        throw e;
-      }
+    const original = activePayrolls.find(p => p.id === id);
+    if (!original) throw new Error('Borrador no encontrado');
+    let currentCompanies = original.companies;
+    if (typeof currentCompanies === 'string') {
+      try { currentCompanies = JSON.parse(currentCompanies); } catch { currentCompanies = []; }
     }
+    currentCompanies = (Array.isArray(currentCompanies) ? currentCompanies : []).map(value => {
+      const company = companies.find(c =>
+        String(c.id) === String(value)
+        || c.nombre_comercial === value
+        || c.nit === value
+      );
+      return String(company?.id ?? value);
+    });
+    const dateKey = value => formatLocalDateKey(value);
+    const changesCalculationContext = (
+      String(resolved[0]) !== String(currentCompanies[0])
+      || String(periodType) !== String(original.periodType)
+      || dateKey(createdAt) !== dateKey(original.createdAt)
+    );
+    if (changesCalculationContext) {
+      throw new Error(
+        'La empresa, el período y la fecha no pueden cambiarse después de generar el borrador. Cree uno nuevo.'
+      );
+    }
+
+    const draft = {
+      ...original,
+      title,
+      notes: notes !== undefined ? notes : original.notes
+    };
+    const saved = await persistDraftPatch(draft);
+    if (!saved) throw new Error('No se pudo actualizar el borrador');
   };
 
   const deleteActivePayroll = async (id) => {
-    setActivePayrolls(activePayrolls.filter(p => p.id !== id));
+    const key = String(id);
+    deletingDraftIds.current.add(key);
+    pendingDraftSaves.current.delete(key);
+    if (saveTimeouts.current[id]) {
+      clearTimeout(saveTimeouts.current[id]);
+      delete saveTimeouts.current[id];
+    }
+    // Invalida respuestas pendientes y espera cualquier PUT que ya esté en vuelo.
+    bumpDraftSyncRevision(key);
+    const pendingTask = draftSyncChains.current.get(key);
+    if (pendingTask) await pendingTask;
+    // También descarta una edición iniciada mientras se esperaba el PUT.
+    pendingDraftSaves.current.delete(key);
+    if (saveTimeouts.current[id]) {
+      clearTimeout(saveTimeouts.current[id]);
+      delete saveTimeouts.current[id];
+    }
+
     try {
-      await fetch(`http://localhost:3000/api/payroll-drafts/${id}`, {
+      const response = await fetch(`http://localhost:3000/api/payroll-drafts/${key}`, {
         method: 'DELETE',
         headers: getAuthHeader()
       });
-    } catch(e) {}
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error || 'No se pudo eliminar el borrador');
+      }
+
+      setActivePayrolls((current) => current.filter(p => String(p.id) !== key));
+      draftSyncChains.current.delete(key);
+      draftSyncRevisions.current.delete(key);
+      draftServerRevisions.current.delete(key);
+      draftConflictIds.current.delete(key);
+      pendingDraftSaves.current.delete(key);
+    } catch (error) {
+      await fetchActivePayrolls();
+      throw error;
+    } finally {
+      deletingDraftIds.current.delete(key);
+    }
   };
 
   const closePayroll = async (id) => {
@@ -1349,59 +1812,87 @@ export function DataProvider({ children }) {
           error: 'No se puede cerrar una nómina sin una empresa específica. Las nóminas se procesan empresa por empresa.'
         };
       }
+      if (draft.periodType === '2da' && draft.missingAnticipoWarning) {
+        return {
+          success: false,
+          error: 'No se puede cerrar la segunda quincena sin una primera quincena cerrada del mismo mes y empresa.'
+        };
+      }
 
-      // Calculate totals for history view
-      let grossTotal = 0;
-      let dedTotal = 0;
       const logsToProcess = [];
+      const commissionsToProcess = [];
 
       draft.employees.forEach(e => {
-        // Read values exactly as computed by the backend engine
-        const gross = e.calculated?.gross || 0;
-        const ded = e.calculated?.ded || 0;
-        const anticipo = e.anticipo1ra || 0;
-        
-        e.netTotal = gross - ded - anticipo; // Save snapshot of their net pay
-
-        grossTotal += gross;
-        dedTotal += ded + anticipo;
-
         if (e.operationLogs) {
-          e.operationLogs.forEach(log => logsToProcess.push(log.id));
+          e.operationLogs
+            .filter(log => !log.carriedFromFirstQuincena && log.status === 'APPROVED_MANAGER')
+            .forEach(log => logsToProcess.push(log.id));
         }
+        (Array.isArray(e.commissionIds) ? e.commissionIds : [])
+          .forEach(commissionId => commissionsToProcess.push(commissionId));
       });
 
-      const historyRecord = {
-        id: Date.now().toString(),
-        ...draft,
-        companies: draftCompanies,
-        status: draft.isApproved ? 'cerrada' : 'auditoria',
-        employeesCount: draft.employees.length,
-        netTotal: grossTotal - dedTotal,
-        closedAt: new Date().toISOString(),
-        data: draft.employees // The snapshot
-      };
-
       try {
+        // Vaciar cualquier guardado diferido y persistir el borrador editable.
+        // Un aprobado no se toca: el servidor usará exactamente el snapshot
+        // que recibió el visto bueno de Auditoría.
+        if (saveTimeouts.current[id]) {
+          clearTimeout(saveTimeouts.current[id]);
+          delete saveTimeouts.current[id];
+        }
+        let persistedPendingDraft = null;
+        const pendingSave = pendingDraftSaves.current.get(String(id));
+        if (pendingSave) {
+          pendingDraftSaves.current.delete(String(id));
+          persistedPendingDraft = await persistDraftPatch(
+            pendingSave.draft,
+            pendingSave.localRevision,
+            pendingSave.serverRevision
+          );
+          if (!persistedPendingDraft) {
+            throw new Error(
+              'No se pudo guardar el último cambio de la nómina antes de enviarla.'
+            );
+          }
+        }
+        if (!draft.isApproved && !persistedPendingDraft) {
+          const persistedDraft = await persistDraftPatch(draft);
+          if (!persistedDraft) {
+            const conflictMessage = draftConflictIds.current.has(String(id))
+              ? 'La nómina cambió en otra pestaña o sesión. Recargue la aplicación, revise los valores actualizados y vuelva a enviarla.'
+              : 'No se pudo guardar el borrador antes de enviarlo.';
+            throw new Error(conflictMessage);
+          }
+        }
+
         const res = await fetch('http://localhost:3000/api/payrolls', {
           method: 'POST',
           headers: getAuthHeader(),
-          body: JSON.stringify(historyRecord)
+          body: JSON.stringify({ draftId: id })
         });
         
         if (!res.ok) {
           if (res.status === 413) throw new Error('La nómina es demasiado grande para guardarse (Payload Too Large).');
           if (res.status === 403 || res.status === 401) throw new Error('Tu sesión ha expirado o no tienes permisos (Error 403/401). Inicia sesión nuevamente.');
-          throw new Error('Error al conectar con el servidor.');
+          const errorBody = await res.json().catch(() => ({}));
+          throw new Error(errorBody.error || 'Error al conectar con el servidor.');
         }
 
         const saved = await res.json();
-        const { data: _fullData, ...listEntry } = saved;
-        setPayrollHistory([listEntry, ...payrollHistory.filter((p) => p.id !== saved.id)]);
-        deleteActivePayroll(id);
+        setPayrollHistory((current) => [
+          saved,
+          ...current.filter((p) => p.id !== saved.id)
+        ]);
+        // El servidor eliminó el borrador dentro de la misma transacción.
+        setActivePayrolls((current) => current.filter(p => p.id !== id));
+        draftSyncChains.current.delete(String(id));
+        draftSyncRevisions.current.delete(String(id));
+        draftServerRevisions.current.delete(String(id));
+        draftConflictIds.current.delete(String(id));
+        pendingDraftSaves.current.delete(String(id));
 
         // Tras cerrar 2ª, refrescar fichas (Total ISR pudo actualizar employees.isr)
-        if (draft.periodType === '2da' && historyRecord.status === 'cerrada') {
+        if (draft.periodType === '2da' && saved.status === 'cerrada') {
           try {
             const empRes = await fetch('http://localhost:3000/api/employees', { headers: getAuthHeader() });
             if (empRes.ok) {
@@ -1413,12 +1904,24 @@ export function DataProvider({ children }) {
           }
         }
 
-        // Mark operation logs as PROCESSED_PAYROLL with periodAssigned
+        // El servidor ya reservó/procesó los registros dentro de la misma
+        // transacción que creó el historial; aquí solo reflejamos ese estado.
         if (logsToProcess.length > 0) {
-          const periodLabel = saved.id || historyRecord.id;
-          await Promise.all(logsToProcess.map(logId => 
-            updateOperationLogStatus(logId, 'PROCESSED_PAYROLL', periodLabel)
-          ));
+          const periodLabel = saved.id || id;
+          const processedIds = new Set(logsToProcess.map(String));
+          setOperationLogs((current) => current.map((log) => (
+            processedIds.has(String(log.id))
+              ? { ...log, status: 'PROCESSED_PAYROLL', periodAssigned: periodLabel }
+              : log
+          )));
+        }
+        if (commissionsToProcess.length > 0) {
+          const processedCommissionIds = new Set(commissionsToProcess.map(String));
+          setCommissions((current) => current.map((commission) => (
+            processedCommissionIds.has(String(commission.id))
+              ? { ...commission, estado: 'Aplicado' }
+              : commission
+          )));
         }
 
         return { success: true };
@@ -1473,6 +1976,20 @@ export function DataProvider({ children }) {
       if (!response.ok) throw new Error('Error al rechazar nómina');
       await fetchActivePayrolls();
       await fetchPayrollHistory();
+      const logsResponse = await fetch('http://localhost:3000/api/operation-logs', {
+        headers: getAuthHeader()
+      });
+      if (logsResponse.ok) {
+        const refreshedLogs = await logsResponse.json();
+        if (Array.isArray(refreshedLogs)) setOperationLogs(refreshedLogs);
+      }
+      const commissionsResponse = await fetch('http://localhost:3000/api/commissions', {
+        headers: getAuthHeader()
+      });
+      if (commissionsResponse.ok) {
+        const refreshedCommissions = await commissionsResponse.json();
+        if (Array.isArray(refreshedCommissions)) setCommissions(refreshedCommissions);
+      }
     } catch (err) {
       console.error(err);
       throw err;
@@ -1520,6 +2037,7 @@ export function DataProvider({ children }) {
       addCommission, updateCommission, deleteCommission,
       operationLogs, addOperationLog, updateOperationLogStatus, deleteOperationLog, updateOperationLog,
       injectApprovedLogIntoActiveDrafts, revertLogFromActiveDrafts,
+      flushPendingDraftSaves,
       activePayrolls, createActivePayroll, updateActivePayroll, updateDraftMetadata, deleteActivePayroll, closePayroll,
       savePayroll, deletePayroll, auditorApprovePayroll, auditorRejectPayroll, fetchPayrollHistory, fetchActivePayrolls
   }), [

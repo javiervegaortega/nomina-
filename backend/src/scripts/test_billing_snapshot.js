@@ -1,4 +1,4 @@
-const { PayrollHistory } = require('../models');
+const { PayrollHistory, BillingRule, sequelize } = require('../models');
 const BillingService = require('../services/billing.service');
 require('dotenv').config();
 
@@ -30,9 +30,76 @@ const summarizeEmployee = (employee) => {
   };
 };
 
+const assert = (condition, message) => {
+  if (!condition) throw new Error(`FAIL: ${message}`);
+  console.log(`OK: ${message}`);
+};
+
+const verifyBillingConfiguration = async () => {
+  const expectedRoutes = [
+    { from: 1, to: 2, margin: 0, iva: true, ivaRate: 0.12, totalFor100: 112 },
+    { from: 1, to: 3, margin: 0, iva: true, ivaRate: 0.12, totalFor100: 112 },
+    { from: 2, to: 1, margin: 0, iva: true, ivaRate: 0.12, totalFor100: 112 },
+    { from: 2, to: 3, margin: 0, iva: true, ivaRate: 0.12, totalFor100: 112 },
+    { from: 3, to: 1, margin: 4, iva: true, ivaRate: 0.12, totalFor100: 116.48 },
+    { from: 3, to: 2, margin: 4, iva: true, ivaRate: 0.12, totalFor100: 116.48 },
+    { from: 3, to: 4, margin: 4, iva: false, ivaRate: 0, totalFor100: 104 }
+  ];
+  const activeRules = await BillingRule.findAll({ where: { isActive: true } });
+
+  expectedRoutes.forEach((expected) => {
+    const rule = activeRules.find((candidate) => (
+      Number(candidate.fromCompanyId) === expected.from
+      && Number(candidate.toCompanyId) === expected.to
+    ));
+    assert(!!rule, `ruta ${expected.from}→${expected.to} activa`);
+    assert(
+      Number(rule.marginPercentage) === expected.margin,
+      `margen ${expected.margin}% en ${expected.from}→${expected.to}`
+    );
+    assert(
+      Boolean(rule.applyIva) === expected.iva,
+      `IVA ${expected.iva ? 'activo' : 'inactivo'} en ${expected.from}→${expected.to}`
+    );
+    assert(
+      Number(rule.ivaRate) === expected.ivaRate,
+      `tasa IVA ${(expected.ivaRate * 100).toFixed(0)}% en ${expected.from}→${expected.to}`
+    );
+
+    const base = 100;
+    const margin = base * Number(rule.marginPercentage) / 100;
+    const total = base + margin + (rule.applyIva ? (base + margin) * Number(rule.ivaRate) : 0);
+    assert(
+      Math.abs(total - expected.totalFor100) < 0.0001,
+      `total de control Q${expected.totalFor100.toFixed(2)} en ${expected.from}→${expected.to}`
+    );
+  });
+
+  const allowed = new Set(expectedRoutes.map((route) => `${route.from}->${route.to}`));
+  assert(activeRules.length === expectedRoutes.length, 'existe una sola regla activa por ruta Excel');
+  const unexpectedActive = activeRules.filter((rule) => (
+    !allowed.has(`${Number(rule.fromCompanyId)}->${Number(rule.toCompanyId)}`)
+  ));
+  assert(unexpectedActive.length === 0, 'no existen rutas activas fuera de la matriz Excel');
+
+  const indexes = await sequelize.getQueryInterface().showIndex('billing_runs');
+  assert(
+    indexes.some((index) => index.name === 'billing_runs_payroll_version_unique' && index.unique),
+    'índice único billing_runs(payrollId, version)'
+  );
+  const lineColumns = await sequelize.getQueryInterface().describeTable('billing_run_lines');
+  ['centroCosto', 'subtotalAmount', 'applyIva', 'ivaRate'].forEach((column) => {
+    assert(!!lineColumns[column], `columna persistida billing_run_lines.${column}`);
+  });
+};
+
 async function test() {
   let totalWarnings = 0;
   let criticalFailures = 0;
+
+  console.log('Verificando configuración intercompany...\n');
+  await verifyBillingConfiguration();
+  console.log('');
 
   const payrolls = await PayrollHistory.findAll({
     where: { status: 'cerrada', periodType: '2da' },
@@ -69,7 +136,10 @@ async function test() {
 
     try {
       const preview = await BillingService.buildPreview(payroll.id);
-      console.log(`\nVista previa billing: ${preview.details.length} filas, ${preview.lines.length} facturas`);
+      console.log(`\nVista previa billing: ${preview.details.length} detalles, ${preview.lines.length} líneas por centro de costo`);
+      const blockingErrors = preview.blockingErrors || [];
+      console.log(`Bloqueos de confirmación (${blockingErrors.length}):`);
+      blockingErrors.forEach((message) => console.log(`  ! ${message}`));
       console.log(`Advertencias (${preview.warnings.length}):`);
       preview.warnings.forEach((w) => console.log(`  * ${w}`));
       totalWarnings += preview.warnings.length;

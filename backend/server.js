@@ -81,6 +81,8 @@ const startServer = async () => {
     await ensureBillingSchema(sequelize);
     const { ensurePayrollHistorySchema } = require('./src/config/ensurePayrollHistorySchema');
     await ensurePayrollHistorySchema(sequelize);
+    const { ensurePayrollDraftSchema } = require('./src/config/ensurePayrollDraftSchema');
+    await ensurePayrollDraftSchema(sequelize);
     const { ensureEmployeeColumns } = require('./src/config/ensureEmployeeSchema');
     await ensureEmployeeColumns(sequelize);
 

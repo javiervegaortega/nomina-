@@ -144,7 +144,7 @@ export default function Commissions() {
     setForm(prev => ({ ...prev, fecha: dateStr, mes: monthNames[dateObj.getMonth()] || prev.mes }));
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!selectedEmp) {
       showToast('Seleccione un empleado', 'warning');
       return;
@@ -156,9 +156,13 @@ export default function Commissions() {
       bono_unidades: Number(form.bono_unidades) || 0,
       monto_bono: Number(form.monto_bono) || 0,
     };
-    addCommission(payload);
-    showToast('Solicitud guardada', 'success');
-    onClose();
+    try {
+      await addCommission(payload);
+      showToast('Solicitud guardada', 'success');
+      onClose();
+    } catch (error) {
+      showToast(error.message || 'No se pudo guardar la solicitud', 'error');
+    }
   };
 
   // Helper to get employee name from id
@@ -347,8 +351,13 @@ export default function Commissions() {
                             transition="all 0.3s"
                             _hover={{ bg: deleteHoverBg }}
                             onClick={() => {
-                              confirmAction(`¿Seguro que desea eliminar esta solicitud?`, () => {
-                                deleteCommission(c.id);
+                              confirmAction(`¿Seguro que desea eliminar esta solicitud?`, async () => {
+                                try {
+                                  await deleteCommission(c.id);
+                                  showToast('Solicitud eliminada', 'success');
+                                } catch (error) {
+                                  showToast(error.message || 'No se pudo eliminar la solicitud', 'error');
+                                }
                               });
                             }}
                           />

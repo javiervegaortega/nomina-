@@ -70,29 +70,15 @@ async function cleanupTracked(token) {
 }
 
 async function closeDraftToHistory(token, draft, status, isApproved) {
-  const employees = draft.employees || [];
-  const payrollId = `e2e-${Date.now()}`;
-  const payload = {
-    id: payrollId,
-    title: draft.title,
-    companies: draft.companies,
-    periodType: draft.periodType || periodType,
-    status,
-    isApproved: !!isApproved,
-    employeesCount: employees.length,
-    closedAt: new Date().toISOString(),
-    data: employees,
-    notes: draft.notes || null
-  };
-
   const res = await api('/api/payrolls', {
     method: 'POST',
-    body: JSON.stringify(payload)
+    body: JSON.stringify({ draftId: draft.id })
   }, token);
   assert(res.status === 201, `POST /api/payrolls (${status}) → ${res.status}`);
+  const payrollId = res.body?.id || draft.id;
+  assert(res.body?.status === status, `Estado determinado por borrador (${status})`);
   if (res.status === 201) {
     tracked.payrollIds.push(payrollId);
-    await api(`/api/payroll-drafts/${draft.id}`, { method: 'DELETE' }, token);
     tracked.draftIds = tracked.draftIds.filter((id) => id !== draft.id);
   }
   return payrollId;
@@ -359,17 +345,6 @@ async function main() {
     const draftDb = await PayrollDraft.findByPk(approvedDraft.id);
     assert(draftDb?.isApproved === true || draftDb?.isApproved === 1, 'Borrador isApproved en BD');
 
-    const companyName = testCompany.nombre_comercial || String(testCompany.id);
-    const fixDraft = await api(`/api/payroll-drafts/${approvedDraft.id}`, {
-      method: 'PUT',
-      body: JSON.stringify({
-        ...approvedDraft,
-        companies: [companyName],
-        employees: approvedDraft.employees
-      })
-    }, token);
-    assert(fixDraft.status === 200, 'PUT borrador con companies');
-    approvedDraft = fixDraft.body || { ...approvedDraft, companies: [companyName] };
     tracked.draftIds.push(approvedDraft.id);
 
     closedPayrollId = await closeDraftToHistory(token, approvedDraft, 'cerrada', true);

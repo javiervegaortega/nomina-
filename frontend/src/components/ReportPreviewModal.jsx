@@ -19,6 +19,120 @@ const getEmpName = (e) => {
 const fmtQ = (n) => `Q ${Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fmtN = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+const firstNumber = (...values) => {
+  for (const value of values) {
+    if (value !== undefined && value !== null && value !== '') {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : 0;
+    }
+  }
+  return undefined;
+};
+
+const getDaysWorked = (employee) => firstNumber(employee?.days, employee?.dias) ?? 30;
+
+const getAnticipo1ra = (employee) => firstNumber(
+  employee?.calculated?.anticipo1ra,
+  employee?.anticipo1ra
+) ?? 0;
+
+const getNetPayable = (employee, periodType) => {
+  const canonicalPayable = firstNumber(
+    employee?.calculated?.netPayable,
+    employee?.netPayable
+  );
+  if (canonicalPayable !== undefined) return canonicalPayable;
+
+  const legacyNet = firstNumber(employee?.calculated?.net, employee?.netTotal) ?? 0;
+  return periodType === '2da'
+    ? legacyNet - getAnticipo1ra(employee)
+    : legacyNet;
+};
+
+const getPayrollExtras = (employee) => {
+  const extras = employee?.extras || {};
+  const calculated = employee?.calculated || {};
+  const hours = employee?.hours || {};
+
+  const simplesQty = firstNumber(extras.simplesQty, extras.simpleQty, hours.simple) ?? 0;
+  const simplesVal = firstNumber(extras.simplesVal, calculated.simpleExtras) ?? 0;
+  const doblesQty = firstNumber(extras.doblesQty, extras.doubleQty, hours.double) ?? 0;
+  const doblesVal = firstNumber(extras.doblesVal, calculated.doubleExtras) ?? 0;
+
+  const otherParts = [
+    firstNumber(extras.comisiones, extras.commissions),
+    firstNumber(extras.otrosIngresos, extras.otherIncome, calculated.otrosIngresos),
+    firstNumber(extras.vacacionesVal, calculated.vacacionesVal),
+    firstNumber(extras.ventasEconomicas, calculated.ventasEconomicas)
+  ];
+  const hasDetailedOtherIncome = otherParts.some(value => value !== undefined);
+  const otherIncome = hasDetailedOtherIncome
+    ? otherParts.reduce((sum, value) => sum + (value ?? 0), 0)
+    : Math.max(0, (firstNumber(calculated.extrasTotal) ?? 0) - simplesVal - doblesVal);
+
+  return {
+    simplesQty,
+    simplesVal,
+    doblesQty,
+    doblesVal,
+    otherIncome,
+    septimosVal: firstNumber(extras.septimosVal) ?? 0,
+    vacacionesVal: firstNumber(extras.vacacionesVal, calculated.vacacionesVal) ?? 0
+  };
+};
+
+const getPayrollDeductions = (employee) => {
+  const canonical = employee?.calculated?.proratedDeductions || {};
+  const legacy = employee?.deductions || {};
+  const read = (canonicalKey, ...aliases) => {
+    const keys = [canonicalKey, ...aliases];
+    for (const source of [canonical, legacy]) {
+      for (const key of keys) {
+        const value = firstNumber(source?.[key]);
+        if (value !== undefined) return value;
+      }
+    }
+    return 0;
+  };
+
+  return {
+    igss: read('igss'),
+    isr: read('isr'),
+    cafe: read('cafe', 'cafeteria'),
+    cell: read('cell', 'celular'),
+    uniform: read('uniform', 'uniforme'),
+    shoes: read('shoes', 'calzado'),
+    equipo: read('equipo'),
+    product: read('product', 'producto'),
+    bancos: read('bancos', 'bantrab'),
+    otros: read('otros'),
+    judiciales: read('judiciales'),
+    seguro: read('seguro'),
+    parqueo: read('parqueo'),
+    boleto_de_ornato: read('boleto_de_ornato', 'ornato'),
+    otros_egresos: read('otros_egresos')
+  };
+};
+
+const getPayrollBonuses = (employee) => {
+  const calculated = employee?.calculated || {};
+  const operationalBonuses = firstNumber(calculated.bonos, employee?.extras?.bonos) ?? 0;
+  const catalogBonuses = firstNumber(calculated.bonusesSum)
+    ?? Object.values(employee?.appliedBonuses || {}).reduce(
+      (sum, value) => sum + (Number(value) || 0),
+      0
+    );
+  return operationalBonuses + catalogBonuses;
+};
+
+const getTotalDeductions = (employee) => {
+  const calculatedTotal = firstNumber(employee?.calculated?.ded);
+  if (calculatedTotal !== undefined) return calculatedTotal;
+
+  const source = employee?.calculated?.proratedDeductions || employee?.deductions || {};
+  return Object.values(source).reduce((sum, value) => sum + (Number(value) || 0), 0);
+};
+
 const REPORT_TITLES = {
   verificador:  'Verificador de Pago de Nómina',
   cheques:      'Solicitud de Cheques',
@@ -185,19 +299,25 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
       drawField('Fecha de Ingreso',                e.fecha_ingreso ? new Date(e.fecha_ingreso).toLocaleDateString('es-GT') : '', margin + col4 * 2, r2y, col4 * 0.9);
       drawField('Fecha Finalización de Relación Laboral', '', margin + col4 * 3, r2y, col4 * 0.9);
 
-      const ord = fmtN(e.calculated.baseSalary);
-      const ext = fmtN((e.extras?.simplesVal || 0) + (e.extras?.doblesVal || 0));
-      const septimos = fmtN(e.extras?.septimosVal || 0);
-      const vacaciones = fmtN(e.extras?.vacacionesVal || 0); 
-      const totalDev = fmtN(e.calculated.gross);
-      
-      const igss = fmtN(e.deductions?.igss || 0);
-      const otrasDed = fmtN((e.calculated.ded || 0) - (e.deductions?.igss || 0));
-      const totalDed = fmtN(e.calculated.ded);
-      
-      const dec4292 = fmtN((e.calculated.bonusDec || 0) + (e.calculated.bonos || 0));
-      const bonInc = fmtN(e.calculated.bonusLey || 0);
-      const liq = fmtN(e.calculated.net);
+      const calculated = e.calculated || {};
+      const extras = getPayrollExtras(e);
+      const deductions = getPayrollDeductions(e);
+      const bonuses = getPayrollBonuses(e);
+      const totalDeductions = getTotalDeductions(e);
+
+      const ord = fmtN(calculated.baseSalary);
+      const ext = fmtN(extras.simplesVal + extras.doblesVal);
+      const septimos = fmtN(extras.septimosVal);
+      const vacaciones = fmtN(extras.vacacionesVal);
+      const totalDev = fmtN(calculated.gross);
+
+      const igss = fmtN(deductions.igss);
+      const otrasDed = fmtN(totalDeductions - deductions.igss);
+      const totalDed = fmtN(totalDeductions);
+
+      const dec4292 = fmtN((Number(calculated.bonusDec) || 0) + bonuses);
+      const bonInc = fmtN(calculated.bonusLey);
+      const liq = fmtN(getNetPayable(e, group?.periodType));
 
       autoTable(doc, {
         startY: r2y + 30,
@@ -234,9 +354,9 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
             1,
             group.title || 'Nómina',
             fmtN(e.sueldo_ordinario || 0),
-            e.days || 30,
+            getDaysWorked(e),
             '',
-            e.extras?.simplesQty || 0,
+            extras.simplesQty + extras.doblesQty,
             ord,
             ext,
             septimos,
@@ -404,12 +524,17 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
         if (!cheques.length && !transfers.length) return;
         body.push([{ content: `Empresa: ${compName.toUpperCase()}`, colSpan: 6, styles: { fillColor: [220, 237, 255], fontStyle: 'bold', textColor: [20, 80, 160] } }]);
         if (transfers.length > 0) {
-          const sum = transfers.reduce((a, e) => a + e.calculated.net, 0);
+          const sum = transfers.reduce((a, e) => a + getNetPayable(e, group?.periodType), 0);
           grandTotal += sum;
           body.push(['Varios Plantilla', '', 'Nomina', '', 'Transferencia', { content: fmtQ(sum), styles: { halign: 'right', fontStyle: 'bold' } }]);
         }
         let chSub = 0;
-        cheques.forEach(e => { grandTotal += e.calculated.net; chSub += e.calculated.net; body.push([getEmpName(e), compName.toUpperCase(), e.puesto || 'FIJO', '', 'CHEQUE', { content: fmtQ(e.calculated.net), styles: { halign: 'right' } }]); });
+        cheques.forEach(e => {
+          const payable = getNetPayable(e, group?.periodType);
+          grandTotal += payable;
+          chSub += payable;
+          body.push([getEmpName(e), compName.toUpperCase(), e.puesto || 'FIJO', '', 'CHEQUE', { content: fmtQ(payable), styles: { halign: 'right' } }]);
+        });
         if (cheques.length) body.push(['', '', '', '', { content: 'Subtotal Cheques:', styles: { halign: 'right', fontStyle: 'italic' } }, { content: fmtQ(chSub), styles: { halign: 'right', fontStyle: 'bold', textColor: [0, 120, 0] } }]);
       });
       body.push(['', '', '', '', { content: 'TOTAL GENERAL', styles: { halign: 'right', fontStyle: 'bold', fontSize: 10 } }, { content: fmtQ(grandTotal), styles: { halign: 'right', fontStyle: 'bold', fontSize: 10, textColor: [0, 120, 0] } }]);
@@ -434,7 +559,7 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
       const chData = data.filter(e => String(e.tipo_de_pago).toLowerCase() === 'cheque');
       let total = 0;
       const body = chData.map(e => {
-        const net = group.periodType === '2da' ? (e.calculated.net - (e.anticipo1ra || 0)) : e.calculated.net;
+        const net = getNetPayable(e, group?.periodType);
         total += net;
         const comp = companies?.find(c => c.id == e.empresa_principal)?.nombre_comercial || e.company || 'Sin Empresa';
         return [getEmpName(e), comp, e.puesto || 'N/A', e.banco || 'N/A', 'Cheque', { content: fmtQ(net), styles: { halign: 'right' } }];
@@ -451,12 +576,15 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
 
     
 
-    // ── Nómina General ───────────────────────────────────────
-    else if (reportType === 'nomina') {
+    // ── Nómina General / Recibo e IGSS ──────────────────────
+    else if (reportType === 'nomina' || reportType === 'igss') {
       const doc = new jsPDF('landscape', 'pt', 'letter');
-      addHeader(doc, 'Nómina General');
-      
-      const cols = ALL_COLUMNS_DEF.filter(c => colsNomina.includes(c.id));
+      const isIgssReport = reportType === 'igss';
+      const subtitle = isIgssReport ? 'Recibo e IGSS' : 'Nómina General';
+      const selectedColumns = isIgssReport ? colsIgss : colsNomina;
+      addHeader(doc, subtitle);
+
+      const cols = ALL_COLUMNS_DEF.filter(c => selectedColumns.includes(c.id));
       const headRow = cols.map(c => c.label);
       const colStyles = {};
       cols.forEach((c, idx) => { if (c.align === 'right') colStyles[idx] = { halign: 'right' }; });
@@ -468,12 +596,12 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
           return val;
         });
       };
-      processPdfTable(doc, 'igss', headRow, dataMapFn, colStyles);
+      processPdfTable(doc, reportType, headRow, dataMapFn, colStyles);
       if (action === 'print') {
         doc.autoPrint();
         window.open(doc.output('bloburl'), '_blank');
       } else {
-        doc.save(`Recibo_IGSS_${safe}.pdf`);
+        doc.save(`${isIgssReport ? 'Recibo_IGSS' : 'Nomina_General'}_${safe}.pdf`);
       }
     }
 
@@ -500,10 +628,18 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
         const { cheques, transfers } = comps[compName];
         body.push([{ content: `Empresa: ${compName.toUpperCase()}`, colSpan: 4, styles: { fillColor: [220, 237, 255], fontStyle: 'bold', textColor: [20, 80, 160] } }]);
         let totalPlantilla = 0, totalCheques = 0;
-        transfers.forEach(e => { totalPlantilla += e.calculated.net; body.push([e.numero_cuenta || e.no_cuenta || '', cleanName(getEmpName(e)), { content: fmtN(e.calculated.net), styles: { halign: 'right' } }, concepto]); });
+        transfers.forEach(e => {
+          const payable = getNetPayable(e, group?.periodType);
+          totalPlantilla += payable;
+          body.push([e.numero_cuenta || e.no_cuenta || '', cleanName(getEmpName(e)), { content: fmtN(payable), styles: { halign: 'right' } }, concepto]);
+        });
         body.push(['', { content: `Total Plantilla ${compName.toUpperCase()}`, styles: { fontStyle: 'bold' } }, { content: fmtN(totalPlantilla), styles: { halign: 'right', fontStyle: 'bold' } }, '']);
         if (cheques.length) {
-          cheques.forEach(e => { totalCheques += e.calculated.net; body.push(['CHEQUE', cleanName(getEmpName(e)), { content: fmtN(e.calculated.net), styles: { halign: 'right' } }, concepto]); });
+          cheques.forEach(e => {
+            const payable = getNetPayable(e, group?.periodType);
+            totalCheques += payable;
+            body.push(['CHEQUE', cleanName(getEmpName(e)), { content: fmtN(payable), styles: { halign: 'right' } }, concepto]);
+          });
           body.push(['', { content: 'Total Cheques', styles: { fontStyle: 'bold' } }, { content: fmtN(totalCheques), styles: { halign: 'right', fontStyle: 'bold' } }, '']);
         }
         body.push(['', { content: 'Total Nómina', styles: { fontStyle: 'bold' } }, { content: fmtN(totalPlantilla + totalCheques), styles: { halign: 'right', fontStyle: 'bold', textColor: [0, 120, 0] } }, '']);
@@ -531,10 +667,18 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
         const { cheques, transfers } = comps[compName];
         body.push([{ content: `Empresa: ${compName.toUpperCase()}`, colSpan: 5, styles: { fillColor: [220, 237, 255], fontStyle: 'bold', textColor: [20, 80, 160] } }]);
         let totalPlantilla = 0, totalCheques = 0, corr = 1;
-        transfers.forEach(e => { totalPlantilla += e.calculated.net; body.push([e.tipo_cuenta?.toLowerCase() === 'ahorro' ? 2 : 1, e.numero_cuenta || e.no_cuenta || '', corr++, cleanName(getEmpName(e)), { content: fmtN(e.calculated.net), styles: { halign: 'right' } }, concepto]); });
+        transfers.forEach(e => {
+          const payable = getNetPayable(e, group?.periodType);
+          totalPlantilla += payable;
+          body.push([e.tipo_cuenta?.toLowerCase() === 'ahorro' ? 2 : 1, e.numero_cuenta || e.no_cuenta || '', corr++, cleanName(getEmpName(e)), { content: fmtN(payable), styles: { halign: 'right' } }, concepto]);
+        });
         body.push(['', '', { content: 'TOTAL PLANTILLA', colSpan: 2, styles: { fontStyle: 'bold', halign: 'right' } }, { content: fmtN(totalPlantilla), styles: { halign: 'right', fontStyle: 'bold' } }, '']);
         if (cheques.length) {
-          cheques.forEach(e => { totalCheques += e.calculated.net; body.push([1, 'CHEQUE', corr++, cleanName(getEmpName(e)), { content: fmtN(e.calculated.net), styles: { halign: 'right' } }, concepto]); });
+          cheques.forEach(e => {
+            const payable = getNetPayable(e, group?.periodType);
+            totalCheques += payable;
+            body.push([1, 'CHEQUE', corr++, cleanName(getEmpName(e)), { content: fmtN(payable), styles: { halign: 'right' } }, concepto]);
+          });
           body.push(['', '', { content: 'TOTAL CHEQUES', colSpan: 2, styles: { fontStyle: 'bold', halign: 'right' } }, { content: fmtN(totalCheques), styles: { halign: 'right', fontStyle: 'bold' } }, '']);
         }
         body.push(['', '', { content: 'TOTAL NÓMINA', colSpan: 2, styles: { fontStyle: 'bold', halign: 'right' } }, { content: fmtN(totalPlantilla + totalCheques), styles: { halign: 'right', fontStyle: 'bold', textColor: [0, 120, 0] } }, '']);
@@ -555,7 +699,9 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
   const getColValue = (e, i, colId, format = false) => {
     let val = '';
     let isMoney = false;
-    const net = e.calculated?.net || 0;
+    const net = getNetPayable(e, group?.periodType);
+    const extras = getPayrollExtras(e);
+    const deductions = getPayrollDeductions(e);
     
     switch(colId) {
       case 'no': val = i + 1; break;
@@ -563,37 +709,45 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
       case 'empresa': val = e.company || 'N/A'; break;
       case 'puesto': val = e.puesto || 'N/A'; break;
       case 'cuenta': val = e.no_cuenta || ''; break;
-      case 'dias': val = e.days || 30; break;
+      case 'dias': val = getDaysWorked(e); break;
       case 'ordinario': val = e.calculated?.baseSalary || 0; isMoney = true; break;
       case 'bon_incentivo': val = e.calculated?.bonusLey || 0; isMoney = true; break;
       case 'bon_decreto': val = e.calculated?.bonusDec || 0; isMoney = true; break;
-      case 'bonos': val = e.calculated?.bonos || 0; isMoney = true; break;
-      case 'total_dev': val = e.calculated?.gross || 0; isMoney = true; break;
-      case 'hrs_simples': val = e.hours?.simple || 0; break;
-      case 'val_hrs_simples': val = e.calculated?.simpleExtras || 0; isMoney = true; break;
-      case 'hrs_dobles': val = e.hours?.double || 0; break;
-      case 'val_hrs_dobles': val = e.calculated?.doubleExtras || 0; isMoney = true; break;
-      case 'otros_ingresos': val = e.calculated?.otrosIngresos || 0; isMoney = true; break;
-      case 'salario_total': val = (e.calculated?.gross || 0) + (e.calculated?.simpleExtras || 0) + (e.calculated?.doubleExtras || 0) + (e.calculated?.otrosIngresos || 0); isMoney = true; break;
-      case 'igss': val = e.deductions?.igss || 0; isMoney = true; break;
-      case 'isr': val = e.deductions?.isr || 0; isMoney = true; break;
-      case 'cafeteria': val = e.deductions?.cafeteria || 0; isMoney = true; break;
-      case 'celular': val = e.deductions?.celular || 0; isMoney = true; break;
-      case 'uniforme': val = e.deductions?.uniforme || 0; isMoney = true; break;
-      case 'calzado': val = e.deductions?.calzado || 0; isMoney = true; break;
-      case 'equipo': val = e.deductions?.equipo || 0; isMoney = true; break;
-      case 'producto': val = e.deductions?.producto || 0; isMoney = true; break;
-      case 'bancos': val = e.deductions?.bancos || 0; isMoney = true; break;
-      case 'otros': val = e.deductions?.otros || 0; isMoney = true; break;
-      case 'judiciales': val = e.deductions?.judiciales || 0; isMoney = true; break;
-      case 'seguro': val = e.deductions?.seguro || 0; isMoney = true; break;
-      case 'parqueo': val = e.deductions?.parqueo || 0; isMoney = true; break;
-      case 'ornato': val = e.deductions?.ornato || 0; isMoney = true; break;
-      case 'otros_egr': val = e.deductions?.otros_egresos || 0; isMoney = true; break;
-      case 'total_egr': val = e.calculated?.ded || 0; isMoney = true; break;
+      case 'bonos': val = getPayrollBonuses(e); isMoney = true; break;
+      case 'total_dev':
+        val = (
+          (Number(e.calculated?.baseSalary) || 0)
+          + (Number(e.calculated?.bonusLey) || 0)
+          + (Number(e.calculated?.bonusDec) || 0)
+          + getPayrollBonuses(e)
+        );
+        isMoney = true;
+        break;
+      case 'hrs_simples': val = extras.simplesQty; break;
+      case 'val_hrs_simples': val = extras.simplesVal; isMoney = true; break;
+      case 'hrs_dobles': val = extras.doblesQty; break;
+      case 'val_hrs_dobles': val = extras.doblesVal; isMoney = true; break;
+      case 'otros_ingresos': val = extras.otherIncome; isMoney = true; break;
+      case 'salario_total': val = Number(e.calculated?.gross) || 0; isMoney = true; break;
+      case 'igss': val = deductions.igss || 0; isMoney = true; break;
+      case 'isr': val = deductions.isr || 0; isMoney = true; break;
+      case 'cafeteria': val = deductions.cafe || 0; isMoney = true; break;
+      case 'celular': val = deductions.cell || 0; isMoney = true; break;
+      case 'uniforme': val = deductions.uniform || 0; isMoney = true; break;
+      case 'calzado': val = deductions.shoes || 0; isMoney = true; break;
+      case 'equipo': val = deductions.equipo || 0; isMoney = true; break;
+      case 'producto': val = deductions.product || 0; isMoney = true; break;
+      case 'bancos': val = deductions.bancos || 0; isMoney = true; break;
+      case 'otros': val = deductions.otros || 0; isMoney = true; break;
+      case 'judiciales': val = deductions.judiciales || 0; isMoney = true; break;
+      case 'seguro': val = deductions.seguro || 0; isMoney = true; break;
+      case 'parqueo': val = deductions.parqueo || 0; isMoney = true; break;
+      case 'ornato': val = deductions.boleto_de_ornato || 0; isMoney = true; break;
+      case 'otros_egr': val = deductions.otros_egresos || 0; isMoney = true; break;
+      case 'total_egr': val = getTotalDeductions(e); isMoney = true; break;
       case 'liquido': val = net; isMoney = true; break;
-      case 'quinc1': val = group?.periodType === '2da' ? (e.anticipo1ra || 0) : net; isMoney = true; break;
-      case 'quinc2': val = group?.periodType === '2da' ? net - (e.anticipo1ra || 0) : 0; isMoney = true; break;
+      case 'quinc1': val = group?.periodType === '2da' ? getAnticipo1ra(e) : net; isMoney = true; break;
+      case 'quinc2': val = group?.periodType === '2da' ? net : 0; isMoney = true; break;
       case 'no_igss': val = e.no_igss || ''; break;
     }
     
@@ -665,11 +819,16 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
         if (!cheques.length && !transfers.length) return;
         rows.push(<Tr key={`ch-${ci}`} bg={compHeaderBg}><Td colSpan={5} fontWeight="bold" fontSize="xs" color="blue.700" _dark={{ color: 'blue.200' }} py={2}>Empresa: {compName.toUpperCase()}</Td><Td /></Tr>);
         if (transfers.length > 0) {
-          const sum = transfers.reduce((a, e) => a + e.calculated.net, 0); grandTotal += sum;
+          const sum = transfers.reduce((a, e) => a + getNetPayable(e, group?.periodType), 0); grandTotal += sum;
           rows.push(<Tr key={`tr-${ci}`} bg={tdBg}><Td fontSize="xs" fontWeight="semibold">Varios Plantilla</Td><Td fontSize="xs"></Td><Td fontSize="xs">Nomina</Td><Td fontSize="xs"></Td><Td fontSize="xs">Transferencia</Td><Td isNumeric fontFamily="mono" fontSize="xs" fontWeight="bold" color="blue.600">{fmtQ(sum)}</Td></Tr>);
         }
         let chSub = 0;
-        cheques.forEach((e, ei) => { grandTotal += e.calculated.net; chSub += e.calculated.net; rows.push(<Tr key={`eq-${ci}-${ei}`} bg={tdBg}><Td fontSize="xs" fontWeight="semibold">{getEmpName(e)}</Td><Td fontSize="xs">{compName.toUpperCase()}</Td><Td fontSize="xs">{e.puesto || 'FIJO'}</Td><Td fontSize="xs"></Td><Td fontSize="xs">CHEQUE</Td><Td isNumeric fontFamily="mono" fontSize="xs">{fmtQ(e.calculated.net)}</Td></Tr>); });
+        cheques.forEach((e, ei) => {
+          const payable = getNetPayable(e, group?.periodType);
+          grandTotal += payable;
+          chSub += payable;
+          rows.push(<Tr key={`eq-${ci}-${ei}`} bg={tdBg}><Td fontSize="xs" fontWeight="semibold">{getEmpName(e)}</Td><Td fontSize="xs">{compName.toUpperCase()}</Td><Td fontSize="xs">{e.puesto || 'FIJO'}</Td><Td fontSize="xs"></Td><Td fontSize="xs">CHEQUE</Td><Td isNumeric fontFamily="mono" fontSize="xs">{fmtQ(payable)}</Td></Tr>);
+        });
         if (cheques.length > 0) rows.push(<Tr key={`sub-${ci}`} bg={subtotalRowBg}><Td colSpan={5} textAlign="right" fontSize="xs" fontStyle="italic" color="gray.500">Subtotal Cheques:</Td><Td isNumeric fontFamily="mono" fontSize="xs" fontWeight="bold" color="green.600">{fmtQ(chSub)}</Td></Tr>);
       });
       return (
@@ -703,7 +862,7 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
         <Box border="1px solid" borderColor={borderColor} borderRadius="md" overflow="hidden">
           <Table size="sm" variant="simple"><Thead bg={theadBg}><Tr><Th>Nombre Colaborador</Th><Th>Empresa</Th><Th>Puesto</Th><Th>Banco</Th><Th isNumeric>Monto</Th></Tr></Thead>
             <Tbody bg={tdBg}>
-              {chData.map((e, i) => { const net = group.periodType === '2da' ? (e.calculated.net - (e.anticipo1ra || 0)) : e.calculated.net; total += net; const comp = companies?.find(c => c.id == e.empresa_principal)?.nombre_comercial || e.company || 'Sin Empresa'; return (<Tr key={i}><Td fontSize="xs" fontWeight="semibold">{getEmpName(e)}</Td><Td fontSize="xs">{comp}</Td><Td fontSize="xs">{e.puesto || 'N/A'}</Td><Td fontSize="xs">{e.banco || 'N/A'}</Td><Td isNumeric fontFamily="mono" fontSize="xs" fontWeight="bold">{fmtQ(net)}</Td></Tr>); })}
+              {chData.map((e, i) => { const net = getNetPayable(e, group?.periodType); total += net; const comp = companies?.find(c => c.id == e.empresa_principal)?.nombre_comercial || e.company || 'Sin Empresa'; return (<Tr key={i}><Td fontSize="xs" fontWeight="semibold">{getEmpName(e)}</Td><Td fontSize="xs">{comp}</Td><Td fontSize="xs">{e.puesto || 'N/A'}</Td><Td fontSize="xs">{e.banco || 'N/A'}</Td><Td isNumeric fontFamily="mono" fontSize="xs" fontWeight="bold">{fmtQ(net)}</Td></Tr>); })}
               <Tr bg={totalRowBg}><Td colSpan={4} textAlign="right" fontWeight="bold" fontSize="xs">TOTAL</Td><Td isNumeric fontFamily="mono" fontWeight="black" color="green.700">{fmtQ(total)}</Td></Tr>
             </Tbody>
           </Table>
@@ -760,9 +919,9 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
                 const { cheques, transfers } = comps[compName];
                 let tP = 0, tC = 0;
                 const rows = [<Tr key={`ch-${ci}`} bg={compHeaderBg}><Td colSpan={4} fontWeight="bold" fontSize="xs" color="blue.700" _dark={{ color: 'blue.200' }}>Empresa: {compName.toUpperCase()}</Td></Tr>];
-                transfers.forEach((e, ei) => { tP += e.calculated.net; rows.push(<Tr key={`tr-${ci}-${ei}`} bg={tdBg}><Td fontSize="xs">{e.numero_cuenta || e.no_cuenta || 'N/A'}</Td><Td fontSize="xs" fontWeight="semibold">{cleanName(getEmpName(e))}</Td><Td isNumeric fontFamily="mono" fontSize="xs">{fmtQ(e.calculated.net)}</Td><Td fontSize="xs" color="gray.400" isTruncated>{concepto}</Td></Tr>); });
+                transfers.forEach((e, ei) => { const payable = getNetPayable(e, group?.periodType); tP += payable; rows.push(<Tr key={`tr-${ci}-${ei}`} bg={tdBg}><Td fontSize="xs">{e.numero_cuenta || e.no_cuenta || 'N/A'}</Td><Td fontSize="xs" fontWeight="semibold">{cleanName(getEmpName(e))}</Td><Td isNumeric fontFamily="mono" fontSize="xs">{fmtQ(payable)}</Td><Td fontSize="xs" color="gray.400" isTruncated>{concepto}</Td></Tr>); });
                 rows.push(<Tr key={`tP-${ci}`} bg={subtotalRowBg}><Td fontSize="xs"></Td><Td fontSize="xs" fontWeight="bold" textAlign="right">Total Plantilla {compName.toUpperCase()}</Td><Td isNumeric fontFamily="mono" fontSize="xs" fontWeight="bold">{fmtQ(tP)}</Td><Td /></Tr>);
-                if (cheques.length) { cheques.forEach((e, ei) => { tC += e.calculated.net; rows.push(<Tr key={`ck-${ci}-${ei}`} bg={tdBg}><Td fontSize="xs" color="orange.500">CHEQUE</Td><Td fontSize="xs" fontWeight="semibold">{cleanName(getEmpName(e))}</Td><Td isNumeric fontFamily="mono" fontSize="xs">{fmtQ(e.calculated.net)}</Td><Td fontSize="xs" color="gray.400" isTruncated>{concepto}</Td></Tr>); }); rows.push(<Tr key={`tC-${ci}`} bg={subtotalRowBg}><Td fontSize="xs"></Td><Td fontSize="xs" fontWeight="bold" textAlign="right">Total Cheques</Td><Td isNumeric fontFamily="mono" fontSize="xs" fontWeight="bold">{fmtQ(tC)}</Td><Td /></Tr>); }
+                if (cheques.length) { cheques.forEach((e, ei) => { const payable = getNetPayable(e, group?.periodType); tC += payable; rows.push(<Tr key={`ck-${ci}-${ei}`} bg={tdBg}><Td fontSize="xs" color="orange.500">CHEQUE</Td><Td fontSize="xs" fontWeight="semibold">{cleanName(getEmpName(e))}</Td><Td isNumeric fontFamily="mono" fontSize="xs">{fmtQ(payable)}</Td><Td fontSize="xs" color="gray.400" isTruncated>{concepto}</Td></Tr>); }); rows.push(<Tr key={`tC-${ci}`} bg={subtotalRowBg}><Td fontSize="xs"></Td><Td fontSize="xs" fontWeight="bold" textAlign="right">Total Cheques</Td><Td isNumeric fontFamily="mono" fontSize="xs" fontWeight="bold">{fmtQ(tC)}</Td><Td /></Tr>); }
                 rows.push(<Tr key={`tT-${ci}`} bg={totalRowBg}><Td fontSize="xs"></Td><Td fontSize="xs" fontWeight="black" textAlign="right">Total Nómina</Td><Td isNumeric fontFamily="mono" fontSize="xs" fontWeight="black" color="green.700">{fmtQ(tP + tC)}</Td><Td /></Tr>);
                 return rows;
               })}
@@ -784,9 +943,9 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
                 const { cheques, transfers } = comps[compName];
                 let tP = 0, tC = 0, corr = 1;
                 const rows = [<Tr key={`ch-${ci}`} bg={compHeaderBg}><Td colSpan={6} fontWeight="bold" fontSize="xs" color="blue.700" _dark={{ color: 'blue.200' }}>Empresa: {compName.toUpperCase()}</Td></Tr>];
-                transfers.forEach((e, ei) => { tP += e.calculated.net; rows.push(<Tr key={`tr-${ci}-${ei}`} bg={tdBg}><Td fontSize="xs">{e.tipo_cuenta?.toLowerCase() === 'ahorro' ? 2 : 1}</Td><Td fontSize="xs">{e.numero_cuenta || e.no_cuenta || 'N/A'}</Td><Td fontSize="xs">{corr++}</Td><Td fontSize="xs" fontWeight="semibold">{cleanName(getEmpName(e))}</Td><Td isNumeric fontFamily="mono" fontSize="xs">{fmtQ(e.calculated.net)}</Td><Td fontSize="xs" color="gray.400" isTruncated>{concepto}</Td></Tr>); });
+                transfers.forEach((e, ei) => { const payable = getNetPayable(e, group?.periodType); tP += payable; rows.push(<Tr key={`tr-${ci}-${ei}`} bg={tdBg}><Td fontSize="xs">{e.tipo_cuenta?.toLowerCase() === 'ahorro' ? 2 : 1}</Td><Td fontSize="xs">{e.numero_cuenta || e.no_cuenta || 'N/A'}</Td><Td fontSize="xs">{corr++}</Td><Td fontSize="xs" fontWeight="semibold">{cleanName(getEmpName(e))}</Td><Td isNumeric fontFamily="mono" fontSize="xs">{fmtQ(payable)}</Td><Td fontSize="xs" color="gray.400" isTruncated>{concepto}</Td></Tr>); });
                 rows.push(<Tr key={`tP-${ci}`} bg={subtotalRowBg}><Td colSpan={3}></Td><Td fontSize="xs" fontWeight="bold" textAlign="right">TOTAL PLANTILLA</Td><Td isNumeric fontFamily="mono" fontSize="xs" fontWeight="bold">{fmtQ(tP)}</Td><Td /></Tr>);
-                if (cheques.length) { cheques.forEach((e, ei) => { tC += e.calculated.net; rows.push(<Tr key={`ck-${ci}-${ei}`} bg={tdBg}><Td fontSize="xs">1</Td><Td fontSize="xs" color="orange.500">CHEQUE</Td><Td fontSize="xs">{corr++}</Td><Td fontSize="xs" fontWeight="semibold">{cleanName(getEmpName(e))}</Td><Td isNumeric fontFamily="mono" fontSize="xs">{fmtQ(e.calculated.net)}</Td><Td fontSize="xs" color="gray.400" isTruncated>{concepto}</Td></Tr>); }); rows.push(<Tr key={`tC-${ci}`} bg={subtotalRowBg}><Td colSpan={3}></Td><Td fontSize="xs" fontWeight="bold" textAlign="right">TOTAL CHEQUES</Td><Td isNumeric fontFamily="mono" fontSize="xs" fontWeight="bold">{fmtQ(tC)}</Td><Td /></Tr>); }
+                if (cheques.length) { cheques.forEach((e, ei) => { const payable = getNetPayable(e, group?.periodType); tC += payable; rows.push(<Tr key={`ck-${ci}-${ei}`} bg={tdBg}><Td fontSize="xs">1</Td><Td fontSize="xs" color="orange.500">CHEQUE</Td><Td fontSize="xs">{corr++}</Td><Td fontSize="xs" fontWeight="semibold">{cleanName(getEmpName(e))}</Td><Td isNumeric fontFamily="mono" fontSize="xs">{fmtQ(payable)}</Td><Td fontSize="xs" color="gray.400" isTruncated>{concepto}</Td></Tr>); }); rows.push(<Tr key={`tC-${ci}`} bg={subtotalRowBg}><Td colSpan={3}></Td><Td fontSize="xs" fontWeight="bold" textAlign="right">TOTAL CHEQUES</Td><Td isNumeric fontFamily="mono" fontSize="xs" fontWeight="bold">{fmtQ(tC)}</Td><Td /></Tr>); }
                 rows.push(<Tr key={`tT-${ci}`} bg={totalRowBg}><Td colSpan={3}></Td><Td fontSize="xs" fontWeight="black" textAlign="right">TOTAL NÓMINA</Td><Td isNumeric fontFamily="mono" fontSize="xs" fontWeight="black" color="green.700">{fmtQ(tP + tC)}</Td><Td /></Tr>);
                 return rows;
               })}

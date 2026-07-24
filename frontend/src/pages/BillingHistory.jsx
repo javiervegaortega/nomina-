@@ -290,7 +290,7 @@ export function BillingHistoryPanel({ refreshKey = 0, highlightRunId, onViewPayr
       }
       await exportBillingExcel(
         exportData,
-        `Facturacion_${run.payrollTitle || run.payrollId}_v${run.version}.xlsx`.replace(/[\\/:*?"<>|]/g, '_')
+        `Vista_Previa_2_${run.payrollTitle || run.payrollId}_v${run.version}.xlsx`.replace(/[\\/:*?"<>|]/g, '_')
       );
       showToast('Excel exportado correctamente');
     } catch (err) {

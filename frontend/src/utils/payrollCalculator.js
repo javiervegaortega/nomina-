@@ -5,12 +5,39 @@ export const CUOTA_LABORAL_RATE = 0.0483;
 export const CUOTA_LABORAL_JUBILADO_RATE = 0.03;
 export const IRTRA_INTECAP_RATE = 0.02;
 
-const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+// Redondeo monetario equivalente a Excel ROUND(..., 2), incluidos los casos
+// de medio centavo (100.005) que Math.round(valor * 100) pierde por binario.
+const round2 = (n) => {
+  const value = Number(n);
+  if (!Number.isFinite(value)) return 0;
+  const sign = value < 0 ? -1 : 1;
+  // Las multiplicaciones previas pueden dejar 100.005 como
+  // 100.00499999999998. La tolerancia relativa corrige solo ese ruido de
+  // representación, no valores monetarios materialmente distintos.
+  const rawAbsolute = Math.abs(value);
+  const absolute = rawAbsolute
+    + (Number.EPSILON * Math.max(1, rawAbsolute) * 4);
+  const [coefficient, exponent = '0'] = String(absolute).split('e');
+  const shifted = Number(`${coefficient}e${Number(exponent) + 2}`);
+  const rounded = Math.round(shifted);
+  const [roundedCoefficient, roundedExponent = '0'] = String(rounded).split('e');
+  return sign * Number(
+    `${roundedCoefficient}e${Number(roundedExponent) - 2}`
+  );
+};
 
 export const isJubilado = (e) => !!(e && (e.jubilacion === true || e.jubilacion === 1));
 /** Exento total de IGSS (flag explícito). Jubilados cotizan 3% laboral. */
 export const isIgssExempt = (e) => !!(e && (e.igss_exempt === true || e.igss_exempt === 1));
-export const skipsIgssPatronal = (e) => isJubilado(e) || isIgssExempt(e);
+export const skipsIgssPatronal = (e) => isIgssExempt(e);
+
+/** Mitad de deducciones mensuales con 0–15 días; total mensual con 16–30. */
+export const getRecurringDeductionFactor = (daysWorked) => {
+  const days = Number(
+    daysWorked === undefined || daysWorked === null || daysWorked === '' ? 30 : daysWorked
+  );
+  return days <= 15 ? 0.5 : 1;
+};
 
 /** Tasa laboral: 0 (exento), 3% (jubilado) o 4.83% (normal). */
 export const getCuotaLaboralRate = (e) => {
@@ -32,8 +59,14 @@ export const getCompanyCost = (calculated) => {
  * Mirrors backend calculateEmployeePayroll for draft/distribution previews.
  */
 export const calculateEmployeePayroll = (e, periodType) => {
-  const days = Number(e.days || 30);
+  const days = Number(
+    e.days === undefined || e.days === null || e.days === '' ? 30 : e.days
+  );
+  if (!Number.isFinite(days) || days < 0 || days > 30) {
+    throw new Error('Los días laborados deben estar entre 0 y 30.');
+  }
   const baseFactor = days / 30;
+  const recurringDeductionFactor = getRecurringDeductionFactor(days);
 
   const sueldoOrd = Number(e.sueldo_ordinario) || 0;
   const bonInc = Number(e.bon_incentivo) || 0;
@@ -51,23 +84,24 @@ export const calculateEmployeePayroll = (e, periodType) => {
     extrasObj.ventasEconomicas = round2(Number(e.ventas_economicas) * baseFactor);
   }
 
-  const extrasBonos = Number(extrasObj.bonos) || 0;
+  const extrasBonos = round2(extrasObj.bonos);
   const extrasTotal = round2(
-    (Number(extrasObj.simplesVal) || 0)
-    + (Number(extrasObj.doblesVal) || 0)
-    + (Number(extrasObj.comisiones) || 0)
-    + (Number(extrasObj.otrosIngresos) || 0)
-    + (Number(extrasObj.vacacionesVal) || 0)
-    + (Number(extrasObj.ventasEconomicas) || 0)
+    round2(extrasObj.simplesVal)
+    + round2(extrasObj.doblesVal)
+    + round2(extrasObj.comisiones)
+    + round2(extrasObj.otrosIngresos)
+    + round2(extrasObj.vacacionesVal)
+    + round2(extrasObj.ventasEconomicas)
   );
 
   const bonusesSum = round2(
-    Object.values(e.appliedBonuses || {}).reduce((sum, val) => sum + (Number(val) || 0), 0)
+    Object.values(e.appliedBonuses || {}).reduce((sum, val) => sum + round2(val), 0)
   );
 
   const gross = round2(baseSalary + bonusLey + bonusDec + extrasBonos + extrasTotal + bonusesSum);
 
-  const igssBase = baseSalary + extrasTotal + extrasBonos + bonusesSum;
+  // Los Excel acumulan los bonos en lo devengado, pero los excluyen de IGSS.
+  const igssBase = round2(baseSalary + extrasTotal);
   const laboralRate = getCuotaLaboralRate(e);
   const noPatronal = skipsIgssPatronal(e);
   const patronal = noPatronal ? 0 : round2(igssBase * CUOTA_PATRONAL_RATE);
@@ -76,9 +110,9 @@ export const calculateEmployeePayroll = (e, periodType) => {
   const hasMasterIsr = e.isr !== undefined && e.isr !== null && e.isr !== '';
   const monthlyIsr = hasMasterIsr
     ? (Number(e.isr) || 0)
-    : calculateMonthlyISR(sueldoOrd, bonDec);
+    : calculateMonthlyISR(sueldoOrd, bonDec, laboralRate);
 
-  // 2ª quincena: ISR periodo = Total ISR − ISR ya retenido en 1ª
+  // La 2ª quincena es acumulada: ISR mensual completo y luego anticipo neto 1ª.
   const isSecondQuincena = periodType === '2da'
     || e.totalIsr !== undefined
     || e.isr1ra !== undefined;
@@ -87,29 +121,55 @@ export const calculateEmployeePayroll = (e, periodType) => {
     const totalIsr = (e.totalIsr !== undefined && e.totalIsr !== null && e.totalIsr !== '')
       ? (Number(e.totalIsr) || 0)
       : monthlyIsr;
-    const isr1ra = Number(e.isr1ra) || 0;
-    isrValue = round2(Math.max(0, totalIsr - isr1ra));
+    isrValue = round2(Math.max(0, totalIsr * recurringDeductionFactor));
   } else {
-    isrValue = round2(monthlyIsr * baseFactor);
+    isrValue = round2(monthlyIsr * recurringDeductionFactor);
   }
 
   const deductions = { ...(e.deductions || {}) };
   deductions.igss = laboralRate === 0 ? 0 : round2(igssBase * laboralRate);
   deductions.isr = isrValue;
 
+  const backfillPeriodDeduction = (key, monthlyAmount) => {
+    const master = Number(monthlyAmount) || 0;
+    const hasPeriodValue = Object.prototype.hasOwnProperty.call(deductions, key)
+      && deductions[key] !== null
+      && deductions[key] !== '';
+    if (master > 0 && !hasPeriodValue) {
+      deductions[key] = round2(master * recurringDeductionFactor);
+    }
+  };
+
+  backfillPeriodDeduction('bancos', (Number(e.bantrab) || 0) + (Number(e.bancos) || 0));
+  backfillPeriodDeduction('prestamo_empresa', e.prestamo_empresa);
+  backfillPeriodDeduction('judiciales', e.judiciales);
+  backfillPeriodDeduction('seguro', e.seguro);
+  backfillPeriodDeduction('parqueo', e.parqueo);
+  backfillPeriodDeduction('boleto_de_ornato', e.boleto_de_ornato);
+  backfillPeriodDeduction(
+    'otros_egresos',
+    (Number(e.otros_egresos) || 0) + (Number(e.otro_descuentos) || 0)
+  );
+
+  const proratedDeductions = Object.fromEntries(
+    Object.entries(deductions).map(([key, value]) => [key, round2(value)])
+  );
+
   const totalDeductions = round2(
-    Object.values(deductions).reduce((sum, val) => sum + (Number(val) || 0), 0)
+    Object.values(proratedDeductions).reduce((sum, val) => sum + (Number(val) || 0), 0)
   );
   const anticipo1ra = Number(e.anticipo1ra) || 0;
   const net = round2(gross - totalDeductions);
 
   const calculated = {
+    proratedDeductions,
     baseSalary,
     bonusLey,
     bonusDec,
     bonos: round2(extrasBonos),
     extrasTotal,
     bonusesSum,
+    igssBase,
     gross,
     ded: totalDeductions,
     net,
@@ -120,10 +180,13 @@ export const calculateEmployeePayroll = (e, periodType) => {
     companyCost: getCompanyCost({ gross, patronal, irtraIntecap }),
     igssExempt: isIgssExempt(e),
     jubilacion: isJubilado(e),
+    hourlyRate: round2(sueldoOrd / 30 / 8),
+    vacacionesVal: round2(extrasObj.vacacionesVal),
+    ventasEconomicas: round2(extrasObj.ventasEconomicas),
     periodType: periodType || null
   };
 
-  return { ...e, extras: extrasObj, calculated };
+  return { ...e, extras: extrasObj, deductions, calculated };
 };
 
 /**
@@ -167,5 +230,78 @@ export const getEmployeePayrollSnapshot = (employee, periodType) => {
     patronal,
     irtraIntecap,
     companyCost: getCompanyCost(calc)
+  };
+};
+
+/**
+ * Costeo intercompany con la precisión interna del Excel. La nómina visible se
+ * mantiene a centavos; el reparto se redondea únicamente al emitir la factura.
+ */
+export const getEmployeeBillingCostSnapshot = (employee, payrollSnapshot) => {
+  const fallback = payrollSnapshot || getEmployeePayrollSnapshot(employee);
+  const rawDays = employee.days;
+  const days = Number(
+    rawDays === undefined || rawDays === null || rawDays === ''
+      ? (fallback.days ?? 30)
+      : rawDays
+  );
+  const factor = days / 30;
+  const hasValue = (obj, key) => (
+    obj
+    && Object.prototype.hasOwnProperty.call(obj, key)
+    && obj[key] !== null
+    && obj[key] !== ''
+  );
+  const proratedMaster = (key, value) => (
+    hasValue(employee, key)
+      ? (Number(employee[key]) || 0) * factor
+      : (Number(value) || 0)
+  );
+
+  const baseSalary = proratedMaster('sueldo_ordinario', fallback.baseSalary);
+  const bonusLey = proratedMaster('bon_incentivo', fallback.bonusLey);
+  const bonusDec = proratedMaster('bon_dec_37_2001', fallback.bonusDec);
+  const extras = employee.extras || {};
+  const variableKeys = [
+    'simplesVal',
+    'doblesVal',
+    'comisiones',
+    'otrosIngresos',
+    'vacacionesVal',
+    'ventasEconomicas'
+  ];
+  const hasRawVariableExtras = variableKeys.some(key => hasValue(extras, key));
+  const extrasTotal = hasRawVariableExtras
+    ? variableKeys.reduce((sum, key) => sum + (Number(extras[key]) || 0), 0)
+    : (Number(fallback.extrasTotal) || 0);
+  const bonos = hasValue(extras, 'bonos')
+    ? (Number(extras.bonos) || 0)
+    : (Number(fallback.bonos) || 0);
+  let appliedBonuses = employee.appliedBonuses;
+  if (typeof appliedBonuses === 'string') {
+    try { appliedBonuses = JSON.parse(appliedBonuses); } catch { appliedBonuses = null; }
+  }
+  const bonusesSum = appliedBonuses && typeof appliedBonuses === 'object' && !Array.isArray(appliedBonuses)
+    ? Object.values(appliedBonuses).reduce((sum, value) => sum + (Number(value) || 0), 0)
+    : (Number(fallback.bonusesSum) || 0);
+  const igssBase = baseSalary + extrasTotal;
+  const igssExempt = isIgssExempt(employee) || employee.calculated?.igssExempt === true;
+  const patronal = igssExempt ? 0 : igssBase * CUOTA_PATRONAL_RATE;
+  const irtraIntecap = igssExempt ? 0 : igssBase * IRTRA_INTECAP_RATE;
+  const gross = baseSalary + bonusLey + bonusDec + bonos + extrasTotal + bonusesSum;
+
+  return {
+    days,
+    baseSalary,
+    bonusLey,
+    bonusDec,
+    bonos,
+    extrasTotal,
+    bonusesSum,
+    igssBase,
+    gross,
+    patronal,
+    irtraIntecap,
+    companyCost: gross + patronal + irtraIntecap
   };
 };

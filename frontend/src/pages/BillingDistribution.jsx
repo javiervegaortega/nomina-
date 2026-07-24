@@ -14,6 +14,7 @@ import { DataContext } from '../context/DataContext';
 import { formatCurrency, exportBillingExcel } from '../utils/billingExport';
 
 const API = 'http://localhost:3000/api/billing';
+const BILLING_WRITE_ROLES = new Set(['ADMIN', 'NOMINA', 'GERENTE GENERAL']);
 
 const isSecondPeriod = (p) => String(p?.periodType || '').toLowerCase() === '2da';
 
@@ -75,8 +76,11 @@ export function BillingExecutePanel({
   onPrefillConsumed
 }) {
   const { showToast, confirmAction } = useContext(AppContext);
-  const { token } = useContext(AuthContext);
+  const { token, user } = useContext(AuthContext);
   const { payrollHistory: payrolls } = useContext(DataContext);
+  const canWriteBilling = BILLING_WRITE_ROLES.has(
+    String(user?.role || '').trim().toUpperCase()
+  );
 
   const [selectedPayroll, setSelectedPayroll] = useState('');
   const [previewData, setPreviewData] = useState(null);
@@ -134,7 +138,12 @@ export function BillingExecutePanel({
       if (!res.ok) throw new Error(data.error || 'Error en el calculo');
       setPreviewData(data);
       setResultTab(0);
-      if (data.warnings?.length) {
+      if (data.blockingErrors?.length) {
+        showToast(
+          `Hay ${data.blockingErrors.length} error(es) que debe corregir antes de facturar`,
+          'error'
+        );
+      } else if (data.warnings?.length) {
         showToast(`Calculo completado con ${data.warnings.length} advertencia(s)`, 'warning');
       } else {
         showToast('Vista previa generada');
@@ -147,6 +156,14 @@ export function BillingExecutePanel({
   };
 
   const handleConfirm = () => {
+    if (!canWriteBilling) {
+      showToast('No tienes permiso para confirmar ejecuciones de facturación', 'error');
+      return;
+    }
+    if (previewData?.blockingErrors?.length) {
+      showToast('Corrija los errores de distribución antes de confirmar', 'error');
+      return;
+    }
     if (!previewData?.lines?.length) {
       showToast('No hay facturas para confirmar', 'warning');
       return;
@@ -179,7 +196,7 @@ export function BillingExecutePanel({
     try {
       await exportBillingExcel(
         previewData,
-        `Facturacion_${previewData.payrollTitle || selectedPayroll}.xlsx`.replace(/[\\/:*?"<>|]/g, '_')
+        `Vista_Previa_2_${previewData.payrollTitle || selectedPayroll}.xlsx`.replace(/[\\/:*?"<>|]/g, '_')
       );
       showToast('Excel exportado correctamente');
     } catch (err) {
@@ -200,13 +217,18 @@ export function BillingExecutePanel({
   const previewTotals = useMemo(() => {
     if (!previewData?.lines?.length) return { invoices: 0, total: 0, employees: 0, costCenters: 0 };
     const total = previewData.lines.reduce((s, l) => s + Number(l.totalAmount || 0), 0);
+    const invoices = new Set(
+      previewData.lines.map((l) => `${l.fromCompanyId}->${l.toCompanyId}`)
+    ).size;
     const employees = previewData.employeeCount
       ?? new Set((previewData.details || []).map((d) => d.employeeId)).size;
     const costCenters = new Set(
-      (previewData.lines || []).map((l) => l.centroCosto).filter(Boolean)
+      (previewData.operationalDetails || previewData.details || [])
+        .map((d) => d.centroCosto)
+        .filter(Boolean)
     ).size;
     return {
-      invoices: previewData.lines.length,
+      invoices,
       total,
       employees,
       costCenters
@@ -218,10 +240,12 @@ export function BillingExecutePanel({
     return all.filter((w) => !GENERIC_WARNING_RE.test(String(w)));
   }, [previewData]);
 
+  const blockingErrors = previewData?.blockingErrors || [];
+
   const costCenterSummary = useMemo(() => {
     const byCc = {};
     const receivers = new Set();
-    (previewData?.lines || []).forEach((line) => {
+    (previewData?.operationalDetails || previewData?.details || []).forEach((line) => {
       const cc = line.centroCosto || 'SIN CENTRO DE COSTO';
       const to = line.toCompany || 'Destino';
       receivers.add(to);
@@ -287,18 +311,24 @@ export function BillingExecutePanel({
                 size="sm"
                 onClick={handleExport}
               >
-                Excel
+                Vista Previa 2
               </Button>
-              <Button
-                leftIcon={<CheckCircle size={16} />}
-                colorScheme="green"
-                size="sm"
-                onClick={handleConfirm}
-                isLoading={confirming}
-                isDisabled={!previewData.lines?.length}
-              >
-                Confirmar
-              </Button>
+              {canWriteBilling ? (
+                <Button
+                  leftIcon={<CheckCircle size={16} />}
+                  colorScheme="green"
+                  size="sm"
+                  onClick={handleConfirm}
+                  isLoading={confirming}
+                  isDisabled={!previewData.lines?.length || blockingErrors.length > 0}
+                >
+                  Confirmar
+                </Button>
+              ) : (
+                <Badge colorScheme="gray" px={3} py={1} borderRadius="md">
+                  Solo lectura
+                </Badge>
+              )}
             </HStack>
           )}
         </Flex>
@@ -313,6 +343,22 @@ export function BillingExecutePanel({
 
       {previewData && (
         <>
+          {blockingErrors.length > 0 && (
+            <Alert status="error" borderRadius="lg" alignItems="flex-start">
+              <AlertIcon mt={0.5} />
+              <Box>
+                <Text fontWeight="700" fontSize="sm">
+                  No se puede confirmar esta facturación
+                </Text>
+                {blockingErrors.map((message, index) => (
+                  <Text key={index} fontSize="xs" mt={1}>
+                    {message}
+                  </Text>
+                ))}
+              </Box>
+            </Alert>
+          )}
+
           {/* KPIs + advertencias */}
           <Flex gap={3} align="stretch" direction={{ base: 'column', lg: 'row' }}>
             <Box flex="1">
@@ -399,7 +445,7 @@ export function BillingExecutePanel({
             >
               <TabList px={4} borderColor={borderColor} gap={1} flexWrap="wrap">
                 <Tab fontWeight={600}>Facturas</Tab>
-                <Tab fontWeight={600}>Por centro de costo</Tab>
+                <Tab fontWeight={600}>Centros operativos (bruto)</Tab>
                 <Tab fontWeight={600}>Matriz</Tab>
                 <Tab fontWeight={600}>
                   Detalle
@@ -487,6 +533,9 @@ export function BillingExecutePanel({
 
                 {/* Por centro de costo */}
                 <TabPanel px={4} pb={4} pt={3}>
+                  <Text fontSize="xs" color="gray.500" mb={3}>
+                    Distribución operativa antes del mapeo legal y del neteo global de facturas.
+                  </Text>
                   <Box overflowX="auto">
                     <Table variant="simple" size="sm">
                       <Thead bg={bgHeader}>

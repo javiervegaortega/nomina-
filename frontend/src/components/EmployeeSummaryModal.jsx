@@ -15,7 +15,7 @@ export default function EmployeeSummaryModal({ isOpen, onClose, employee, compan
   const baseSalary = employee.calculated?.baseSalary || 0;
   const bonusLey = employee.calculated?.bonusLey || 0;
   const bonusDec = employee.calculated?.bonusDec || 0;
-  const bonos = employee.calculated?.bonos || 0;
+  const bonos = (employee.calculated?.bonos || 0) + (employee.calculated?.bonusesSum || 0);
 
   const devengado = employee.calculated?.gross || 0;
 
@@ -23,7 +23,10 @@ export default function EmployeeSummaryModal({ isOpen, onClose, employee, compan
   
   const simplesVal = Number(employee.extras?.simplesVal) || 0;
   const doblesVal = Number(employee.extras?.doblesVal) || 0;
-  const otrosIngresos = Number(employee.extras?.otrosIngresos) || 0;
+  const otrosIngresos = (Number(employee.extras?.otrosIngresos) || 0)
+    + (Number(employee.extras?.comisiones) || 0)
+    + (Number(employee.extras?.vacacionesVal) || 0)
+    + (Number(employee.extras?.ventasEconomicas) || 0);
   
   const deductions = employee.calculated?.proratedDeductions || employee.deductions || {};
 
@@ -69,7 +72,7 @@ export default function EmployeeSummaryModal({ isOpen, onClose, employee, compan
               <Box>
                 <Text fontSize="xs" color="gray.500" fontWeight="bold">Días Laborados</Text>
                 <Badge colorScheme={employee.days < 30 ? 'orange' : 'green'}>
-                  {employee.days || 30} días
+                  {employee.days ?? 30} días
                 </Badge>
               </Box>
             </SimpleGrid>
@@ -98,7 +101,7 @@ export default function EmployeeSummaryModal({ isOpen, onClose, employee, compan
                     <Text fontSize="sm" fontFamily="mono">{formatQ(bonusDec)}</Text>
                   </Flex>
                   <Flex justify="space-between">
-                    <Text fontSize="sm">Bonos Extras</Text>
+                    <Text fontSize="sm">Bonos operativos y de catálogo</Text>
                     <Text fontSize="sm" fontFamily="mono">{formatQ(bonos)}</Text>
                   </Flex>
                   <Flex justify="space-between">

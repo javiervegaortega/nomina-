@@ -1,10 +1,20 @@
-const { OperationBatch, OperationLog, Employee, Company, User } = require('../models');
+const {
+  OperationBatch,
+  OperationLog,
+  Employee,
+  Company,
+  User,
+  sequelize
+} = require('../models');
 const {
   sendOperationLogEmail,
   sendOperationRejectToManagerEmail,
   buildOperationEmailHtml,
   getOperationEmailSubject
 } = require('../services/email.service');
+const {
+  syncOperationLogTransitions
+} = require('../services/payrollDraftInputs.service');
 
 const NOMINA_ROLES = ['ADMIN', 'NOMINA', 'AUDITOR'];
 
@@ -84,26 +94,37 @@ const create = async (req, res) => {
 };
 
 const updateStatus = async (req, res) => {
+  let transaction;
   try {
     const { status, justification, rejectionFromNomina } = req.body;
+    transaction = await sequelize.transaction();
     const batch = await OperationBatch.findByPk(req.params.id, {
-      include: [
-        { model: User, as: 'user' },
-        { model: OperationLog, as: 'logs' }
-      ]
+      transaction,
+      lock: transaction.LOCK.UPDATE
     });
-    if (!batch) return res.status(404).json({ error: 'Lote no encontrado' });
+    if (!batch) {
+      await transaction.rollback();
+      return res.status(404).json({ error: 'Lote no encontrado' });
+    }
+    const logs = await OperationLog.findAll({
+      where: { batchId: batch.id },
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+      order: [['id', 'ASC']]
+    });
 
     const previousStatus = batch.status;
-    const logCount = batch.logs?.length || 0;
+    const logCount = logs.length;
 
     // No enviar a gerencia ni aprobar un lote vacío
     if (status === 'PENDING_MANAGER' && ['DRAFT', 'RETURNED'].includes(previousStatus) && logCount === 0) {
+      await transaction.rollback();
       return res.status(400).json({
         error: 'No se puede enviar un lote vacío. Agrega al menos un registro (bono o horas extra).'
       });
     }
     if (status === 'APPROVED_MANAGER' && logCount === 0) {
+      await transaction.rollback();
       return res.status(400).json({
         error: 'No se puede aprobar un lote sin registros.'
       });
@@ -111,38 +132,47 @@ const updateStatus = async (req, res) => {
 
     batch.status = status;
     if (justification !== undefined) batch.justification = justification;
-    await batch.save();
+    await batch.save({ transaction });
 
     const syncedStatus = status === 'DRAFT' ? 'PENDING_MANAGER' : status;
     await OperationLog.update(
       { status: syncedStatus, ...(justification !== undefined ? { justification } : {}) },
-      { where: { batchId: batch.id } }
+      { where: { batchId: batch.id }, transaction }
     );
-    if (batch.logs) {
-      batch.logs.forEach(log => {
-        log.status = syncedStatus;
-        if (justification !== undefined) log.justification = justification;
-      });
-    }
+    const transitions = logs.map((log) => {
+      const previous = log.toJSON();
+      log.status = syncedStatus;
+      if (justification !== undefined) log.justification = justification;
+      return { previous, current: log.toJSON() };
+    });
+    await syncOperationLogTransitions({ transitions, transaction });
+    await transaction.commit();
+
+    const populatedBatch = await OperationBatch.findByPk(batch.id, {
+      include: [
+        { model: User, as: 'user' },
+        { model: OperationLog, as: 'logs' }
+      ]
+    });
 
     const isNominaReject = status === 'PENDING_MANAGER' &&
       (previousStatus === 'APPROVED_MANAGER' || rejectionFromNomina) &&
       isNominaRole(req.user?.role);
 
-    if (status === 'PENDING_MANAGER' && batch.user?.idDepartamento) {
+    if (status === 'PENDING_MANAGER' && populatedBatch?.user?.idDepartamento) {
       try {
-        const gerentes = await getGerentesForBatch(batch);
-        const count = batch.logs?.length || 0;
+        const gerentes = await getGerentesForBatch(populatedBatch);
+        const count = populatedBatch.logs?.length || 0;
 
         if (isNominaReject) {
           await Promise.all(
             gerentes
               .filter(g => g.email)
               .map(gerente => sendOperationRejectToManagerEmail(gerente.name, gerente.email, {
-                solicitanteName: batch.user.name,
+                solicitanteName: populatedBatch.user.name,
                 count,
-                justification: batch.justification,
-                batchTitle: batch.title,
+                justification: populatedBatch.justification,
+                batchTitle: populatedBatch.title,
                 rejectedBy: req.user?.name || 'Nómina'
               }))
           );
@@ -150,7 +180,7 @@ const updateStatus = async (req, res) => {
           await Promise.all(
             gerentes
               .filter(g => g.email)
-              .map(gerente => sendOperationLogEmail(gerente.name, gerente.email, batch.user.name, count))
+              .map(gerente => sendOperationLogEmail(gerente.name, gerente.email, populatedBatch.user.name, count))
           );
         }
       } catch (emailError) {
@@ -158,8 +188,9 @@ const updateStatus = async (req, res) => {
       }
     }
 
-    res.json(batch);
+    res.json(populatedBatch || batch);
   } catch (err) {
+    if (transaction && !transaction.finished) await transaction.rollback();
     res.status(400).json({ error: err.message });
   }
 };
@@ -238,14 +269,36 @@ const notifyBatch = async (req, res) => {
 };
 
 const remove = async (req, res) => {
+  let transaction;
   try {
-    const batch = await OperationBatch.findByPk(req.params.id);
-    if (!batch) return res.status(404).json({ error: 'Lote no encontrado' });
-    
-    await OperationLog.destroy({ where: { batchId: batch.id } });
-    await batch.destroy();
+    transaction = await sequelize.transaction();
+    const batch = await OperationBatch.findByPk(req.params.id, {
+      transaction,
+      lock: transaction.LOCK.UPDATE
+    });
+    if (!batch) {
+      await transaction.rollback();
+      return res.status(404).json({ error: 'Lote no encontrado' });
+    }
+    const logs = await OperationLog.findAll({
+      where: { batchId: batch.id },
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+      order: [['id', 'ASC']]
+    });
+    await syncOperationLogTransitions({
+      transitions: logs.map((log) => ({ previous: log.toJSON() })),
+      transaction
+    });
+    await OperationLog.destroy({
+      where: { batchId: batch.id },
+      transaction
+    });
+    await batch.destroy({ transaction });
+    await transaction.commit();
     res.status(204).send();
   } catch (err) {
+    if (transaction && !transaction.finished) await transaction.rollback();
     res.status(500).json({ error: err.message });
   }
 };

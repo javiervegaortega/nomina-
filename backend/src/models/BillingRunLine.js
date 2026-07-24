@@ -28,6 +28,10 @@ module.exports = (sequelize) => {
       type: DataTypes.INTEGER,
       allowNull: true
     },
+    centroCosto: {
+      type: DataTypes.STRING,
+      allowNull: true
+    },
     concept: {
       type: DataTypes.STRING,
       allowNull: true
@@ -46,6 +50,21 @@ module.exports = (sequelize) => {
       type: DataTypes.DECIMAL(15, 4),
       allowNull: false,
       defaultValue: 0
+    },
+    subtotalAmount: {
+      type: DataTypes.DECIMAL(15, 4),
+      allowNull: false,
+      defaultValue: 0
+    },
+    applyIva: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: true
+    },
+    ivaRate: {
+      type: DataTypes.DECIMAL(5, 4),
+      allowNull: false,
+      defaultValue: 0.12
     },
     ivaAmount: {
       type: DataTypes.DECIMAL(15, 4),

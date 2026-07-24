@@ -33,6 +33,8 @@ const testConnection = async () => {
   }
 };
 
-testConnection();
+if (process.env.SKIP_DB_CONNECT_TEST !== '1') {
+  testConnection();
+}
 
 module.exports = sequelize;

@@ -18,14 +18,20 @@ const BRACKET_1_TAX = new Decimal('15000');
  * Tramo 2: exceso → 15,000 + exceso * 7%
  * @param {number} baseMonthly - sueldo ordinario mensual
  * @param {number} bonusMonthly - bonificación decreto (default 250)
+ * @param {number} laborIgssRate - tasa laboral IGSS aplicable al empleado
  * @returns {number} ISR mensual redondeado a 2 decimales
  */
-const calculateMonthlyISR = (baseMonthly, bonusMonthly = 250) => {
+const calculateMonthlyISR = (
+  baseMonthly,
+  bonusMonthly = 250,
+  laborIgssRate = CUOTA_LABORAL_RATE.toNumber()
+) => {
   const base = new Decimal(baseMonthly || 0);
   const bonus = new Decimal(bonusMonthly || 0);
+  const igssRate = new Decimal(laborIgssRate || 0);
 
   const annualIncome = base.plus(bonus).times(12);
-  const annualIgss = base.times(CUOTA_LABORAL_RATE).times(12);
+  const annualIgss = base.times(igssRate).times(12);
   const taxableIncome = annualIncome.minus(annualIgss).minus(PERSONAL_EXPENSES);
 
   if (taxableIncome.lte(0)) {

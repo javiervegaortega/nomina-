@@ -1,18 +1,45 @@
-const { PayrollHistory, User, PayrollDraft, PayrollDraftEmployee, Company, Employee, sequelize } = require('../models');
+const {
+  PayrollHistory,
+  User,
+  PayrollDraft,
+  PayrollDraftEmployee,
+  Company,
+  Employee,
+  Bonus,
+  Commission,
+  OperationLog,
+  sequelize
+} = require('../models');
 const jwt = require('jsonwebtoken');
 const { sendReactivationEmail, sendPayrollAuditDecisionEmail, sendPayrollSubmittedToAuditEmail } = require('../services/email.service');
 const BillingService = require('../services/billing.service');
-const { computePayrollSummary, parsePayrollEmployees, parsePayrollSummary } = require('../services/payrollSummary.service');
+const {
+  computePayrollSummary,
+  parsePayrollEmployees,
+  parsePayrollSummary,
+  calculateMissingPayrollSnapshots
+} = require('../services/payrollSummary.service');
 
-const { calculatePayrollBatch } = require('../services/payrollCalculator.service');
+const {
+  calculateEmployeePayroll,
+  calculatePayrollBatch,
+  parseLocalPayrollDate
+} = require('../services/payrollCalculator.service');
+const { applyScheduledBonusesToEmployees } = require('../services/payrollBonuses.service');
 
 const AUDIT_ROLES = ['AUDITOR', 'ADMIN', 'GERENTE GENERAL'];
+const PAYROLL_WORKFLOW_ROLES = ['NOMINA', 'ADMIN', 'GERENTE GENERAL'];
 
 /**
  * Al cerrar 2ª quincena, persiste Total ISR en la ficha del empleado
  * para que la próxima 1ª arranque con la mitad de ese valor.
  */
-const syncEmployeeIsrFromClosed2da = async (periodType, status, employees) => {
+const syncEmployeeIsrFromClosed2da = async (
+  periodType,
+  status,
+  employees,
+  transaction = null
+) => {
   if (periodType !== '2da' || status !== 'cerrada') return;
   const emps = Array.isArray(employees) ? employees : [];
   for (const emp of emps) {
@@ -20,11 +47,14 @@ const syncEmployeeIsrFromClosed2da = async (periodType, status, employees) => {
     if (emp.totalIsr === undefined || emp.totalIsr === null || emp.totalIsr === '') continue;
     const totalIsr = Number(emp.totalIsr);
     if (Number.isNaN(totalIsr)) continue;
-    const current = await Employee.findByPk(emp.id, { attributes: ['id', 'isr'] });
+    const current = await Employee.findByPk(emp.id, {
+      attributes: ['id', 'isr'],
+      transaction
+    });
     if (!current) continue;
     const currentIsr = Number(current.isr) || 0;
     if (currentIsr === totalIsr) continue;
-    await current.update({ isr: totalIsr });
+    await current.update({ isr: totalIsr }, { transaction });
   }
 };
 
@@ -159,9 +189,7 @@ const formatPayrollRecord = async (payrollObj, { includeData = true } = {}) => {
   }
 
   let emps = parsePayrollEmployees(payrollObj.data);
-  if (emps.length > 0 && !emps.every((e) => e && e.calculated)) {
-    emps = calculatePayrollBatch(emps, payrollObj.periodType);
-  }
+  emps = calculateMissingPayrollSnapshots(emps, payrollObj.periodType);
   result.data = emps;
   return result;
 };
@@ -231,53 +259,277 @@ const requireSingleCompany = (companies) => {
   return normalized;
 };
 
+const resolveCanonicalCompanyId = async (rawCompany, transaction = null) => {
+  const numericId = Number(rawCompany);
+  if (Number.isInteger(numericId) && numericId > 0) {
+    const company = await Company.findByPk(numericId, { transaction });
+    if (company) return company.id;
+  }
+  const needle = String(rawCompany || '').trim().toUpperCase();
+  const companies = await Company.findAll({ transaction });
+  const match = companies.find((company) => (
+    [company.nombre_comercial, company.razon_social, company.nit]
+      .filter(Boolean)
+      .some((value) => String(value).trim().toUpperCase() === needle)
+  ));
+  if (!match) {
+    const err = new Error('La empresa seleccionada no existe.');
+    err.status = 400;
+    throw err;
+  }
+  return match.id;
+};
+
+const getEmployeePrincipalCompanyId = (employee) => {
+  const id = Number(
+    employee?.empresa_principal
+    ?? employee?.companyId
+    ?? employee?.id_empresa
+  );
+  return Number.isInteger(id) && id > 0 ? id : null;
+};
+
+const assertEmployeesMatchPayrollCompany = (employees, companyId) => {
+  const mismatches = (Array.isArray(employees) ? employees : []).filter(
+    employee => getEmployeePrincipalCompanyId(employee) !== Number(companyId)
+  );
+  if (mismatches.length === 0) return;
+  const sample = mismatches.slice(0, 3).map((employee) => (
+    employee?.id != null ? `#${employee.id}` : 'sin ID'
+  )).join(', ');
+  const err = new Error(
+    `La nómina contiene empleados que no pertenecen a la empresa seleccionada: ${sample}.`
+  );
+  err.status = 400;
+  throw err;
+};
+
+const assertClosedFirstQuincenaExists = async (
+  payload,
+  companyIds,
+  transaction = null
+) => {
+  if (payload.periodType !== '2da') return;
+  const targetDate = parseLocalPayrollDate(
+    payload.createdAt || payload.closedAt || Date.now()
+  );
+  const targetCompanies = new Set((companyIds || []).map(String));
+  const firstPayrolls = await PayrollHistory.findAll({
+    where: { periodType: '1ra', status: 'cerrada' },
+    attributes: ['id', 'closedAt', 'createdAt', 'summary'],
+    transaction
+  });
+  const match = firstPayrolls.some((payroll) => {
+    const row = payroll.toJSON();
+    const rowDate = parseLocalPayrollDate(row.createdAt || row.closedAt || 0);
+    if (
+      rowDate.getFullYear() !== targetDate.getFullYear()
+      || rowDate.getMonth() !== targetDate.getMonth()
+    ) {
+      return false;
+    }
+    const rowCompanies = getCompaniesFromHistory(row).map(String);
+    return rowCompanies.some((company) => targetCompanies.has(company));
+  });
+  if (!match) {
+    const err = new Error(
+      'No se puede crear la 2ª quincena sin una 1ª quincena cerrada del mismo mes y empresa.'
+    );
+    err.status = 400;
+    throw err;
+  }
+};
+
+const getCurrentPayrollOperationLogIds = (employees) => {
+  const ids = new Set();
+  (Array.isArray(employees) ? employees : []).forEach((employee) => {
+    (Array.isArray(employee?.operationLogs) ? employee.operationLogs : [])
+      .filter((log) => (
+        !log.carriedFromFirstQuincena
+        && ['APPROVED_MANAGER', 'PROCESSED_PAYROLL'].includes(log.status)
+        && log.id != null
+      ))
+      .forEach((log) => ids.add(log.id));
+  });
+  return [...ids];
+};
+
+const setPayrollOperationLogsStatus = async (
+  employees,
+  status,
+  periodAssigned,
+  transaction
+) => {
+  const ids = getCurrentPayrollOperationLogIds(employees);
+  if (ids.length === 0) return;
+  await OperationLog.update(
+    { status, periodAssigned },
+    { where: { id: ids }, transaction }
+  );
+};
+
+const getCurrentPayrollCommissionIds = (employees) => {
+  const ids = new Set();
+  (Array.isArray(employees) ? employees : []).forEach((employee) => {
+    (Array.isArray(employee?.commissionIds) ? employee.commissionIds : [])
+      .filter(id => id != null)
+      .forEach(id => ids.add(id));
+  });
+  return [...ids];
+};
+
+const setPayrollCommissionsStatus = async (
+  employees,
+  estado,
+  transaction
+) => {
+  const ids = getCurrentPayrollCommissionIds(employees);
+  if (ids.length === 0) return;
+  await Commission.update(
+    { estado },
+    { where: { id: ids }, transaction }
+  );
+};
+
 const createPayroll = async (req, res) => {
+  const t = await sequelize.transaction();
+  let newPayroll = null;
+  let validatedCompanies = [];
+  let submitterName = req.user?.name || 'Nómina';
+  let targetStatus = null;
+
   try {
-    const payload = req.body;
-    const validatedCompanies = requireSingleCompany(payload.companies);
-    payload.companies = validatedCompanies;
-    
-    // SERVER-SIDE CALCULATION ENFORCEMENT
-    let emps = typeof payload.data === 'string' ? JSON.parse(payload.data) : payload.data;
-    if (emps && emps.length > 0) {
-      emps = calculatePayrollBatch(emps, payload.periodType);
-      payload.data = typeof payload.data === 'string' ? JSON.stringify(emps) : emps;
-      payload.summary = computePayrollSummary({ ...payload, data: emps });
-    } else if (!payload.summary) {
-      payload.summary = computePayrollSummary({ ...payload, data: [] });
+    const role = String(req.user?.role || '').trim().toUpperCase();
+    if (!PAYROLL_WORKFLOW_ROLES.includes(role)) {
+      const err = new Error('No tienes permiso para enviar o cerrar nóminas.');
+      err.status = 403;
+      throw err;
     }
 
-    // Guardar emisor al enviar a auditoría (para notificaciones posteriores)
-    let submitterName = req.user?.name || 'Nómina';
-    if (payload.status === 'auditoria' && req.user) {
-      const summary = parsePayrollSummary(payload.summary) || {};
-      let submitterEmail = null;
+    const draftId = String(req.body?.draftId || '').trim();
+    if (!draftId) {
+      const err = new Error(
+        'Debe indicar el borrador que se enviará. El servidor no acepta importes de nómina construidos por el navegador.'
+      );
+      err.status = 400;
+      throw err;
+    }
+
+    const draft = await PayrollDraft.findByPk(draftId, {
+      include: [{ model: PayrollDraftEmployee, as: 'draftEmployees' }],
+      transaction: t,
+      lock: t.LOCK.UPDATE
+    });
+    if (!draft) {
+      const err = new Error('Borrador de nómina no encontrado.');
+      err.status = 404;
+      throw err;
+    }
+
+    const companyToken = requireSingleCompany(draft.companies)[0];
+    const canonicalCompanyId = await resolveCanonicalCompanyId(companyToken, t);
+    validatedCompanies = [canonicalCompanyId];
+    targetStatus = draft.isApproved ? 'cerrada' : 'auditoria';
+
+    let emps = (draft.draftEmployees || []).map((row) => {
+      const raw = row.data;
+      if (typeof raw !== 'string') return raw;
       try {
-        const dbUser = await User.findByPk(req.user.id, { attributes: ['id', 'name', 'email'] });
-        submitterEmail = dbUser?.email || null;
-        if (dbUser?.name) submitterName = dbUser.name;
-      } catch (_) { /* ignore */ }
-      summary.submittedBy = {
-        userId: req.user.id,
-        name: submitterName,
-        email: submitterEmail
+        return JSON.parse(raw);
+      } catch {
+        return null;
+      }
+    }).filter(Boolean);
+    assertEmployeesMatchPayrollCompany(emps, canonicalCompanyId);
+
+    if (draft.isApproved) {
+      // Auditoría aprobó estos valores exactos. Nunca se vuelven a calcular
+      // salvo para completar un registro histórico antiguo sin snapshot.
+      emps = emps.map((employee) => (
+        employee?.calculated
+          ? employee
+          : calculateEmployeePayroll(employee, draft.periodType)
+      ));
+    } else {
+      // Al enviar por primera vez se toma el catálogo vigente y se congela el
+      // resultado calculado del servidor que verá Auditoría.
+      const scheduledBonuses = emps.length > 0
+        ? await Bonus.findAll({ transaction: t })
+        : [];
+      emps = applyScheduledBonusesToEmployees(
+        emps,
+        scheduledBonuses,
+        draft.createdAt,
+        draft.periodType
+      );
+      emps = calculatePayrollBatch(emps, draft.periodType);
+    }
+
+    await assertClosedFirstQuincenaExists({
+      periodType: draft.periodType,
+      createdAt: draft.createdAt
+    }, validatedCompanies, t);
+
+    let summary = computePayrollSummary({
+      companies: validatedCompanies,
+      data: emps,
+      periodType: draft.periodType
+    });
+    // Mantener siempre los IDs canónicos, no nombres mezclados de empleados.
+    summary.companies = validatedCompanies;
+
+    if (targetStatus === 'auditoria' && req.user) {
+      let submitterEmail = null;
+      const dbUser = await User.findByPk(req.user.id, {
+        attributes: ['id', 'name', 'email'],
+        transaction: t
+      });
+      submitterEmail = dbUser?.email || null;
+      if (dbUser?.name) submitterName = dbUser.name;
+      summary = {
+        ...summary,
+        submittedBy: {
+          userId: req.user.id,
+          name: submitterName,
+          email: submitterEmail
+        }
       };
-      payload.summary = summary;
     }
 
-    // companies no es columna del modelo; vive en summary
-    const { companies: _companies, ...historyPayload } = payload;
-    const newPayroll = await PayrollHistory.create(historyPayload);
+    newPayroll = await PayrollHistory.create({
+      id: draft.id,
+      title: draft.title,
+      periodType: draft.periodType,
+      status: targetStatus,
+      closedAt: new Date().toISOString(),
+      createdAt: draft.createdAt,
+      data: emps,
+      notes: draft.notes,
+      summary
+    }, { transaction: t });
 
-    // Persist Total ISR → ficha empleado solo al cierre definitivo de 2ª
-    try {
-      const empsForIsr = typeof payload.data === 'string' ? JSON.parse(payload.data) : (payload.data || emps);
-      await syncEmployeeIsrFromClosed2da(payload.periodType, payload.status, empsForIsr);
-    } catch (isrSyncErr) {
-      console.error('Error sincronizando ISR de empleados al cerrar 2ª:', isrSyncErr);
-    }
+    await syncEmployeeIsrFromClosed2da(
+      draft.periodType,
+      targetStatus,
+      emps,
+      t
+    );
+    await setPayrollOperationLogsStatus(
+      emps,
+      'PROCESSED_PAYROLL',
+      newPayroll.id,
+      t
+    );
+    await setPayrollCommissionsStatus(emps, 'Aplicado', t);
 
-    if (payload.status === 'auditoria') {
+    await PayrollDraftEmployee.destroy({
+      where: { draftId: draft.id },
+      transaction: t
+    });
+    await draft.destroy({ transaction: t });
+    await t.commit();
+
+    if (targetStatus === 'auditoria') {
       try {
         const companyNames = await resolveCompanyNames(validatedCompanies);
         await notifyAuditorsOfSubmission({
@@ -292,6 +544,7 @@ const createPayroll = async (req, res) => {
 
     res.status(201).json(newPayroll);
   } catch (err) {
+    if (!t.finished) await t.rollback();
     res.status(err.status || 400).json({ error: err.message });
   }
 };
@@ -351,21 +604,12 @@ const requestReactivation = async (req, res) => {
       totalEmployees += emps.length;
       
       emps.forEach(e => {
-        // The data is already calculated by the backend!
-        if (e.calculated && e.calculated.gross) {
-          totalGross += e.calculated.gross;
-        } else {
-          // Fallback if it's an older payroll without e.calculated
-          const baseFactor = (e.days || 30) / 30;
-          const sueldoOrd = Number(e.sueldo_ordinario) || 0;
-          const bonInc = Number(e.bon_incentivo) || 0;
-          const bonDec = Number(e.bon_dec_37_2001) || 0;
-          const bonos = Number(e.extras?.bonos) || 0;
-          const extrasTotal = (e.extras?.simplesVal || 0) + (e.extras?.doblesVal || 0) + (e.extras?.comisiones || 0) + (e.extras?.otrosIngresos || 0);
-          const bonusesSum = Object.values(e.appliedBonuses || {}).reduce((a, b) => a + b, 0);
-  
-          totalGross += (sueldoOrd * baseFactor) + (bonInc * baseFactor) + (bonDec * baseFactor) + bonos + extrasTotal + bonusesSum;
-        }
+        // Nóminas cerradas conservan su snapshot; historiales antiguos sin él
+        // se completan con el mismo motor central usado al crear la nómina.
+        const employeeWithSnapshot = e?.calculated
+          ? e
+          : calculateEmployeePayroll(e, payroll.periodType);
+        totalGross += Number(employeeWithSnapshot.calculated?.gross) || 0;
       });
     }
 
@@ -424,7 +668,10 @@ const reactivate = async (req, res) => {
   const t = await sequelize.transaction();
   try {
     const { token } = req.body;
-    if (!token) return res.status(400).json({ error: 'Token no proporcionado' });
+    if (!token) {
+      await t.rollback();
+      return res.status(400).json({ error: 'Token no proporcionado' });
+    }
 
     // Verify token
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secretkey');
@@ -450,10 +697,10 @@ const reactivate = async (req, res) => {
         id: draftId,
         title: historyRecord.title,
         periodType: historyRecord.periodType,
-        companies: [], // we will get this from employees or if it was saved
+        companies: getCompaniesFromHistory(historyRecord),
         employeesCount: data ? data.length : 0,
         notes: historyRecord.notes,
-        createdAt: new Date()
+        createdAt: historyRecord.createdAt || historyRecord.closedAt || new Date()
       }, { transaction: t });
 
       if (data && data.length > 0) {
@@ -482,7 +729,10 @@ const reactivateViaGet = async (req, res) => {
   const t = await sequelize.transaction();
   try {
     const { token } = req.query;
-    if (!token) return res.status(400).send('<h1>Error: Token no proporcionado</h1>');
+    if (!token) {
+      await t.rollback();
+      return res.status(400).send('<h1>Error: Token no proporcionado</h1>');
+    }
 
     // Verify token
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secretkey');
@@ -513,10 +763,10 @@ const reactivateViaGet = async (req, res) => {
         id: draftId,
         title: historyRecord.title,
         periodType: historyRecord.periodType,
-        companies: [],
+        companies: getCompaniesFromHistory(historyRecord),
         employeesCount: data ? data.length : 0,
         notes: historyRecord.notes,
-        createdAt: new Date()
+        createdAt: historyRecord.createdAt || historyRecord.closedAt || new Date()
       }, { transaction: t });
 
       if (data && data.length > 0) {
@@ -658,7 +908,7 @@ const auditorApprove = async (req, res) => {
       notes: historyRecord.notes,
       isApproved: true,
       correctionNote: null,
-      createdAt: new Date()
+      createdAt: historyRecord.createdAt || historyRecord.closedAt || new Date()
     }, { transaction: t });
 
     if (data && data.length > 0) {
@@ -711,6 +961,16 @@ const auditorReject = async (req, res) => {
     const data = typeof historyRecord.data === 'string' ? JSON.parse(historyRecord.data) : historyRecord.data;
     const companies = getCompaniesFromHistory(historyRecord);
 
+    // Al devolver la nómina, los registros operativos de esta quincena vuelven
+    // a quedar disponibles para corrección. Los heredados de 1ª no se tocan.
+    await setPayrollOperationLogsStatus(
+      data,
+      'APPROVED_MANAGER',
+      null,
+      t
+    );
+    await setPayrollCommissionsStatus(data, 'Pendiente', t);
+
     const draftId = `draft_${Date.now()}_${Math.floor(Math.random()*1000)}`;
     await PayrollDraft.create({
       id: draftId,
@@ -721,7 +981,7 @@ const auditorReject = async (req, res) => {
       notes: historyRecord.notes,
       isApproved: false,
       correctionNote: note || 'Requiere correcciones',
-      createdAt: new Date()
+      createdAt: historyRecord.createdAt || historyRecord.closedAt || new Date()
     }, { transaction: t });
 
     if (data && data.length > 0) {
@@ -755,11 +1015,34 @@ const auditorReject = async (req, res) => {
 const updateStatus = async (req, res) => {
   try {
     const { status } = req.body;
+    if (!req.user || !AUDIT_ROLES.includes(req.user.role)) {
+      return res.status(403).json({
+        error: 'No tiene permiso para cambiar el estado de una nómina.'
+      });
+    }
+    if (status !== 'cerrada') {
+      return res.status(400).json({
+        error: 'La única transición permitida en este endpoint es auditoría → cerrada.'
+      });
+    }
     const payroll = await PayrollHistory.findByPk(req.params.id);
     if (!payroll) return res.status(404).json({ error: 'No encontrado' });
+    if (payroll.status !== 'auditoria') {
+      return res.status(400).json({
+        error: 'Solo una nómina en auditoría puede marcarse como cerrada.'
+      });
+    }
+
+    const companyIds = getCompaniesFromHistory(payroll);
+    await assertClosedFirstQuincenaExists({
+      periodType: payroll.periodType,
+      createdAt: payroll.createdAt,
+      closedAt: payroll.closedAt
+    }, companyIds);
 
     const prevStatus = payroll.status;
     payroll.status = status;
+    payroll.closedAt = new Date();
     await payroll.save();
 
     if (prevStatus !== 'cerrada' && status === 'cerrada') {

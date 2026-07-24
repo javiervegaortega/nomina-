@@ -10,12 +10,29 @@ import { AuthContext } from '../context/AuthContext';
 import { DataContext } from '../context/DataContext';
 
 const API = 'http://localhost:3000/api/billing';
+const BILLING_WRITE_ROLES = new Set(['ADMIN', 'NOMINA', 'GERENTE GENERAL']);
+const BILLING_PAYER_IDS = new Set([1, 2, 3]);
+const BILLING_DESTINATION_IDS = new Set([1, 2, 3, 4]);
+const ROUTE_DEFAULTS = {
+  '1->2': { marginPercentage: 0, applyIva: true, ivaRate: 0.12 },
+  '1->3': { marginPercentage: 0, applyIva: true, ivaRate: 0.12 },
+  '2->1': { marginPercentage: 0, applyIva: true, ivaRate: 0.12 },
+  '2->3': { marginPercentage: 0, applyIva: true, ivaRate: 0.12 },
+  '3->1': { marginPercentage: 4, applyIva: true, ivaRate: 0.12 },
+  '3->2': { marginPercentage: 4, applyIva: true, ivaRate: 0.12 },
+  '3->4': { marginPercentage: 4, applyIva: false, ivaRate: 0 }
+};
+const routeKey = (fromId, toId) => `${Number(fromId)}->${Number(toId)}`;
+const isAllowedRoute = (fromId, toId) => !!ROUTE_DEFAULTS[routeKey(fromId, toId)];
 
 export function BillingRulesPanel() {
   const { showToast, confirmAction } = useContext(AppContext);
-  const { token } = useContext(AuthContext);
+  const { token, user } = useContext(AuthContext);
   const { companies } = useContext(DataContext);
   const { isOpen, onOpen, onClose } = useDisclosure();
+  const canWriteBilling = BILLING_WRITE_ROLES.has(
+    String(user?.role || '').trim().toUpperCase()
+  );
 
   const bgCard = useColorModeValue('white', 'rgba(15, 23, 42, 0.8)');
   const bgHeader = useColorModeValue('gray.50', 'whiteAlpha.50');
@@ -25,14 +42,19 @@ export function BillingRulesPanel() {
   const [loading, setLoading] = useState(true);
   const [formData, setFormData] = useState({
     id: null,
-    fromCompanyId: '',
-    toCompanyId: '',
+    fromCompanyId: 1,
+    toCompanyId: 2,
     concept: 'Servicios de RRHH',
-    marginPercentage: 4,
+    marginPercentage: 0,
     applyIva: true,
     ivaRate: 0.12,
     isActive: true
   });
+  const payerCompanies = companies.filter((c) => BILLING_PAYER_IDS.has(Number(c.id)));
+  const destinationCompanies = companies.filter((c) =>
+    BILLING_DESTINATION_IDS.has(Number(c.id))
+    && isAllowedRoute(formData.fromCompanyId, c.id)
+  );
 
   const companyName = (id) => {
     const c = companies.find((x) => x.id === Number(id));
@@ -46,7 +68,10 @@ export function BillingRulesPanel() {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (!res.ok) throw new Error('Error al cargar reglas');
-      setRules(await res.json());
+      const data = await res.json();
+      setRules(data.filter((rule) =>
+        isAllowedRoute(rule.fromCompanyId, rule.toCompanyId)
+      ));
     } catch {
       showToast('Error al cargar datos', 'error');
     } finally {
@@ -57,6 +82,10 @@ export function BillingRulesPanel() {
   useEffect(() => { fetchData(); }, []);
 
   const handleOpenModal = (rule = null) => {
+    if (!canWriteBilling) {
+      showToast('Tu perfil tiene acceso de solo lectura a facturación', 'warning');
+      return;
+    }
     if (rule) {
       setFormData({
         id: rule.id,
@@ -71,10 +100,10 @@ export function BillingRulesPanel() {
     } else {
       setFormData({
         id: null,
-        fromCompanyId: '',
-        toCompanyId: '',
+        fromCompanyId: 1,
+        toCompanyId: 2,
         concept: 'Servicios de RRHH',
-        marginPercentage: 4,
+        marginPercentage: 0,
         applyIva: true,
         ivaRate: 0.12,
         isActive: true
@@ -85,8 +114,16 @@ export function BillingRulesPanel() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!canWriteBilling) {
+      showToast('No tienes permiso para modificar reglas de facturación', 'error');
+      return;
+    }
     if (Number(formData.fromCompanyId) === Number(formData.toCompanyId)) {
       showToast('La empresa emisora y receptora deben ser distintas', 'error');
+      return;
+    }
+    if (!isAllowedRoute(formData.fromCompanyId, formData.toCompanyId)) {
+      showToast('La relación seleccionada no corresponde a una ruta de los Excel', 'error');
       return;
     }
     try {
@@ -119,14 +156,18 @@ export function BillingRulesPanel() {
   };
 
   const handleDelete = (id) => {
-    confirmAction('¿Estás seguro de que deseas eliminar esta regla?', async () => {
+    if (!canWriteBilling) {
+      showToast('No tienes permiso para desactivar reglas de facturación', 'error');
+      return;
+    }
+    confirmAction('¿Estás seguro de que deseas desactivar esta regla?', async () => {
       try {
         const res = await fetch(`${API}/rules/${id}`, {
           method: 'DELETE',
           headers: { Authorization: `Bearer ${token}` }
         });
         if (!res.ok) throw new Error('Error');
-        showToast('Regla eliminada exitosamente');
+        showToast('Regla desactivada exitosamente');
         fetchData();
       } catch {
         showToast('Error al eliminar regla', 'error');
@@ -147,9 +188,15 @@ export function BillingRulesPanel() {
         <Text fontSize="sm" color="gray.500">
           Configura quién factura a quién, márgenes e IVA.
         </Text>
-        <Button leftIcon={<Plus size={18} />} colorScheme="brand" size="sm" onClick={() => handleOpenModal()}>
-          Nueva regla
-        </Button>
+        {canWriteBilling ? (
+          <Button leftIcon={<Plus size={18} />} colorScheme="brand" size="sm" onClick={() => handleOpenModal()}>
+            Nueva regla
+          </Button>
+        ) : (
+          <Badge colorScheme="gray" px={3} py={1} borderRadius="md">
+            Solo lectura
+          </Badge>
+        )}
       </Flex>
 
       <Box bg={bgCard} borderRadius="xl" shadow="sm" overflowX="auto" borderWidth="1px" borderColor={borderColor}>
@@ -163,7 +210,7 @@ export function BillingRulesPanel() {
               <Th isNumeric>Margen %</Th>
               <Th>IVA</Th>
               <Th>Estado</Th>
-              <Th textAlign="right">Acciones</Th>
+              {canWriteBilling && <Th textAlign="right">Acciones</Th>}
             </Tr>
           </Thead>
           <Tbody>
@@ -184,17 +231,19 @@ export function BillingRulesPanel() {
                     ? <Badge colorScheme="blue">Activa</Badge>
                     : <Badge colorScheme="red">Inactiva</Badge>}
                 </Td>
-                <Td textAlign="right">
-                  <HStack justify="flex-end" spacing={2}>
-                    <IconButton icon={<Edit2 size={16} />} size="sm" variant="ghost" colorScheme="blue" aria-label="Editar" onClick={() => handleOpenModal(rule)} />
-                    <IconButton icon={<Trash2 size={16} />} size="sm" variant="ghost" colorScheme="red" aria-label="Eliminar" onClick={() => handleDelete(rule.id)} />
-                  </HStack>
-                </Td>
+                {canWriteBilling && (
+                  <Td textAlign="right">
+                    <HStack justify="flex-end" spacing={2}>
+                      <IconButton icon={<Edit2 size={16} />} size="sm" variant="ghost" colorScheme="blue" aria-label="Editar" onClick={() => handleOpenModal(rule)} />
+                      <IconButton icon={<Trash2 size={16} />} size="sm" variant="ghost" colorScheme="red" aria-label="Eliminar" onClick={() => handleDelete(rule.id)} />
+                    </HStack>
+                  </Td>
+                )}
               </Tr>
             ))}
             {rules.length === 0 && !loading && (
               <Tr>
-                <Td colSpan={8} textAlign="center" py={6} color="gray.500">No hay reglas configuradas</Td>
+                <Td colSpan={canWriteBilling ? 8 : 7} textAlign="center" py={6} color="gray.500">No hay reglas configuradas</Td>
               </Tr>
             )}
           </Tbody>
@@ -213,9 +262,19 @@ export function BillingRulesPanel() {
                 <Select
                   placeholder="Seleccionar empresa"
                   value={formData.fromCompanyId}
-                  onChange={(e) => setFormData({ ...formData, fromCompanyId: e.target.value })}
+                  onChange={(e) => {
+                    const fromCompanyId = Number(e.target.value);
+                    const nextTo = companies.find((c) => isAllowedRoute(fromCompanyId, c.id))?.id || '';
+                    const defaults = ROUTE_DEFAULTS[routeKey(fromCompanyId, nextTo)] || {};
+                    setFormData({
+                      ...formData,
+                      fromCompanyId,
+                      toCompanyId: nextTo,
+                      ...defaults
+                    });
+                  }}
                 >
-                  {companies.map((c) => (
+                  {payerCompanies.map((c) => (
                     <option key={c.id} value={c.id}>{c.nombre_comercial || c.razon_social}</option>
                   ))}
                 </Select>
@@ -226,9 +285,13 @@ export function BillingRulesPanel() {
                 <Select
                   placeholder="Seleccionar empresa"
                   value={formData.toCompanyId}
-                  onChange={(e) => setFormData({ ...formData, toCompanyId: e.target.value })}
+                  onChange={(e) => {
+                    const toCompanyId = Number(e.target.value);
+                    const defaults = ROUTE_DEFAULTS[routeKey(formData.fromCompanyId, toCompanyId)] || {};
+                    setFormData({ ...formData, toCompanyId, ...defaults });
+                  }}
                 >
-                  {companies.map((c) => (
+                  {destinationCompanies.map((c) => (
                     <option key={c.id} value={c.id}>{c.nombre_comercial || c.razon_social}</option>
                   ))}
                 </Select>
@@ -246,7 +309,7 @@ export function BillingRulesPanel() {
                     type="number"
                     step="0.01"
                     value={formData.marginPercentage}
-                    onChange={(e) => setFormData({ ...formData, marginPercentage: e.target.value })}
+                    isReadOnly
                   />
                 </FormControl>
                 <FormControl>
@@ -255,7 +318,7 @@ export function BillingRulesPanel() {
                     type="number"
                     step="0.01"
                     value={formData.ivaRate}
-                    onChange={(e) => setFormData({ ...formData, ivaRate: e.target.value })}
+                    isReadOnly
                     isDisabled={!formData.applyIva}
                   />
                 </FormControl>
@@ -264,7 +327,7 @@ export function BillingRulesPanel() {
               <HStack w="100%" spacing={4}>
                 <FormControl display="flex" alignItems="center">
                   <FormLabel mb="0" flex="1">Aplicar IVA</FormLabel>
-                  <Switch colorScheme="brand" isChecked={formData.applyIva} onChange={(e) => setFormData({ ...formData, applyIva: e.target.checked })} />
+                  <Switch colorScheme="brand" isChecked={formData.applyIva} isReadOnly />
                 </FormControl>
                 <FormControl display="flex" alignItems="center">
                   <FormLabel mb="0" flex="1">Regla activa</FormLabel>

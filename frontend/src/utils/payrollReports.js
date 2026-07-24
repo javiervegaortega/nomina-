@@ -1,5 +1,26 @@
 import * as XLSX from 'xlsx';
 import { getNetPayable } from './payrollPeriod';
+import { calculateEmployeePayroll } from './payrollCalculator';
+
+function ensureEmployeeCalculation(employee, periodType) {
+  const calculated = employee?.calculated;
+  if (
+    calculated?.gross != null
+    && calculated?.ded != null
+    && calculated?.net != null
+  ) {
+    return employee;
+  }
+  return calculateEmployeePayroll(employee || {}, periodType);
+}
+
+function getCatalogBonuses(employee) {
+  if (employee?.calculated?.bonusesSum != null) {
+    return Number(employee.calculated.bonusesSum) || 0;
+  }
+  return Object.values(employee?.appliedBonuses || {})
+    .reduce((sum, value) => sum + (Number(value) || 0), 0);
+}
 
 /**
  * Campos recomendados para reportería de empleados activos.
@@ -35,7 +56,8 @@ function empName(e) {
  * Filas normalizadas para Verificador de Pagos.
  */
 export function buildVerificadorRows(employees, periodType, companies = []) {
-  return (employees || []).map(e => {
+  return (employees || []).map(employee => {
+    const e = ensureEmployeeCalculation(employee, periodType);
     const liquido = getNetPayable(e, periodType);
     const companyName = companies.find(c => String(c.id) === String(e.empresa_principal))?.nombre_comercial
       || e.company || '';
@@ -56,21 +78,23 @@ export function buildVerificadorRows(employees, periodType, companies = []) {
  * Filas Libro de Salarios (resumen).
  */
 export function buildLibroSalariosRows(employees, periodType) {
-  return (employees || []).map(e => {
-    const c = e.calculated || {};
+  return (employees || []).map(employee => {
+    const e = ensureEmployeeCalculation(employee, periodType);
+    const c = e.calculated;
     const liquido = getNetPayable(e, periodType);
-    const bonusDetail = (e.operationLogs || [])
+    const bonusDetail = [...(e.priorOperationLogs || []), ...(e.operationLogs || [])]
       .filter(l => l.type === 'BONO')
       .map(l => `Q${Number(l.bonusAmount || 0).toFixed(2)}${l.taskDescription ? ` (${l.taskDescription})` : ''}`)
       .join('; ');
     return {
       Empleado: empName(e),
       DPI: e.dpi || '',
-      'Días': e.days || '',
+      'Días': e.days ?? '',
       'Sueldo Ordinario': c.baseSalary || 0,
       'Bon. Incentivo': c.bonusLey || 0,
       'Bono Decreto': c.bonusDec || 0,
       'Bonos Operativos': c.bonos || 0,
+      'Bonos de Catálogo': getCatalogBonuses(e),
       'Detalle Bonos': bonusDetail,
       'Extras': c.extrasTotal || 0,
       'Bruto': c.gross || 0,

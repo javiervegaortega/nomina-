@@ -207,7 +207,12 @@ export default function EmployeeIncidences({ employee, onSave, onDelete, draftDa
               {incidences.map(inc => (
                 <Tr key={inc.id}>
                   <Td>
-                    <Text fontWeight="medium" fontSize="xs">{inc.type}</Text>
+                    <HStack spacing={2}>
+                      <Text fontWeight="medium" fontSize="xs">{inc.type}</Text>
+                      {inc.carriedFromFirstQuincena && (
+                        <Badge colorScheme="blue" fontSize="2xs">1ª quincena</Badge>
+                      )}
+                    </HStack>
                     {inc.startDate && <Text fontSize="2xs" color="gray.500">
                       {new Date(inc.startDate).toLocaleDateString()} {inc.endDate ? `al ${new Date(inc.endDate).toLocaleDateString()}` : ''}
                       {inc.remove7thDay ? ' (Séptimo día descontado)' : ''}
@@ -226,6 +231,10 @@ export default function EmployeeIncidences({ employee, onSave, onDelete, draftDa
                       colorScheme="red"
                       variant="ghost"
                       aria-label="Eliminar"
+                      isDisabled={inc.carriedFromFirstQuincena}
+                      title={inc.carriedFromFirstQuincena
+                        ? 'La incidencia pertenece a la primera quincena cerrada.'
+                        : 'Eliminar incidencia'}
                       onClick={() => onDelete(employee.id, inc.id, inc.daysQuincena)}
                     />
                   </Td>

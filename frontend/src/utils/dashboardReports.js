@@ -1,5 +1,6 @@
-import { formatQ, CUOTA_PATRONAL_RATE } from '../data/mockData';
+import { formatQ } from '../data/mockData';
 import { calculateEmployeePayroll as calcPayroll, getCompanyCost } from './payrollCalculator';
+import { parseLocalDate } from './payrollPeriod';
 
 export const PERIOD_MODES = {
   LATEST: 'latest',
@@ -9,7 +10,11 @@ export const PERIOD_MODES = {
   SNAPSHOT: 'snapshot',
 };
 
-export const getPayrollDate = (record) => new Date(record?.closedAt || record?.createdAt || 0);
+// createdAt es la fecha del período elegida al crear la nómina; closedAt es solo
+// el momento administrativo de cierre y puede caer en el mes siguiente.
+export const getPayrollDate = (record) => parseLocalDate(
+  record?.createdAt || record?.closedAt || 0
+);
 
 export const parseEmployeeList = (record) => {
   let list = record?.data || record?.employees || [];
@@ -22,8 +27,13 @@ export const parseEmployeeList = (record) => {
 export const computeEmployeePayroll = (e) => {
   const withCalc = e.calculated ? e : calcPayroll(e, e.periodType || '1ra');
   const calc = withCalc.calculated || {};
-  const ded = Object.values(withCalc.deductions || e.deductions || {})
-    .reduce((a, b) => a + Number(b), 0);
+  const ded = Number(calc.ded) || Object.values(
+    calc.proratedDeductions || withCalc.deductions || e.deductions || {}
+  ).reduce((a, b) => a + (Number(b) || 0), 0);
+  const net = calc.net != null ? Number(calc.net) : (Number(calc.gross) || 0) - ded;
+  const anticipo = e.periodType === '2da'
+    ? (Number(e.anticipo1ra ?? calc.anticipo1ra) || 0)
+    : 0;
 
   return {
     baseSalary: calc.baseSalary || 0,
@@ -37,7 +47,8 @@ export const computeEmployeePayroll = (e) => {
     irtraIntecap: calc.irtraIntecap || 0,
     companyCost: calc.companyCost || getCompanyCost(calc),
     ded,
-    net: calc.net != null ? calc.net : (calc.gross || 0) - ded
+    net,
+    netPayable: calc.netPayable != null ? Number(calc.netPayable) : net - anticipo
   };
 };
 
@@ -45,18 +56,63 @@ export const computeHistoryTotals = (record) => {
   const list = parseEmployeeList(record);
   let grossTotal = 0;
   let dedTotal = 0;
+  let netTotal = 0;
 
   list.forEach(e => {
-    const calc = computeEmployeePayroll(e);
+    const calc = computeEmployeePayroll({ ...e, periodType: record.periodType || e.periodType });
     grossTotal += calc.gross;
     dedTotal += calc.ded;
+    netTotal += calc.netPayable;
   });
 
-  return { grossTotal, dedTotal, netTotal: grossTotal - dedTotal, employeeCount: list.length };
+  return { grossTotal, dedTotal, netTotal, employeeCount: list.length };
+};
+
+const recordCompanyKeys = (record) => {
+  let summary = record?.summary;
+  if (typeof summary === 'string') {
+    try { summary = JSON.parse(summary); } catch { summary = null; }
+  }
+  const keys = new Set([
+    ...(Array.isArray(summary?.companyIds) ? summary.companyIds : []),
+    ...(Array.isArray(summary?.companies) ? summary.companies : [])
+  ].map(String));
+  if (keys.size === 0) {
+    parseEmployeeList(record).forEach((e) => {
+      const id = e.empresa_principal || e.companyId || e.company;
+      if (id != null) keys.add(String(id));
+    });
+  }
+  return keys;
+};
+
+const recordsOverlapCompany = (a, b) => {
+  const aKeys = recordCompanyKeys(a);
+  const bKeys = recordCompanyKeys(b);
+  if (aKeys.size === 0 || bKeys.size === 0) return false;
+  return [...aKeys].some((key) => bKeys.has(key));
+};
+
+/** Evita sumar 1ª + 2ª cuando la 2ª ya contiene el mes acumulado. */
+export const selectNonOverlappingPayrollRecords = (records) => {
+  const rows = Array.isArray(records) ? records : [];
+  return rows.filter((record) => {
+    if (record.periodType !== '1ra') return true;
+    const date = getPayrollDate(record);
+    return !rows.some((candidate) => {
+      if (candidate.periodType !== '2da' || candidate.status !== 'cerrada') return false;
+      const candidateDate = getPayrollDate(candidate);
+      return candidateDate.getFullYear() === date.getFullYear()
+        && candidateDate.getMonth() === date.getMonth()
+        && recordsOverlapCompany(record, candidate);
+    });
+  });
 };
 
 export const filterPayrollByPeriod = (payrollHistory, period) => {
-  const history = payrollHistory || [];
+  const history = (payrollHistory || []).filter(
+    record => !record.status || record.status === 'cerrada'
+  );
   if (!history.length) return [];
 
   const sorted = [...history].sort((a, b) => getPayrollDate(b) - getPayrollDate(a));
@@ -82,24 +138,31 @@ export const filterPayrollByPeriod = (payrollHistory, period) => {
 };
 
 export const aggregatePayrollRecords = (records) => {
+  const effectiveRecords = selectNonOverlappingPayrollRecords(records);
   const allEmployees = [];
   let grossTotal = 0;
   let dedTotal = 0;
+  let netTotal = 0;
 
-  records.forEach(r => {
+  effectiveRecords.forEach(r => {
     const totals = computeHistoryTotals(r);
     grossTotal += totals.grossTotal;
     dedTotal += totals.dedTotal;
-    parseEmployeeList(r).forEach(e => allEmployees.push(e));
+    netTotal += totals.netTotal;
+    parseEmployeeList(r).forEach(e => allEmployees.push({
+      ...e,
+      periodType: r.periodType || e.periodType
+    }));
   });
 
   return {
     grossTotal,
     dedTotal,
-    netTotal: grossTotal - dedTotal,
+    netTotal,
     employeeCount: allEmployees.length,
     employees: allEmployees,
-    payrollCount: records.length,
+    payrollCount: effectiveRecords.length,
+    records: effectiveRecords
   };
 };
 
@@ -129,26 +192,39 @@ export const buildCompanyDistribution = (employees, companies, usePayrollGross =
   return baseCompanies.map(c => {
     const companyId = c.id?.toString();
     const total = employees.reduce((s, e) => {
-      const amount = usePayrollGross ? computeEmployeePayroll(e).gross : getBasePay(e);
+      const primaryId = (e.empresa_principal || e.companyId || '').toString();
+      const rawGeneralDist = parseDist(e.dist);
+      const hasGeneralDistribution = Object.values(rawGeneralDist)
+        .some(value => (Number(value) || 0) > 0);
+      const generalDist = hasGeneralDistribution
+        ? rawGeneralDist
+        : { [primaryId]: 100 };
+      const componentDist = parseDist(e.component_dist);
+      const componentOrGeneral = (key) => {
+        const override = parseDist(componentDist?.[key]);
+        return Object.values(override).some(value => (Number(value) || 0) > 0)
+          ? override
+          : generalDist;
+      };
 
       if (usePayrollGross) {
-        const dist = parseDist(e.dist);
-        const distValue = dist?.[companyId] ?? dist?.[c.id] ?? 0;
-        const pct = Number(distValue) || 0;
-        if (pct > 0) return s + (amount * (pct / 100));
-
-        const primaryId = (e.empresa_principal || e.companyId || '').toString();
-        return companyId && primaryId === companyId ? s + amount : s;
+        const calc = computeEmployeePayroll(e);
+        const bonusesDist = componentOrGeneral('bonuses');
+        const extrasDist = componentOrGeneral('extras');
+        const generalPct = (Number(generalDist?.[companyId] ?? generalDist?.[c.id]) || 0) / 100;
+        const bonusesPct = (Number(bonusesDist?.[companyId] ?? bonusesDist?.[c.id]) || 0) / 100;
+        const extrasPct = (Number(extrasDist?.[companyId] ?? extrasDist?.[c.id]) || 0) / 100;
+        const generalGross = calc.baseSalary + calc.bonusLey + calc.bonusDec;
+        const bonusesGross = calc.bonos + calc.bonusesSum;
+        const allocatedGross = (generalGross * generalPct)
+          + (bonusesGross * bonusesPct)
+          + (calc.extrasTotal * extrasPct);
+        return s + allocatedGross;
       }
 
-      const base = amount;
-      const dist = parseDist(e.dist);
-      const distValue = dist?.[companyId] ?? dist?.[c.id] ?? 0;
-      const pct = Number(distValue) || 0;
-      if (pct > 0) return s + (base * (pct / 100));
-
-      const primaryId = (e.empresa_principal || e.companyId || '').toString();
-      return companyId && primaryId === companyId ? s + base : s;
+      const base = getBasePay(e);
+      const pct = (Number(generalDist?.[companyId] ?? generalDist?.[c.id]) || 0) / 100;
+      return s + (base * pct);
     }, 0);
     return { ...c, total };
   }).sort((a, b) => b.total - a.total);
@@ -170,7 +246,9 @@ export const buildDeptDistribution = (employees, deptNameById, usePayrollGross =
 export const getPeriodLabel = (period, payrollHistory) => {
   switch (period.mode) {
     case PERIOD_MODES.LATEST: {
-      const sorted = [...(payrollHistory || [])].sort((a, b) => getPayrollDate(b) - getPayrollDate(a));
+      const sorted = [...(payrollHistory || [])]
+        .filter(record => !record.status || record.status === 'cerrada')
+        .sort((a, b) => getPayrollDate(b) - getPayrollDate(a));
       const latest = sorted[0];
       return latest
         ? `Última nómina: ${latest.title || (latest.periodType === '2da' ? '2da Quincena' : '1ra Quincena')}`
@@ -198,12 +276,14 @@ export const getPeriodLabel = (period, payrollHistory) => {
 
 export const getAvailableMonths = (payrollHistory) => {
   const months = new Set();
-  (payrollHistory || []).forEach(r => {
+  (payrollHistory || [])
+    .filter(record => !record.status || record.status === 'cerrada')
+    .forEach(r => {
     const d = getPayrollDate(r);
     if (!Number.isNaN(d.getTime())) {
       months.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
     }
-  });
+    });
   return [...months].sort((a, b) => b.localeCompare(a));
 };
 
@@ -251,7 +331,15 @@ export const buildDashboardMetrics = ({
     ? (aggregated.employeeCount > 0 ? totalGrossPayroll / aggregated.employeeCount : 0)
     : (activeCount > 0 ? activeEmployees.reduce((s, e) => s + getBasePay(e), 0) / activeCount : 0);
 
-  const patronalCost = totalGrossPayroll * CUOTA_PATRONAL_RATE;
+  const patronalCost = hasPayrollData
+    ? sourceEmployees.reduce((sum, employee) => {
+        const calc = computeEmployeePayroll(employee);
+        return sum + calc.patronal + calc.irtraIntecap;
+      }, 0)
+    : activeEmployees.reduce((sum, employee) => {
+        const calc = calcPayroll({ ...employee, days: 30, deductions: {} }, 'mensual').calculated;
+        return sum + (Number(calc.patronal) || 0) + (Number(calc.irtraIntecap) || 0);
+      }, 0);
 
   return {
     periodLabel: getPeriodLabel(period, payrollHistory),
@@ -268,7 +356,7 @@ export const buildDashboardMetrics = ({
     companyDistribution,
     deptList,
     sourceEmployees,
-    filteredRecords,
+    filteredRecords: aggregated?.records || filteredRecords,
     deptNameById,
   };
 };
@@ -312,12 +400,12 @@ export const exportDashboardExcel = async (metrics, periodLabel) => {
         'No.': idx + 1,
         Nombre: getEmployeeName(e),
         Puesto: e.puesto || '',
-        Días: e.days || 30,
+        Días: e.days ?? 30,
         'Salario Ordinario': calc.baseSalary,
         'Bono Incentivo': calc.bonusLey,
         'Total Devengado': calc.gross,
         Deducciones: calc.ded,
-        'Líquido a Recibir': calc.net,
+        'Líquido a Recibir': calc.netPayable,
       };
     });
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detalle), 'Detalle Nómina');

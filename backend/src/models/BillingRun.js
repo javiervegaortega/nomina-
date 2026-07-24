@@ -60,7 +60,14 @@ module.exports = (sequelize) => {
     }
   }, {
     tableName: 'billing_runs',
-    timestamps: true
+    timestamps: true,
+    indexes: [
+      {
+        unique: true,
+        fields: ['payrollId', 'version'],
+        name: 'billing_runs_payroll_version_unique'
+      }
+    ]
   });
 
   return BillingRun;

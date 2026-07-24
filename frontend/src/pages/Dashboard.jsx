@@ -54,6 +54,7 @@ export default function Dashboard() {
 
   const payrollOptions = useMemo(() => {
     return [...(payrollHistory || [])]
+      .filter(record => !record.status || record.status === 'cerrada')
       .sort((a, b) => getPayrollDate(b) - getPayrollDate(a))
       .map(r => ({
         id: r.id,
@@ -119,9 +120,13 @@ export default function Dashboard() {
     historySorted.forEach(h => {
       const title = h.title || (h.periodType === '2da' ? '2da Quincena' : '1ra Quincena') || 'Nómina';
       items.push({
-        icon: <CheckCircle size={16} />,
-        color: '#10B981',
-        text: `Nómina "${title}" cerrada`,
+        icon: h.status === 'auditoria'
+          ? <Clock size={16} />
+          : <CheckCircle size={16} />,
+        color: h.status === 'auditoria' ? '#F59E0B' : '#10B981',
+        text: h.status === 'auditoria'
+          ? `Nómina "${title}" en auditoría`
+          : `Nómina "${title}" cerrada`,
         time: formatRelative(h.closedAt || h.createdAt),
         sortDate: getPayrollDate(h).getTime(),
       });

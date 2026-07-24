@@ -48,30 +48,15 @@ function companyName(c) {
 }
 
 async function closeDraftToHistory(token, draft, status, isApproved, prefix, periodType) {
-  const employees = draft.employees || [];
-  const payrollId = `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
   const effectivePeriod = periodType || draft.periodType || '1ra';
-  const payload = {
-    id: payrollId,
-    title: draft.title,
-    companies: draft.companies,
-    periodType: effectivePeriod,
-    status,
-    isApproved: !!isApproved,
-    employeesCount: employees.length,
-    closedAt: new Date().toISOString(),
-    data: employees,
-    notes: draft.notes || null
-  };
 
   const res = await api('/api/payrolls', {
     method: 'POST',
-    body: JSON.stringify(payload)
+    body: JSON.stringify({ draftId: draft.id })
   }, token);
   assert(res.status === 201, `[${draft.companies?.[0]}] POST /api/payrolls (${status}, ${effectivePeriod}) → ${res.status}`);
-  if (res.status === 201 && draft.id) {
-    await api(`/api/payroll-drafts/${draft.id}`, { method: 'DELETE' }, token).catch(() => {});
-  }
+  const payrollId = res.body?.id || draft.id;
+  assert(res.body?.status === status, `[${draft.companies?.[0]}] Estado determinado por borrador (${status})`);
   return payrollId;
 }
 
@@ -208,17 +193,6 @@ async function createAndClosePayroll(token, {
 
   const draftDb = await PayrollDraft.findByPk(approvedDraft.id);
   assert(draftDb?.isApproved === true || draftDb?.isApproved === 1, `[${cName}] isApproved en BD (${periodType})`);
-
-  const fixDraft = await api(`/api/payroll-drafts/${approvedDraft.id}`, {
-    method: 'PUT',
-    body: JSON.stringify({
-      ...approvedDraft,
-      companies: [cName],
-      periodType,
-      employees: approvedDraft.employees
-    })
-  }, token);
-  approvedDraft = fixDraft.body || { ...approvedDraft, companies: [cName], periodType };
 
   const closedPayrollId = await closeDraftToHistory(token, approvedDraft, 'cerrada', true, prefix, periodType);
   const histAll = await PayrollHistory.findByPk(closedPayrollId);

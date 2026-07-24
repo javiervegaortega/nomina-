@@ -15,27 +15,126 @@ import { calculateMonthlyISR } from '../data/mockData';
 const IGSS_LABORAL_RATE = 0.0483;
 const IGSS_LABORAL_JUBILADO_RATE = 0.03;
 const IGSS_PATRONAL_RATE = 0.1067;
+const IRTRA_RATE = 0.01;
+const INTECAP_RATE = 0.01;
 
-const calcIgssLaboralAmount = (sueldo, jubilado) => {
+const calcIgssLaboralAmount = (sueldo, jubilado, igssExempt = false) => {
+  if (igssExempt) return '0.00';
   const rate = jubilado ? IGSS_LABORAL_JUBILADO_RATE : IGSS_LABORAL_RATE;
   return ((Number(sueldo) || 0) * rate).toFixed(2);
 };
 
-const calcIgssPatronalAmount = (sueldo, jubilado) => {
-  if (jubilado) return '0.00';
+const calcIgssPatronalAmount = (sueldo, igssExempt = false) => {
+  if (igssExempt) return '0.00';
   return ((Number(sueldo) || 0) * IGSS_PATRONAL_RATE).toFixed(2);
 };
 
-const calcAutoIsrAmount = (sueldo, bono) =>
-  calculateMonthlyISR(Number(sueldo || 0), Number(bono ?? 0)).toFixed(2);
+const calcEmployerLevyAmount = (sueldo, rate, igssExempt = false) => {
+  if (igssExempt) return '0.00';
+  return ((Number(sueldo) || 0) * rate).toFixed(2);
+};
+
+const calcAutoIsrAmount = (sueldo, bono, jubilado = false, igssExempt = false) => {
+  const laborIgssRate = igssExempt
+    ? 0
+    : (jubilado ? IGSS_LABORAL_JUBILADO_RATE : IGSS_LABORAL_RATE);
+  return calculateMonthlyISR(
+    Number(sueldo || 0),
+    Number(bono ?? 0),
+    laborIgssRate
+  ).toFixed(2);
+};
 
 const parseEmployeeFormData = (initialData) => {
   const data = initialData ? { ...initialData } : {};
   if (typeof data.dist === 'string') {
-    try { data.dist = JSON.parse(data.dist); } catch (e) { data.dist = {}; }
+    try { data.dist = JSON.parse(data.dist); } catch { data.dist = {}; }
+  }
+  if (typeof data.component_dist === 'string') {
+    try { data.component_dist = JSON.parse(data.component_dist); } catch { data.component_dist = {}; }
+  }
+  if (!data.component_dist || typeof data.component_dist !== 'object' || Array.isArray(data.component_dist)) {
+    data.component_dist = {};
   }
   return data;
 };
+
+const distributionTotal = (distribution) => {
+  if (!distribution || typeof distribution !== 'object' || Array.isArray(distribution)) return 0;
+  const total = Object.values(distribution)
+    .reduce((sum, value) => sum + (Number(value) || 0), 0);
+  return Number(total.toFixed(6));
+};
+
+function ComponentDistributionEditor({
+  componentKey,
+  title,
+  description,
+  distribution,
+  companies,
+  onChange,
+  borderColor,
+  boxBg,
+  subtitleColor
+}) {
+  const total = distributionTotal(distribution);
+  const usesGeneral = total === 0;
+  const isValid = usesGeneral || total === 100;
+
+  return (
+    <Box
+      mt={4}
+      p={4}
+      borderRadius="lg"
+      bg={boxBg}
+      border="1px solid"
+      borderColor={isValid ? borderColor : 'red.400'}
+    >
+      <Flex justify="space-between" align="flex-start" gap={3} mb={3}>
+        <Box>
+          <Text fontSize="sm" fontWeight={700}>{title}</Text>
+          <Text fontSize="xs" color={subtitleColor}>{description}</Text>
+          {usesGeneral && (
+            <Text fontSize="xs" color="blue.400" mt={1}>
+              Todos en 0: se usa automáticamente la distribución general.
+            </Text>
+          )}
+          {!isValid && (
+            <Text fontSize="xs" color="red.500" fontWeight={700} mt={1}>
+              El override está activo y debe sumar exactamente 100% (actual: {total}%).
+            </Text>
+          )}
+        </Box>
+        <Badge colorScheme={usesGeneral ? 'blue' : (isValid ? 'green' : 'red')}>
+          {usesGeneral ? 'GENERAL' : `${total}%`}
+        </Badge>
+      </Flex>
+      <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3}>
+        {(companies || []).map((company) => (
+          <FormControl key={`${componentKey}-${company.id}`}>
+            <FormLabel fontSize="10px" mb={1} color={subtitleColor} fontWeight={600}>
+              {company.nombre_comercial || company.razon_social || `Empresa ${company.id}`}
+            </FormLabel>
+            <Input
+              size="sm"
+              type="number"
+              min={0}
+              max={100}
+              step="0.01"
+              value={distribution?.[company.id] ?? 0}
+              onChange={(event) => onChange(
+                company.id,
+                event.target.value === '' ? '' : Number(event.target.value)
+              )}
+              borderColor={isValid ? 'inherit' : 'red.300'}
+              _focus={{ borderColor: isValid ? 'brand.500' : 'red.500' }}
+            />
+          </FormControl>
+        ))}
+      </SimpleGrid>
+    </Box>
+  );
+}
 
 /**
  * Sincroniza IGSS automático. ISR solo se rellena con la fórmula si está vacío
@@ -44,11 +143,27 @@ const parseEmployeeFormData = (initialData) => {
 const withAutoPayrollFields = (data) => {
   const next = parseEmployeeFormData(data);
   const jubilado = !!next.jubilacion;
-  next.igss_laboral = Number(calcIgssLaboralAmount(next.sueldo_ordinario, jubilado));
-  next.igss_patronal = Number(calcIgssPatronalAmount(next.sueldo_ordinario, jubilado));
+  const igssExempt = !!next.igss_exempt;
+  next.igss_laboral = Number(
+    calcIgssLaboralAmount(next.sueldo_ordinario, jubilado, igssExempt)
+  );
+  next.igss_patronal = Number(
+    calcIgssPatronalAmount(next.sueldo_ordinario, igssExempt)
+  );
+  next.irtra = Number(
+    calcEmployerLevyAmount(next.sueldo_ordinario, IRTRA_RATE, igssExempt)
+  );
+  next.intecap = Number(
+    calcEmployerLevyAmount(next.sueldo_ordinario, INTECAP_RATE, igssExempt)
+  );
   const hasManualIsr = next.isr !== undefined && next.isr !== null && next.isr !== '';
   if (!hasManualIsr) {
-    next.isr = Number(calcAutoIsrAmount(next.sueldo_ordinario, next.bon_dec_37_2001));
+    next.isr = Number(calcAutoIsrAmount(
+      next.sueldo_ordinario,
+      next.bon_dec_37_2001,
+      jubilado,
+      igssExempt
+    ));
   }
   return next;
 };
@@ -60,7 +175,12 @@ const withAutoPayrollFields = (data) => {
  */
 const withRecalculatedIsr = (data) => {
   const next = withAutoPayrollFields(data);
-  next.isr = Number(calcAutoIsrAmount(next.sueldo_ordinario, next.bon_dec_37_2001));
+  next.isr = Number(calcAutoIsrAmount(
+    next.sueldo_ordinario,
+    next.bon_dec_37_2001,
+    next.jubilacion,
+    next.igss_exempt
+  ));
   return next;
 };
 
@@ -275,7 +395,17 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
   }, [employees, form.no_igss, form.id]);
 
   const handleSave = () => {
-    if (distTotal !== 100) return;
+    if (distTotal !== 100) {
+      toast.error(`La distribución general debe sumar 100% (actual: ${distTotal}%).`);
+      return;
+    }
+    const invalidComponent = Object.entries(componentDistTotals)
+      .find(([, total]) => total !== 0 && total !== 100);
+    if (invalidComponent) {
+      const label = invalidComponent[0] === 'bonuses' ? 'bonos' : 'extras';
+      toast.error(`La distribución de ${label} debe estar en 0 (usar general) o sumar exactamente 100%.`);
+      return;
+    }
     if (duplicateDpi || duplicateIgss) return;
     onSave(withAutoPayrollFields(form));
   };
@@ -287,12 +417,18 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
     try {
       const parsed = JSON.parse(form.dist);
       parsedDistValues = Object.values(parsed);
-    } catch(e) {
+    } catch {
       parsedDistValues = [];
     }
   }
 
-  const distTotal = parsedDistValues.reduce((a, b) => Number(a) + Number(b), 0);
+  const distTotal = Number(
+    parsedDistValues.reduce((a, b) => Number(a) + Number(b), 0).toFixed(6)
+  );
+  const componentDistTotals = {
+    bonuses: distributionTotal(form.component_dist?.bonuses),
+    extras: distributionTotal(form.component_dist?.extras)
+  };
 
   const sidebarBg = useColorModeValue('gray.50', '#151923');
   const borderColor = useColorModeValue('gray.200', '#2d3748');
@@ -301,13 +437,33 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
   const distBoxBg = useColorModeValue('white', 'whiteAlpha.50');
   const distBoxBorder = useColorModeValue('gray.200', 'whiteAlpha.100');
 
-  const autoIgssLaboral = calcIgssLaboralAmount(form.sueldo_ordinario, form.jubilacion);
-  const autoIgssPatronal = calcIgssPatronalAmount(form.sueldo_ordinario, form.jubilacion);
-  const autoIsr = calcAutoIsrAmount(form.sueldo_ordinario, form.bon_dec_37_2001);
+  const autoIgssLaboral = calcIgssLaboralAmount(
+    form.sueldo_ordinario,
+    form.jubilacion,
+    form.igss_exempt
+  );
+  const autoIgssPatronal = calcIgssPatronalAmount(
+    form.sueldo_ordinario,
+    form.igss_exempt
+  );
+  const autoIsr = calcAutoIsrAmount(
+    form.sueldo_ordinario,
+    form.bon_dec_37_2001,
+    form.jubilacion,
+    form.igss_exempt
+  );
 
   const igssPatronal = Number(autoIgssPatronal);
-  const irtra = Number(form.irtra) || 20;
-  const intecap = Number(form.intecap) || 20;
+  const irtra = Number(calcEmployerLevyAmount(
+    form.sueldo_ordinario,
+    IRTRA_RATE,
+    form.igss_exempt
+  ));
+  const intecap = Number(calcEmployerLevyAmount(
+    form.sueldo_ordinario,
+    INTECAP_RATE,
+    form.igss_exempt
+  ));
   const totalIgssPatronal = (igssPatronal + irtra + intecap).toFixed(2);
 
   // Get records by type
@@ -487,6 +643,46 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
                     </SimpleGrid>
                   ))}
                 </Box>
+
+                <SectionTitle title="Overrides opcionales por componente" />
+                <Text fontSize="xs" color={subtitleColor} mb={2}>
+                  Úselos solo cuando el Excel cargue bonos o extras a empresas distintas.
+                  Si todos los porcentajes están en 0, la aplicación conserva la distribución general.
+                </Text>
+                <ComponentDistributionEditor
+                  componentKey="bonuses"
+                  title="Bonos operativos y de catálogo"
+                  description="Incluye ambos tipos de bono. No agrega cuota patronal."
+                  distribution={form.component_dist?.bonuses}
+                  companies={companies}
+                  onChange={(companyId, value) => handleChange('component_dist', {
+                    ...(form.component_dist || {}),
+                    bonuses: {
+                      ...(form.component_dist?.bonuses || {}),
+                      [companyId]: value
+                    }
+                  })}
+                  borderColor={distBoxBorder}
+                  boxBg={distBoxBg}
+                  subtitleColor={subtitleColor}
+                />
+                <ComponentDistributionEditor
+                  componentKey="extras"
+                  title="Horas extra y otros ingresos variables"
+                  description="Horas, comisiones, otros ingresos, vacaciones y ventas; incluye su porción patronal de 12.67%."
+                  distribution={form.component_dist?.extras}
+                  companies={companies}
+                  onChange={(companyId, value) => handleChange('component_dist', {
+                    ...(form.component_dist || {}),
+                    extras: {
+                      ...(form.component_dist?.extras || {}),
+                      [companyId]: value
+                    }
+                  })}
+                  borderColor={distBoxBorder}
+                  boxBg={distBoxBg}
+                  subtitleColor={subtitleColor}
+                />
               </Box>
             )}
 
@@ -555,7 +751,7 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
             {tab === 'contacto' && (
               <Box>
                 <SectionTitle title="Información de Contacto" />
-                <SimpleGrid columns={{ base: 1, sm: 2 }} spacing={5}>
+                <SimpleGrid columns={{ base: 1, sm: 3 }} spacing={5}>
                   <Field label="Teléfono Domiciliar" val={form.telefono} onChange={v => handleChange('telefono', v)} />
                   <Field label="Celular Personal" val={form.telefono_celular} onChange={v => handleChange('telefono_celular', v)} />
                   <Field label="Teléfono Emergencia" val={form.telefono_emergencia} onChange={v => handleChange('telefono_emergencia', v)} />
@@ -614,6 +810,14 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
                       <Text fontSize="sm" fontWeight={600} ml={2}>Jubilación</Text>
                     </Checkbox>
                   </FormControl>
+                  <FormControl display="flex" alignItems="center" h="100%">
+                    <Checkbox isChecked={form.igss_exempt} onChange={e => {
+                      const checked = e.target.checked;
+                      setForm(prev => withRecalculatedIsr({ ...prev, igss_exempt: checked }));
+                    }}>
+                      <Text fontSize="sm" fontWeight={600} ml={2}>Exento total IGSS</Text>
+                    </Checkbox>
+                  </FormControl>
                 </SimpleGrid>
               </Box>
             )}
@@ -639,7 +843,14 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
                   {/* DESCUENTOS */}
                   <Box>
                     <SectionTitle title="Descuentos" />
-                    <Field label={form.jubilacion ? 'IGSS laboral (3% jubilado)' : 'IGSS laboral (4.83% automático)'} type="number" readOnly val={autoIgssLaboral} />
+                    <Field
+                      label={form.igss_exempt
+                        ? 'IGSS laboral (exento)'
+                        : (form.jubilacion ? 'IGSS laboral (3% jubilado)' : 'IGSS laboral (4.83% automático)')}
+                      type="number"
+                      readOnly
+                      val={autoIgssLaboral}
+                    />
                     <Box mt={4}>
                       <Field label="ISR mensual (automático 5%-7%, editable)" type="number" val={form.isr ?? autoIsr} onChange={v => handleChange('isr', v)} />
                       <Text fontSize="11px" color="gray.500" mt={1}>
@@ -665,11 +876,11 @@ export default function EmployeeFormModal({ mode, initialData, onClose, onSave, 
                   <Box p={5} borderRadius="xl" bg={distBoxBg} border="1px solid" borderColor={distBoxBorder}>
                     <SimpleGrid columns={{ base: 1, sm: 2 }} spacing={6}>
                       <Field label="IGSS Patronal (10.67% auto)" type="number" readOnly val={autoIgssPatronal} />
-                      <Field label="Irtra (Q 20.00 fijo por ley)" type="number" val={(!form.irtra || Number(form.irtra) === 0) ? '20.00' : form.irtra} onChange={v => handleChange('irtra', v)} />
-                      <Field label="Intecap (Q 20.00 fijo por ley)" type="number" val={(!form.intecap || Number(form.intecap) === 0) ? '20.00' : form.intecap} onChange={v => handleChange('intecap', v)} />
+                      <Field label="IRTRA (1% auto)" type="number" readOnly val={irtra.toFixed(2)} />
+                      <Field label="INTECAP (1% auto)" type="number" readOnly val={intecap.toFixed(2)} />
                       <Box>
                         <Text fontSize="11px" mb={1} fontWeight="600" textTransform="uppercase" color={subtitleColor} letterSpacing="wide">
-                          Total IGSS Patronal
+                          Total cargas patronales (12.67%)
                         </Text>
                         <Input size="sm" isReadOnly value={totalIgssPatronal} bg={distBoxBg} borderRadius="md" fontWeight={700} color="brand.400" />
                       </Box>

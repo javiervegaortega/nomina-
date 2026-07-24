@@ -105,10 +105,14 @@ module.exports = (sequelize) => {
     afiliacion: { type: DataTypes.STRING },
     rol_permisos: { type: DataTypes.STRING, defaultValue: 'empleado' },
     jubilacion: { type: DataTypes.BOOLEAN, defaultValue: false },
+    igss_exempt: { type: DataTypes.BOOLEAN, defaultValue: false },
     discapacidad: { type: DataTypes.STRING },
     motivo_baja: { type: DataTypes.STRING },
     observaciones: { type: DataTypes.TEXT },
-    dist: { type: DataTypes.JSON }
+    dist: { type: DataTypes.JSON },
+    // Overrides opcionales de distribución para conceptos variables.
+    // Estructura: { bonuses: { [companyId]: pct }, extras: { [companyId]: pct } }
+    component_dist: { type: DataTypes.JSON }
   }, {
     tableName: 'employee',
     timestamps: false

@@ -4,6 +4,8 @@
 async function ensureEmployeeColumns(sequelize) {
   const alters = [
     { table: 'employee', column: 'observaciones', ddl: 'TEXT NULL' },
+    { table: 'employee', column: 'igss_exempt', ddl: 'TINYINT(1) NOT NULL DEFAULT 0' },
+    { table: 'employee', column: 'component_dist', ddl: 'JSON NULL' },
   ];
 
   for (const a of alters) {

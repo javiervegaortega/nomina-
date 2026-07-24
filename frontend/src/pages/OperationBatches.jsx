@@ -8,7 +8,11 @@ import { toast } from 'sonner';
 
 export default function OperationBatches() {
   const { user } = useContext(AuthContext);
-  const { operationLogs, revertLogFromActiveDrafts } = useContext(DataContext);
+  const {
+    operationLogs,
+    revertLogFromActiveDrafts,
+    flushPendingDraftSaves
+  } = useContext(DataContext);
   const navigate = useNavigate();
   const { isOpen, onOpen, onClose } = useDisclosure();
   const [batches, setBatches] = useState([]);
@@ -87,6 +91,7 @@ export default function OperationBatches() {
     const note = prompt('Justificación del rechazo al gerente:');
     if (!note) return;
     try {
+      await flushPendingDraftSaves();
       const token = localStorage.getItem('nomina-token');
       const res = await fetch(`http://localhost:3000/api/operation-batches/${batchId}/status`, {
         method: 'PATCH',

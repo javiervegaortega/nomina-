@@ -24,14 +24,17 @@ const previewCalculation = (req, res) => {
 
 /**
  * Preview ISR mensual (régimen asalariados GT).
- * Body: { baseMonthly, bonusMonthly? }
+ * Body: { baseMonthly, bonusMonthly?, laborIgssRate? }
  */
 const previewIsr = (req, res) => {
   try {
     const baseMonthly = Number(req.body.baseMonthly) || 0;
     const bonusMonthly = req.body.bonusMonthly !== undefined ? Number(req.body.bonusMonthly) : 250;
-    const monthly = calculateMonthlyISR(baseMonthly, bonusMonthly);
-    res.json({ monthlyIsr: monthly, baseMonthly, bonusMonthly });
+    const laborIgssRate = req.body.laborIgssRate !== undefined
+      ? Number(req.body.laborIgssRate)
+      : undefined;
+    const monthly = calculateMonthlyISR(baseMonthly, bonusMonthly, laborIgssRate);
+    res.json({ monthlyIsr: monthly, baseMonthly, bonusMonthly, laborIgssRate });
   } catch (err) {
     console.error('Error in previewIsr:', err);
     res.status(500).json({ error: 'Error al calcular ISR: ' + err.message });
