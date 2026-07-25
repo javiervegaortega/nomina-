@@ -44,6 +44,12 @@ module.exports = (sequelize) => {
       allowNull: false,
       defaultValue: 0.12
     },
+    /** Monto fijo que se suma a la BASE antes de margen/IVA (ej. ajuste Excel Unhesa). */
+    baseAdjustment: {
+      type: DataTypes.DECIMAL(15, 2),
+      allowNull: false,
+      defaultValue: 0
+    },
     isActive: {
       type: DataTypes.BOOLEAN,
       allowNull: false,

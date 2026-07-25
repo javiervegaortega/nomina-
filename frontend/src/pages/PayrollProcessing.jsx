@@ -2,7 +2,7 @@ import React, { useState, useMemo, useContext, useEffect } from 'react';
 import {
   FileText, Check, X, Edit3, CheckCircle2,
   ChevronRight, ChevronDown, ChevronUp, AlertCircle, DollarSign, Clock,
-  Calculator, Building2, Plus, ArrowLeft, Trash2, Calendar, Search, LayoutGrid, List, User, Edit2, Eye
+  Calculator, Building2, Plus, ArrowLeft, Trash2, Calendar, Search, LayoutGrid, List, User, Edit2, Eye, Filter
 } from 'lucide-react';
 import { AppContext } from '../App';
 import { DataContext } from '../context/DataContext';
@@ -34,7 +34,7 @@ import {
   Badge, Divider, useColorModeValue, Center, Tag, HStack, VStack, Checkbox, ButtonGroup, Card, CardHeader, CardBody, CardFooter, Stat, StatLabel, StatNumber, StatGroup, Skeleton, SkeletonText,
   AlertDialog, AlertDialogOverlay, AlertDialogContent, AlertDialogHeader, AlertDialogBody, AlertDialogFooter, useDisclosure,
   Drawer, DrawerBody, DrawerFooter, DrawerHeader, DrawerOverlay, DrawerContent, DrawerCloseButton, TabPanels, TabPanel, InputRightAddon,
-  Menu, MenuButton, MenuList, MenuItemOption, MenuOptionGroup, Tooltip
+  Menu, MenuButton, MenuList, MenuItemOption, MenuOptionGroup, Tooltip, Collapse, useBreakpointValue
 } from '@chakra-ui/react';
 import { matchesDepartmentFilter, normalizeMultiFilter, resolveEmployeeDepartment } from '../utils/orgFilters';
 
@@ -43,6 +43,29 @@ const TABS = [
   { id: 'distribution', label: 'Distribución de Costos', icon: Building2 },
   { id: 'observations', label: 'Observaciones', icon: Edit3 },
 ];
+
+/** Resuelve un valor de empresa (id, nombre comercial o NIT) al id numérico/string de BD. */
+const resolveCompanyId = (raw, companiesList = []) => {
+  if (raw === null || raw === undefined || raw === '') return null;
+  const found = companiesList.find((c) =>
+    String(c.id) === String(raw)
+    || c.nombre_comercial === raw
+    || c.nit === raw
+  );
+  return found ? String(found.id) : null;
+};
+
+const getDraftPrimaryCompanyRaw = (draft) => {
+  if (!draft) return null;
+  if (Array.isArray(draft.companies) && draft.companies.length > 0) return draft.companies[0];
+  if (typeof draft.companies === 'string') {
+    try {
+      const parsed = JSON.parse(draft.companies);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed[0];
+    } catch (_) { /* ignore */ }
+  }
+  return null;
+};
 
 /** ISR mensual: manda la retención del maestro (como en el Excel); fórmula solo de fallback. */
 const monthlyIsrOf = (emp) =>
@@ -149,16 +172,10 @@ function PayrollHub({ onSelectDraft }) {
         showToast(err.message, 'danger');
       }
     } else {
-      const isDuplicate = activePayrolls.some(p => {
-        let pComp = '';
-        if (Array.isArray(p.companies) && p.companies.length > 0) pComp = p.companies[0];
-        else if (typeof p.companies === 'string') {
-          try { 
-            const parsed = JSON.parse(p.companies); 
-            if (parsed.length > 0) pComp = parsed[0]; 
-          } catch(e) {}
-        }
-        return p.title === title || (pComp && String(pComp) === String(selectedCompany));
+      const selectedCompanyId = resolveCompanyId(selectedCompany, companies);
+      const isDuplicate = Boolean(selectedCompanyId) && activePayrolls.some((p) => {
+        const draftCompanyId = resolveCompanyId(getDraftPrimaryCompanyRaw(p), companies);
+        return draftCompanyId && draftCompanyId === selectedCompanyId;
       });
 
       const createAction = async () => {
@@ -172,7 +189,7 @@ function PayrollHub({ onSelectDraft }) {
       };
 
       if (isDuplicate) {
-        confirmAction('Ya existe un borrador activo con el mismo nombre y/o empresa principal. ¿Estás seguro de que deseas crear otro borrador con estos datos?', createAction);
+        confirmAction('Ya existe un borrador activo para esta empresa. ¿Deseas crear otro?', createAction);
       } else {
         createAction();
       }
@@ -238,7 +255,7 @@ function PayrollHub({ onSelectDraft }) {
       setPeriodType(nextPeriod);
     }
     if (!titleTouched) {
-      setTitle(buildPayrollDraftTitle(value, nextPeriod));
+      setTitle(buildPayrollDraftTitle(value, nextPeriod, selectedCompany));
     }
   };
 
@@ -246,7 +263,14 @@ function PayrollHub({ onSelectDraft }) {
     setPeriodType(value);
     setPeriodTouched(true);
     if (!titleTouched) {
-      setTitle(buildPayrollDraftTitle(draftDate, value));
+      setTitle(buildPayrollDraftTitle(draftDate, value, selectedCompany));
+    }
+  };
+
+  const handleCompanyChange = (value) => {
+    setSelectedCompany(value);
+    if (!editingDraftId && !titleTouched) {
+      setTitle(buildPayrollDraftTitle(draftDate, periodType, value));
     }
   };
 
@@ -474,7 +498,7 @@ function PayrollHub({ onSelectDraft }) {
                 <FormLabel>Empresa</FormLabel>
                 <Select
                   value={selectedCompany}
-                  onChange={e => setSelectedCompany(e.target.value)}
+                  onChange={e => handleCompanyChange(e.target.value)}
                   isDisabled={!!editingDraftId}
                 >
                   <option value="">Seleccione una empresa...</option>
@@ -860,22 +884,24 @@ function PayrollEditor({ draftId, onBack }) {
   return (
     <Box p={{ base: 3, md: 6, lg: 8 }}>
       <Flex justify="space-between" align={{ base: 'stretch', md: 'flex-start' }} direction={{ base: 'column', md: 'row' }} mb={6} wrap="wrap" gap={4}>
-        <Flex align="flex-start" gap={4}>
-          <IconButton aria-label="Back" icon={<ArrowLeft size={24} />} onClick={onBack} variant="ghost" />
-          <Box>
+        <Flex align="flex-start" gap={3} minW={0} flex="1">
+          <IconButton aria-label="Back" icon={<ArrowLeft size={24} />} onClick={onBack} variant="ghost" flexShrink={0} />
+          <Box minW={0} flex="1">
             <Flex align="center" gap={{ base: 2, md: 3 }} flexWrap="wrap">
-              <Heading size={{ base: 'sm', md: 'md' }} fontWeight={800}>{draft.title}</Heading>
+              <Heading size={{ base: 'sm', md: 'md' }} fontWeight={800} noOfLines={2} minW={0}>
+                {draft.title}
+              </Heading>
               <Badge colorScheme="orange" variant="subtle" fontWeight={700}>Borrador</Badge>
               {draft.isApproved && <Badge colorScheme="green" variant="subtle" fontWeight={700}>Visto Bueno Auditoría</Badge>}
             </Flex>
             <Text fontSize="sm" color="gray.500">
-              {employees.length} empleados en esta nómina
+              {data.length} empleados en esta nómina
             </Text>
             <DraftNotesEditor draft={draft} updateDraftMetadata={updateDraftMetadata} isReadOnly={isReadOnly} />
           </Box>
         </Flex>
 
-        <Flex gap={2}>
+        <Flex gap={2} w={{ base: '100%', md: 'auto' }} flexShrink={0}>
           {!isAuditor && (
             <Button 
               bg={draft.isApproved ? "green.500" : "red.500"}
@@ -883,6 +909,7 @@ function PayrollEditor({ draftId, onBack }) {
               leftIcon={<CheckCircle2 size={16} />} 
               onClick={onAlertOpen}
               isDisabled={draft.periodType === '2da' && draft.missingAnticipoWarning}
+              w={{ base: '100%', md: 'auto' }}
               _hover={{ bg: draft.isApproved ? 'green.600' : 'red.600', animation: 'none', transform: 'none' }}
             >
               {draft.isApproved ? 'Cerrar Definitivamente' : 'Enviar a Auditoría'}
@@ -909,33 +936,45 @@ function PayrollEditor({ draftId, onBack }) {
         )}
 
       {/* Summary strip */}
-      <Flex 
-        p={{ base: 4, md: 6 }} 
-        mb={6} 
-        borderRadius="xl" 
-        border="1px solid" 
-        borderColor={borderColor} 
-        gap={{ base: 4, md: 8 }} 
-        direction={{ base: 'column', sm: 'row' }}
-        wrap="wrap" 
-        align={{ base: 'stretch', sm: 'center' }}
+      <SimpleGrid
+        columns={{ base: 2, lg: 4 }}
+        spacing={{ base: 3, md: 4 }}
+        p={{ base: 3, md: 5 }}
+        mb={6}
+        borderRadius="xl"
+        border="1px solid"
+        borderColor={borderColor}
         bg={useColorModeValue('white', 'gray.800')}
       >
-        <SummaryStat label="Costo Bruto Total" value={formatQ(totals.grossTotal)} />
-        <Divider orientation="vertical" h="40px" />
-        <SummaryStat label="Deducciones Totales" value={formatQ(totals.dedTotal)} color="red.500" />
-        <Divider orientation="vertical" h="40px" />
-        <SummaryStat label="Cuota Patronal Estimada" value={formatQ(totals.patronalTotal)} color="orange.400" />
-        <Divider orientation="vertical" h="40px" />
-        <SummaryStat label="Neto a Pagar" value={formatQ(totals.netTotal)} color="brand.500" large />
-      </Flex>
+        <Box p={{ base: 2, md: 3 }} borderRadius="lg" borderWidth="1px" borderColor={borderColor}>
+          <SummaryStat label="Costo Bruto Total" value={formatQ(totals.grossTotal)} />
+        </Box>
+        <Box p={{ base: 2, md: 3 }} borderRadius="lg" borderWidth="1px" borderColor={borderColor}>
+          <SummaryStat label="Deducciones Totales" value={formatQ(totals.dedTotal)} color="red.500" />
+        </Box>
+        <Box p={{ base: 2, md: 3 }} borderRadius="lg" borderWidth="1px" borderColor={borderColor}>
+          <SummaryStat label="Cuota Patronal Estimada" value={formatQ(totals.patronalTotal)} color="orange.400" />
+        </Box>
+        <Box p={{ base: 2, md: 3 }} borderRadius="lg" borderWidth="1px" borderColor={borderColor}>
+          <SummaryStat label="Neto a Pagar" value={formatQ(totals.netTotal)} color="brand.500" large />
+        </Box>
+      </SimpleGrid>
 
       {/* Tabs */}
       <Box mb={6}>
         <Tabs index={tabIndex} onChange={setTabIndex} colorScheme="brand">
-          <TabList borderBottomColor={borderColor}>
+          <TabList
+            borderBottomColor={borderColor}
+            overflowX="auto"
+            overflowY="hidden"
+            flexWrap="nowrap"
+            css={{
+              scrollbarWidth: 'thin',
+              '&::-webkit-scrollbar': { height: '4px' },
+            }}
+          >
             {TABS.map(t => (
-              <Tab key={t.id} fontWeight={600}>
+              <Tab key={t.id} fontWeight={600} flexShrink={0} whiteSpace="nowrap">
                 <Flex align="center" gap={2}>
                   <t.icon size={16} />
                   {t.label}
@@ -1234,7 +1273,15 @@ function ListadoPagosTab({
 
   // Drawer State
   const { isOpen: isDrawerOpen, onOpen: onDrawerOpen, onClose: onDrawerClose } = useDisclosure();
+  const { isOpen: isFiltersOpen, onToggle: onToggleFilters } = useDisclosure();
   const [selectedEmp, setSelectedEmp] = useState(null);
+  const filtersAlwaysVisible = useBreakpointValue({ base: false, md: true }) ?? false;
+  const stickyExtended = useBreakpointValue({ base: false, lg: true }) ?? false;
+  const showFilterGrid = filtersAlwaysVisible || isFiltersOpen;
+  const activeFilterCount = [
+    filterCompany, filterDept, filterArea, filterDiv, filterSubdiv, filterDim5,
+  ].reduce((n, arr) => n + (Array.isArray(arr) ? arr.length : 0), 0)
+    + (filterStatus && filterStatus !== 'ALL' && filterStatus !== 'Activo' ? 1 : 0);
 
   const EDITABLE_FIELDS = {
     summary: ['days'],
@@ -1342,138 +1389,174 @@ function ListadoPagosTab({
     }));
   }, [data, filterDept, filterArea, filterDiv, filterSubdiv, filterDim5, filterCompany, divisions, areas, departments, subdivisions, dimension5s, employees, companyList]);
 
+  const filterMenuBtnProps = {
+    size: 'sm',
+    variant: 'outline',
+    rightIcon: <ChevronDown size={14} />,
+    w: '100%',
+    textAlign: 'left',
+    fontWeight: 'normal',
+    bg: tdBg,
+    borderRadius: 'md',
+    px: 3,
+  };
+
   return (
     <Box>
       {/* Filters bar */}
-      <Flex gap={{ base: 2, md: 4 }} wrap="wrap" mb={4} align={{ base: 'stretch', md: 'center' }} justify="space-between" direction={{ base: 'column', md: 'row' }}>
-        <HStack spacing={{ base: 2, md: 3 }} wrap="wrap" flex="1">
-          <Menu closeOnSelect={false}>
-            <MenuButton as={Button} size="sm" variant="outline" rightIcon={<ChevronDown size={14}/>} w={{ base: '100%', sm: '180px' }} textAlign="left" fontWeight="normal" bg={tdBg} borderRadius="md" px={3}>
-              {filterCompany.length > 0 ? `${filterCompany.length} Empresas...` : 'Empresa...'}
-            </MenuButton>
-            <MenuList maxH="300px" overflowY="auto" zIndex={100} boxShadow="lg">
-              <MenuOptionGroup type="checkbox" value={filterCompany} onChange={setFilterCompany}>
-                {companyList.map(c => (
-                  <MenuItemOption key={c.id} value={String(c.id)} fontSize="sm">{c.nombre_comercial || c.nit || `Empresa ${c.id}`}</MenuItemOption>
-                ))}
-              </MenuOptionGroup>
-            </MenuList>
-          </Menu>
-
-          <Menu closeOnSelect={false}>
-            <MenuButton as={Button} size="sm" variant="outline" rightIcon={<ChevronDown size={14}/>} w={{ base: '100%', sm: '180px' }} textAlign="left" fontWeight="normal" bg={tdBg} borderRadius="md" px={3}>
-              {filterDept.length > 0 ? `${filterDept.length} Deptos...` : 'Departamento...'}
-            </MenuButton>
-            <MenuList maxH="300px" overflowY="auto" zIndex={100} boxShadow="lg">
-              <MenuOptionGroup type="checkbox" value={filterDept} onChange={(v) => setFilterDept(normalizeMultiFilter(v))}>
-                {departments.map(d => (
-                  <MenuItemOption key={d.id} value={String(d.id)} fontSize="sm">{d.nombre_dimension}</MenuItemOption>
-                ))}
-              </MenuOptionGroup>
-            </MenuList>
-          </Menu>
-
-          <Menu closeOnSelect={false}>
-            <MenuButton as={Button} size="sm" variant="outline" rightIcon={<ChevronDown size={14}/>} w={{ base: '100%', sm: '180px' }} textAlign="left" fontWeight="normal" bg={tdBg} borderRadius="md" px={3}>
-              {filterArea.length > 0 ? `${filterArea.length} Áreas...` : 'Área...'}
-            </MenuButton>
-            <MenuList maxH="300px" overflowY="auto" zIndex={100} boxShadow="lg">
-              <MenuOptionGroup type="checkbox" value={filterArea} onChange={setFilterArea}>
-                {areas.map(a => (
-                  <MenuItemOption key={a.id} value={String(a.id)} fontSize="sm">{a.nombre}</MenuItemOption>
-                ))}
-              </MenuOptionGroup>
-            </MenuList>
-          </Menu>
-
-          <Menu closeOnSelect={false}>
-            <MenuButton as={Button} size="sm" variant="outline" rightIcon={<ChevronDown size={14}/>} w={{ base: '100%', sm: '180px' }} textAlign="left" fontWeight="normal" bg={tdBg} borderRadius="md" px={3}>
-              {filterDiv.length > 0 ? `${filterDiv.length} Divisiones...` : 'División...'}
-            </MenuButton>
-            <MenuList maxH="300px" overflowY="auto" zIndex={100} boxShadow="lg">
-              <MenuOptionGroup type="checkbox" value={filterDiv} onChange={setFilterDiv}>
-                {(divisions || []).map(d => (
-                  <MenuItemOption key={d.id} value={String(d.id)} fontSize="sm">{d.nombre}</MenuItemOption>
-                ))}
-              </MenuOptionGroup>
-            </MenuList>
-          </Menu>
-
-          <Menu closeOnSelect={false}>
-            <MenuButton as={Button} size="sm" variant="outline" rightIcon={<ChevronDown size={14}/>} w={{ base: '100%', sm: '180px' }} textAlign="left" fontWeight="normal" bg={tdBg} borderRadius="md" px={3}>
-              {filterSubdiv.length > 0 ? `${filterSubdiv.length} Subdiv...` : 'Subdivisión...'}
-            </MenuButton>
-            <MenuList maxH="300px" overflowY="auto" zIndex={100} boxShadow="lg">
-              <MenuOptionGroup type="checkbox" value={filterSubdiv} onChange={setFilterSubdiv}>
-                {(subdivisions || []).map(s => (
-                  <MenuItemOption key={s.id} value={String(s.id)} fontSize="sm">{s.nombre}</MenuItemOption>
-                ))}
-              </MenuOptionGroup>
-            </MenuList>
-          </Menu>
-
-          <Menu closeOnSelect={false}>
-            <MenuButton as={Button} size="sm" variant="outline" rightIcon={<ChevronDown size={14}/>} w={{ base: '100%', sm: '180px' }} textAlign="left" fontWeight="normal" bg={tdBg} borderRadius="md" px={3}>
-              {filterDim5.length > 0 ? `${filterDim5.length} Dim 5...` : 'Dimensión 5...'}
-            </MenuButton>
-            <MenuList maxH="300px" overflowY="auto" zIndex={100} boxShadow="lg">
-              <MenuOptionGroup type="checkbox" value={filterDim5} onChange={setFilterDim5}>
-                {(dimension5s || []).map(d => (
-                  <MenuItemOption key={d.id} value={String(d.id)} fontSize="sm">{d.nombre}</MenuItemOption>
-                ))}
-              </MenuOptionGroup>
-            </MenuList>
-          </Menu>
-          <Select 
-            placeholder="Estado..." 
-            value={filterStatus} 
-            onChange={e => setFilterStatus(e.target.value)}
-            w={{ base: '100%', sm: '120px' }}
+      <VStack align="stretch" spacing={3} mb={4}>
+        {!filtersAlwaysVisible && (
+          <Button
             size="sm"
-            borderRadius="md"
+            variant="outline"
+            leftIcon={<Filter size={14} />}
+            rightIcon={isFiltersOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            onClick={onToggleFilters}
+            justifyContent="space-between"
+            w="100%"
           >
-            <option value="ALL">Todos</option>
-            <option value="Activo">Activo</option>
-            <option value="De Baja">De Baja</option>
-          </Select>
-          <Tooltip label={filterArea.length === areas.length ? 'Quitar agrupación por área' : 'Agrupar todos los empleados por su área'} hasArrow>
-            <Button 
-              size="sm" 
-              variant={filterArea.length === areas.length ? 'solid' : 'outline'}
-              colorScheme="brand"
-              borderRadius="md"
-              leftIcon={<LayoutGrid size={14} />}
-              onClick={() => {
-                if (filterArea.length === areas.length) {
-                  setFilterArea([]);
-                } else {
-                  setFilterArea(areas.map(a => String(a.id)));
-                }
-              }}
-            >
-              Por Área
-            </Button>
-          </Tooltip>
-        </HStack>
+            Filtros{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}
+          </Button>
+        )}
 
-        <HStack maxW={{ base: '100%', lg: '600px' }} spacing={{ base: 2, md: 3 }} w={{ base: '100%', md: 'auto' }} flexWrap={{ base: 'wrap', lg: 'nowrap' }}>
-          <InputGroup size="sm" w={{ base: '100%', lg: '300px' }}>
+        <Collapse in={showFilterGrid} animateOpacity>
+          <SimpleGrid columns={{ base: 2, md: 3, xl: 4 }} spacing={2} mb={0}>
+            <Menu closeOnSelect={false}>
+              <MenuButton as={Button} {...filterMenuBtnProps}>
+                {filterCompany.length > 0 ? `${filterCompany.length} Empresas...` : 'Empresa...'}
+              </MenuButton>
+              <MenuList maxH="300px" overflowY="auto" zIndex={100} boxShadow="lg">
+                <MenuOptionGroup type="checkbox" value={filterCompany} onChange={setFilterCompany}>
+                  {companyList.map(c => (
+                    <MenuItemOption key={c.id} value={String(c.id)} fontSize="sm">{c.nombre_comercial || c.nit || `Empresa ${c.id}`}</MenuItemOption>
+                  ))}
+                </MenuOptionGroup>
+              </MenuList>
+            </Menu>
+
+            <Menu closeOnSelect={false}>
+              <MenuButton as={Button} {...filterMenuBtnProps}>
+                {filterDept.length > 0 ? `${filterDept.length} Deptos...` : 'Departamento...'}
+              </MenuButton>
+              <MenuList maxH="300px" overflowY="auto" zIndex={100} boxShadow="lg">
+                <MenuOptionGroup type="checkbox" value={filterDept} onChange={(v) => setFilterDept(normalizeMultiFilter(v))}>
+                  {departments.map(d => (
+                    <MenuItemOption key={d.id} value={String(d.id)} fontSize="sm">{d.nombre_dimension}</MenuItemOption>
+                  ))}
+                </MenuOptionGroup>
+              </MenuList>
+            </Menu>
+
+            <Menu closeOnSelect={false}>
+              <MenuButton as={Button} {...filterMenuBtnProps}>
+                {filterArea.length > 0 ? `${filterArea.length} Áreas...` : 'Área...'}
+              </MenuButton>
+              <MenuList maxH="300px" overflowY="auto" zIndex={100} boxShadow="lg">
+                <MenuOptionGroup type="checkbox" value={filterArea} onChange={setFilterArea}>
+                  {areas.map(a => (
+                    <MenuItemOption key={a.id} value={String(a.id)} fontSize="sm">{a.nombre}</MenuItemOption>
+                  ))}
+                </MenuOptionGroup>
+              </MenuList>
+            </Menu>
+
+            <Menu closeOnSelect={false}>
+              <MenuButton as={Button} {...filterMenuBtnProps}>
+                {filterDiv.length > 0 ? `${filterDiv.length} Divisiones...` : 'División...'}
+              </MenuButton>
+              <MenuList maxH="300px" overflowY="auto" zIndex={100} boxShadow="lg">
+                <MenuOptionGroup type="checkbox" value={filterDiv} onChange={setFilterDiv}>
+                  {(divisions || []).map(d => (
+                    <MenuItemOption key={d.id} value={String(d.id)} fontSize="sm">{d.nombre}</MenuItemOption>
+                  ))}
+                </MenuOptionGroup>
+              </MenuList>
+            </Menu>
+
+            <Menu closeOnSelect={false}>
+              <MenuButton as={Button} {...filterMenuBtnProps}>
+                {filterSubdiv.length > 0 ? `${filterSubdiv.length} Subdiv...` : 'Subdivisión...'}
+              </MenuButton>
+              <MenuList maxH="300px" overflowY="auto" zIndex={100} boxShadow="lg">
+                <MenuOptionGroup type="checkbox" value={filterSubdiv} onChange={setFilterSubdiv}>
+                  {(subdivisions || []).map(s => (
+                    <MenuItemOption key={s.id} value={String(s.id)} fontSize="sm">{s.nombre}</MenuItemOption>
+                  ))}
+                </MenuOptionGroup>
+              </MenuList>
+            </Menu>
+
+            <Menu closeOnSelect={false}>
+              <MenuButton as={Button} {...filterMenuBtnProps}>
+                {filterDim5.length > 0 ? `${filterDim5.length} Dim 5...` : 'Dimensión 5...'}
+              </MenuButton>
+              <MenuList maxH="300px" overflowY="auto" zIndex={100} boxShadow="lg">
+                <MenuOptionGroup type="checkbox" value={filterDim5} onChange={setFilterDim5}>
+                  {(dimension5s || []).map(d => (
+                    <MenuItemOption key={d.id} value={String(d.id)} fontSize="sm">{d.nombre}</MenuItemOption>
+                  ))}
+                </MenuOptionGroup>
+              </MenuList>
+            </Menu>
+
+            <Select
+              placeholder="Estado..."
+              value={filterStatus}
+              onChange={e => setFilterStatus(e.target.value)}
+              size="sm"
+              borderRadius="md"
+              bg={tdBg}
+            >
+              <option value="ALL">Todos</option>
+              <option value="Activo">Activo</option>
+              <option value="De Baja">De Baja</option>
+            </Select>
+
+            <Tooltip label={filterArea.length === areas.length ? 'Quitar agrupación por área' : 'Agrupar todos los empleados por su área'} hasArrow>
+              <Button
+                size="sm"
+                variant={filterArea.length === areas.length ? 'solid' : 'outline'}
+                colorScheme="brand"
+                borderRadius="md"
+                leftIcon={<LayoutGrid size={14} />}
+                w="100%"
+                onClick={() => {
+                  if (filterArea.length === areas.length) {
+                    setFilterArea([]);
+                  } else {
+                    setFilterArea(areas.map(a => String(a.id)));
+                  }
+                }}
+              >
+                Por Área
+              </Button>
+            </Tooltip>
+          </SimpleGrid>
+        </Collapse>
+
+        <Flex
+          gap={2}
+          direction={{ base: 'column', md: 'row' }}
+          align={{ base: 'stretch', md: 'center' }}
+        >
+          <InputGroup size="sm" flex="1">
             <InputLeftElement pointerEvents="none">
               <Search size={16} color="gray.400" />
             </InputLeftElement>
-            <Input 
-              placeholder="Buscar por Nombre / Puesto..." 
+            <Input
+              placeholder="Buscar por Nombre / Puesto..."
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
               borderRadius="md"
+              bg={tdBg}
             />
           </InputGroup>
-          <ButtonGroup size="sm" isAttached variant="outline" w={{ base: '100%', lg: 'auto' }}>
-            <Button onClick={() => setViewMode('summary')} isActive={viewMode === 'summary'}>Vista Resumen</Button>
-            <Button onClick={() => setViewMode('detailed')} isActive={viewMode === 'detailed'}>Vista Detallada</Button>
+          <ButtonGroup size="sm" isAttached variant="outline" w={{ base: '100%', md: 'auto' }}>
+            <Button flex={{ base: 1, md: 'initial' }} onClick={() => setViewMode('summary')} isActive={viewMode === 'summary'}>Vista Resumen</Button>
+            <Button flex={{ base: 1, md: 'initial' }} onClick={() => setViewMode('detailed')} isActive={viewMode === 'detailed'}>Vista Detallada</Button>
           </ButtonGroup>
-        </HStack>
-      </Flex>
+        </Flex>
+      </VStack>
 
       {periodType === '2da' && (
         <Text fontSize="sm" color="gray.500" mb={3}>
@@ -1494,23 +1577,23 @@ function ListadoPagosTab({
               </Heading>
             )}
             {viewMode === 'detailed' ? (
-              <Box border="1px solid" borderColor={borderColor} borderRadius="xl" overflowX="auto" overflowY="auto" bg={tdBg} maxH="550px">
-              <Table variant="simple" size="sm" layout="fixed" style={{ borderCollapse: 'separate', borderSpacing: 0, width: 'max-content' }}>
+              <Box border="1px solid" borderColor={borderColor} borderRadius="xl" overflowX="auto" overflowY="auto" bg={tdBg} maxH="550px" css={{ WebkitOverflowScrolling: 'touch' }}>
+              <Table variant="simple" size="sm" style={{ borderCollapse: 'separate', borderSpacing: 0 }} minW="2800px">
                 <Thead position="sticky" top={0} zIndex={15}>
                   <Tr>
                     {/* Sticky Headers */}
-                    <Th w="60px" position="sticky" left={0} zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">No.</Th>
-                    <Th w="200px" position="sticky" left="60px" zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Nombre Empleado</Th>
-                    <Th w="120px" position="sticky" left="260px" zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Empresa</Th>
-                    <Th w="120px" position="sticky" left="380px" zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor} borderBottom="2px solid" borderBottomColor="brand.500" boxShadow="4px 0 8px -4px rgba(0,0,0,0.15)" fontSize="10px">Puesto</Th>
+                    <Th w="60px" minW="60px" position="sticky" left={0} zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" whiteSpace="nowrap">No.</Th>
+                    <Th w="200px" minW="160px" position="sticky" left="60px" zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" whiteSpace="nowrap" boxShadow={stickyExtended ? undefined : '4px 0 8px -4px rgba(0,0,0,0.15)'}>Nombre Empleado</Th>
+                    <Th w="120px" minW="100px" position={stickyExtended ? 'sticky' : 'static'} left={stickyExtended ? '260px' : undefined} zIndex={stickyExtended ? 20 : undefined} bg={theadBg} borderRight="1px solid" borderColor={borderColor} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" whiteSpace="nowrap">Empresa</Th>
+                    <Th w="120px" minW="100px" position={stickyExtended ? 'sticky' : 'static'} left={stickyExtended ? '380px' : undefined} zIndex={stickyExtended ? 20 : undefined} bg={theadBg} borderRight="1px solid" borderColor={borderColor} borderBottom="2px solid" borderBottomColor="brand.500" boxShadow={stickyExtended ? '4px 0 8px -4px rgba(0,0,0,0.15)' : undefined} fontSize="10px" whiteSpace="nowrap">Puesto</Th>
                     
                     {/* Normal Headers */}
-                    <Th w="75px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Días Lab.</Th>
-                    <Th w="120px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">S. Ordinario</Th>
-                    <Th w="120px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Bon. Incentivo</Th>
-                    <Th w="140px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Bono Dec. 37-2001</Th>
-                    <Th w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Bonos</Th>
-                    <Th w="120px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="brand.500">T. Devengado</Th>
+                    <Th w="75px" minW="70px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" whiteSpace="nowrap">Días Lab.</Th>
+                    <Th w="120px" minW="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" whiteSpace="nowrap">S. Ordinario</Th>
+                    <Th w="120px" minW="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" whiteSpace="nowrap">Bon. Incentivo</Th>
+                    <Th w="140px" minW="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" whiteSpace="nowrap">Bono Dec. 37-2001</Th>
+                    <Th w="100px" minW="80px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" whiteSpace="nowrap">Bonos</Th>
+                    <Th w="120px" minW="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="brand.500" whiteSpace="nowrap">T. Devengado</Th>
                     
                     <Th w="80px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Hrs Simples</Th>
                     <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Val Hrs Simp</Th>
@@ -1608,21 +1691,21 @@ function ListadoPagosTab({
                         <Td position="sticky" left={0} zIndex={5} bg={stickyBg} borderRight="1px solid" borderColor={borderColor} fontWeight="bold" fontSize="xs" cursor="pointer">
                           {i + 1}
                         </Td>
-                        <Td position="sticky" left="60px" zIndex={5} bg={stickyBg} borderRight="1px solid" borderColor={borderColor} fontWeight="600" color="brand.500" fontSize="xs" isTruncated maxW="200px" title={[e.primer_nombre, e.segundo_nombre, e.otro_nombre, e.primer_apellido, e.segundo_apellido, e.apellido_casada].filter(Boolean).join(' ')} cursor="pointer">
+                        <Td position="sticky" left="60px" zIndex={5} bg={stickyBg} borderRight="1px solid" borderColor={borderColor} fontWeight="600" color="brand.500" fontSize="xs" isTruncated maxW="200px" title={[e.primer_nombre, e.segundo_nombre, e.otro_nombre, e.primer_apellido, e.segundo_apellido, e.apellido_casada].filter(Boolean).join(' ')} cursor="pointer" boxShadow={stickyExtended ? undefined : '4px 0 8px -4px rgba(0,0,0,0.15)'}>
                           {[e.primer_nombre, e.segundo_nombre, e.otro_nombre, e.primer_apellido, e.segundo_apellido, e.apellido_casada].filter(Boolean).join(' ')}
                         </Td>
-                        <Td position="sticky" left="260px" zIndex={5} bg={stickyBg} borderRight="1px solid" borderColor={borderColor} fontSize="xs" isTruncated maxW="120px" title={companies?.find(c => c.id == e.empresa_principal)?.nombre_comercial || e.company || 'Sin Empresa'}>
+                        <Td position={stickyExtended ? 'sticky' : 'static'} left={stickyExtended ? '260px' : undefined} zIndex={stickyExtended ? 5 : undefined} bg={stickyBg} borderRight="1px solid" borderColor={borderColor} fontSize="xs" isTruncated maxW="120px" title={companies?.find(c => c.id == e.empresa_principal)?.nombre_comercial || e.company || 'Sin Empresa'} whiteSpace="nowrap">
                           {companies?.find(c => c.id == e.empresa_principal)?.nombre_comercial || e.company || 'Sin Empresa'}
                         </Td>
-                        <Td position="sticky" left="380px" zIndex={5} bg={stickyBg} borderRight="1px solid" borderColor={borderColor} boxShadow="4px 0 8px -4px rgba(0,0,0,0.15)" fontSize="xs" isTruncated maxW="120px">
+                        <Td position={stickyExtended ? 'sticky' : 'static'} left={stickyExtended ? '380px' : undefined} zIndex={stickyExtended ? 5 : undefined} bg={stickyBg} borderRight="1px solid" borderColor={borderColor} boxShadow={stickyExtended ? '4px 0 8px -4px rgba(0,0,0,0.15)' : undefined} fontSize="xs" isTruncated maxW="120px" whiteSpace="nowrap">
                           {e.puesto || 'Sin Puesto'}
                         </Td>
 
                         {/* Editable and Calculated Cells */}
                         <EditableCell onNavigate={handleNavigation} id={e.id} field="days" section="root" value={e.days} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={60} />
-                        <Td fontFamily="mono" fontSize="xs">{formatQ(baseSalary)}</Td>
-                        <Td fontFamily="mono" fontSize="xs">{formatQ(bonusLey)}</Td>
-                        <Td fontFamily="mono" fontSize="xs">{formatQ(bonusDec)}</Td>
+                        <Td fontFamily="mono" fontSize="xs" whiteSpace="nowrap">{formatQ(baseSalary)}</Td>
+                        <Td fontFamily="mono" fontSize="xs" whiteSpace="nowrap">{formatQ(bonusLey)}</Td>
+                        <Td fontFamily="mono" fontSize="xs" whiteSpace="nowrap">{formatQ(bonusDec)}</Td>
                         <EditableCell onNavigate={handleNavigation} id={e.id} field="bonos" section="extras" value={e.extras?.bonos || 0} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={80} isMoney />
                         <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500">{formatQ(devengado)}</Td>
                         
@@ -1708,17 +1791,17 @@ function ListadoPagosTab({
                 {/* Footer with column totals */}
                 <Thead position="sticky" bottom={0} zIndex={15} bg={theadBg}>
                   <Tr borderTop="2px solid" borderColor="brand.500">
-                    <Th position="sticky" left={0} zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor}>TOTAL</Th>
-                    <Th position="sticky" left="60px" zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor}>CONSOLIDADO</Th>
-                    <Th position="sticky" left="260px" zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor}></Th>
-                    <Th position="sticky" left="380px" zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor} boxShadow="4px 0 8px -4px rgba(0,0,0,0.15)"></Th>
+                    <Th position="sticky" left={0} zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor} whiteSpace="nowrap">TOTAL</Th>
+                    <Th position="sticky" left="60px" zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor} whiteSpace="nowrap" boxShadow={stickyExtended ? undefined : '4px 0 8px -4px rgba(0,0,0,0.15)'}>CONSOLIDADO</Th>
+                    <Th position={stickyExtended ? 'sticky' : 'static'} left={stickyExtended ? '260px' : undefined} zIndex={stickyExtended ? 20 : undefined} bg={theadBg} borderRight="1px solid" borderColor={borderColor}></Th>
+                    <Th position={stickyExtended ? 'sticky' : 'static'} left={stickyExtended ? '380px' : undefined} zIndex={stickyExtended ? 20 : undefined} bg={theadBg} borderRight="1px solid" borderColor={borderColor} boxShadow={stickyExtended ? '4px 0 8px -4px rgba(0,0,0,0.15)' : undefined}></Th>
                     
-                    <Th>{groupData.length} Emps</Th>
-                    <Th fontFamily="mono" fontSize="xs">{formatQ(columnTotals.totSalarioOrd)}</Th>
-                    <Th fontFamily="mono" fontSize="xs">{formatQ(columnTotals.totBonInc)}</Th>
-                    <Th fontFamily="mono" fontSize="xs">{formatQ(columnTotals.totBonDec)}</Th>
-                    <Th fontFamily="mono" fontSize="xs">{formatQ(columnTotals.totBonos)}</Th>
-                    <Th fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500">{formatQ(columnTotals.totDevengado)}</Th>
+                    <Th whiteSpace="nowrap">{groupData.length} Emps</Th>
+                    <Th fontFamily="mono" fontSize="xs" whiteSpace="nowrap">{formatQ(columnTotals.totSalarioOrd)}</Th>
+                    <Th fontFamily="mono" fontSize="xs" whiteSpace="nowrap">{formatQ(columnTotals.totBonInc)}</Th>
+                    <Th fontFamily="mono" fontSize="xs" whiteSpace="nowrap">{formatQ(columnTotals.totBonDec)}</Th>
+                    <Th fontFamily="mono" fontSize="xs" whiteSpace="nowrap">{formatQ(columnTotals.totBonos)}</Th>
+                    <Th fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500" whiteSpace="nowrap">{formatQ(columnTotals.totDevengado)}</Th>
                     
                     <Th>{columnTotals.totHorasSimples}</Th>
                     <Th fontFamily="mono" fontSize="xs">{formatQ(columnTotals.totValSimple)}</Th>
@@ -1761,30 +1844,30 @@ function ListadoPagosTab({
               </Table>
             </Box>
             ) : (
-              <Box border="1px solid" borderColor={borderColor} borderRadius="xl" overflowX="auto" overflowY="auto" bg={tdBg} maxH="550px">
-              <Table variant="simple" size="sm" layout="fixed" style={{ borderCollapse: 'separate', borderSpacing: 0, width: 'max-content' }}>
+              <Box border="1px solid" borderColor={borderColor} borderRadius="xl" overflowX="auto" overflowY="auto" bg={tdBg} maxH="550px" css={{ WebkitOverflowScrolling: 'touch' }}>
+              <Table variant="simple" size="sm" style={{ borderCollapse: 'separate', borderSpacing: 0 }} minW="1200px">
                 <Thead position="sticky" top={0} zIndex={15}>
                   <Tr>
                     {/* Sticky Headers */}
-                    <Th w="60px" position="sticky" left={0} zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">No.</Th>
-                    <Th w="200px" position="sticky" left="60px" zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Nombre Empleado</Th>
-                    <Th w="120px" position="sticky" left="260px" zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Empresa</Th>
-                    <Th w="120px" position="sticky" left="380px" zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor} borderBottom="2px solid" borderBottomColor="brand.500" boxShadow="4px 0 8px -4px rgba(0,0,0,0.15)" fontSize="10px">Puesto</Th>
+                    <Th w="60px" minW="60px" position="sticky" left={0} zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" whiteSpace="nowrap">No.</Th>
+                    <Th w="200px" minW="160px" position="sticky" left="60px" zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" whiteSpace="nowrap" boxShadow={stickyExtended ? undefined : '4px 0 8px -4px rgba(0,0,0,0.15)'}>Nombre Empleado</Th>
+                    <Th w="120px" minW="100px" position={stickyExtended ? 'sticky' : 'static'} left={stickyExtended ? '260px' : undefined} zIndex={stickyExtended ? 20 : undefined} bg={theadBg} borderRight="1px solid" borderColor={borderColor} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" whiteSpace="nowrap">Empresa</Th>
+                    <Th w="120px" minW="100px" position={stickyExtended ? 'sticky' : 'static'} left={stickyExtended ? '380px' : undefined} zIndex={stickyExtended ? 20 : undefined} bg={theadBg} borderRight="1px solid" borderColor={borderColor} borderBottom="2px solid" borderBottomColor="brand.500" boxShadow={stickyExtended ? '4px 0 8px -4px rgba(0,0,0,0.15)' : undefined} fontSize="10px" whiteSpace="nowrap">Puesto</Th>
                     
                     {/* Resumen Headers */}
-                    <Th w="75px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Días Lab.</Th>
-                    <Th w="120px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">S. Ordinario</Th>
-                    <Th w="120px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Bonificaciones</Th>
-                    <Th w="120px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="gold.500">Ingresos Extras</Th>
-                    <Th w="120px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.500">Total Egresos</Th>
-                    <Th w="120px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="brand.500">Líquido a Recibir</Th>
+                    <Th w="75px" minW="70px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" whiteSpace="nowrap">Días Lab.</Th>
+                    <Th w="120px" minW="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" whiteSpace="nowrap">S. Ordinario</Th>
+                    <Th w="120px" minW="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" whiteSpace="nowrap">Bonificaciones</Th>
+                    <Th w="120px" minW="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="gold.500" whiteSpace="nowrap">Ingresos Extras</Th>
+                    <Th w="120px" minW="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="red.500" whiteSpace="nowrap">Total Egresos</Th>
+                    <Th w="120px" minW="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="brand.500" whiteSpace="nowrap">Líquido a Recibir</Th>
                     {periodType === '2da' && (
                       <>
-                        <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">1ra Quincena</Th>
-                        <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">2da Quincena</Th>
+                        <Th w="110px" minW="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" whiteSpace="nowrap">1ra Quincena</Th>
+                        <Th w="110px" minW="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" whiteSpace="nowrap">2da Quincena</Th>
                       </>
                     )}
-                    <Th w="120px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" textAlign="center">Acciones</Th>
+                    <Th w="120px" minW="90px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" textAlign="center" whiteSpace="nowrap">Acciones</Th>
                   </Tr>
                 </Thead>
                 <Tbody>
@@ -1809,25 +1892,25 @@ function ListadoPagosTab({
 
                     return (
                       <Tr key={e.id} _hover={{ bg: isHighlighted ? highlightColor : hoverBg }} bg={rowBg} onDoubleClick={() => toggleRowHighlight(e.id)} userSelect="none">
-                        <Td position="sticky" left={0} zIndex={5} bg={stickyBg} borderRight="1px solid" borderColor={borderColor} fontWeight="bold" fontSize="xs" cursor="pointer">
+                        <Td position="sticky" left={0} zIndex={5} bg={stickyBg} borderRight="1px solid" borderColor={borderColor} fontWeight="bold" fontSize="xs" cursor="pointer" whiteSpace="nowrap">
                           {i + 1}
                         </Td>
-                        <Td position="sticky" left="60px" zIndex={5} bg={stickyBg} borderRight="1px solid" borderColor={borderColor} fontWeight="600" color="brand.500" fontSize="xs" isTruncated maxW="200px" title={[e.primer_nombre, e.segundo_nombre, e.otro_nombre, e.primer_apellido, e.segundo_apellido, e.apellido_casada].filter(Boolean).join(' ')} cursor="pointer">
+                        <Td position="sticky" left="60px" zIndex={5} bg={stickyBg} borderRight="1px solid" borderColor={borderColor} fontWeight="600" color="brand.500" fontSize="xs" isTruncated maxW="200px" title={[e.primer_nombre, e.segundo_nombre, e.otro_nombre, e.primer_apellido, e.segundo_apellido, e.apellido_casada].filter(Boolean).join(' ')} cursor="pointer" boxShadow={stickyExtended ? undefined : '4px 0 8px -4px rgba(0,0,0,0.15)'}>
                           {[e.primer_nombre, e.segundo_nombre, e.otro_nombre, e.primer_apellido, e.segundo_apellido, e.apellido_casada].filter(Boolean).join(' ')}
                         </Td>
-                        <Td position="sticky" left="260px" zIndex={5} bg={stickyBg} borderRight="1px solid" borderColor={borderColor} fontSize="xs" isTruncated maxW="120px" title={companies?.find(c => c.id == e.empresa_principal)?.nombre_comercial || e.company || 'Sin Empresa'}>
+                        <Td position={stickyExtended ? 'sticky' : 'static'} left={stickyExtended ? '260px' : undefined} zIndex={stickyExtended ? 5 : undefined} bg={stickyBg} borderRight="1px solid" borderColor={borderColor} fontSize="xs" isTruncated maxW="120px" title={companies?.find(c => c.id == e.empresa_principal)?.nombre_comercial || e.company || 'Sin Empresa'} whiteSpace="nowrap">
                           {companies?.find(c => c.id == e.empresa_principal)?.nombre_comercial || e.company || 'Sin Empresa'}
                         </Td>
-                        <Td position="sticky" left="380px" zIndex={5} bg={stickyBg} borderRight="1px solid" borderColor={borderColor} boxShadow="4px 0 8px -4px rgba(0,0,0,0.15)" fontSize="xs" isTruncated maxW="120px">
+                        <Td position={stickyExtended ? 'sticky' : 'static'} left={stickyExtended ? '380px' : undefined} zIndex={stickyExtended ? 5 : undefined} bg={stickyBg} borderRight="1px solid" borderColor={borderColor} boxShadow={stickyExtended ? '4px 0 8px -4px rgba(0,0,0,0.15)' : undefined} fontSize="xs" isTruncated maxW="120px" whiteSpace="nowrap">
                           {e.puesto || 'Sin Puesto'}
                         </Td>
 
                         <EditableCell id={e.id} field="days" section="root" value={e.days} onChange={onChange} editing={editingCell} setEditing={setEditingCell} width={60} />
-                        <Td fontFamily="mono" fontSize="xs">{formatQ(baseSalary)}</Td>
-                        <Td fontFamily="mono" fontSize="xs">{formatQ(bonusLey + bonusDec)}</Td>
-                        <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="gold.500">{formatQ(totalExtras)}</Td>
-                        <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="red.500">{formatQ(totalEgresos)}</Td>
-                        <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500" bg={liquidoBg}>{formatQ(liquidoPagar)}</Td>
+                        <Td fontFamily="mono" fontSize="xs" whiteSpace="nowrap">{formatQ(baseSalary)}</Td>
+                        <Td fontFamily="mono" fontSize="xs" whiteSpace="nowrap">{formatQ(bonusLey + bonusDec)}</Td>
+                        <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="gold.500" whiteSpace="nowrap">{formatQ(totalExtras)}</Td>
+                        <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="red.500" whiteSpace="nowrap">{formatQ(totalEgresos)}</Td>
+                        <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500" bg={liquidoBg} whiteSpace="nowrap">{formatQ(liquidoPagar)}</Td>
                         
                         {periodType === '2da' && (
                           <>
@@ -1866,17 +1949,17 @@ function ListadoPagosTab({
                 {/* Footer with column totals */}
                 <Thead position="sticky" bottom={0} zIndex={15} bg={theadBg}>
                   <Tr borderTop="2px solid" borderColor="brand.500">
-                    <Th position="sticky" left={0} zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor}>TOTAL</Th>
-                    <Th position="sticky" left="60px" zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor}>CONSOLIDADO</Th>
-                    <Th position="sticky" left="260px" zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor}></Th>
-                    <Th position="sticky" left="380px" zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor} boxShadow="4px 0 8px -4px rgba(0,0,0,0.15)"></Th>
+                    <Th position="sticky" left={0} zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor} whiteSpace="nowrap">TOTAL</Th>
+                    <Th position="sticky" left="60px" zIndex={20} bg={theadBg} borderRight="1px solid" borderColor={borderColor} whiteSpace="nowrap" boxShadow={stickyExtended ? undefined : '4px 0 8px -4px rgba(0,0,0,0.15)'}>CONSOLIDADO</Th>
+                    <Th position={stickyExtended ? 'sticky' : 'static'} left={stickyExtended ? '260px' : undefined} zIndex={stickyExtended ? 20 : undefined} bg={theadBg} borderRight="1px solid" borderColor={borderColor}></Th>
+                    <Th position={stickyExtended ? 'sticky' : 'static'} left={stickyExtended ? '380px' : undefined} zIndex={stickyExtended ? 20 : undefined} bg={theadBg} borderRight="1px solid" borderColor={borderColor} boxShadow={stickyExtended ? '4px 0 8px -4px rgba(0,0,0,0.15)' : undefined}></Th>
                     
-                    <Th>{groupData.length} Emps</Th>
-                    <Th fontFamily="mono" fontSize="xs">{formatQ(columnTotals.totSalarioOrd)}</Th>
-                    <Th fontFamily="mono" fontSize="xs">{formatQ(columnTotals.totBonInc + columnTotals.totBonDec)}</Th>
-                    <Th fontFamily="mono" fontSize="xs" fontWeight="bold" color="gold.500">{formatQ(columnTotals.totBonos + columnTotals.totValSimple + columnTotals.totValDouble + columnTotals.totOtrosIngresos)}</Th>
-                    <Th fontFamily="mono" fontSize="xs" fontWeight="bold" color="red.500">{formatQ(columnTotals.totTotalEgresos)}</Th>
-                    <Th fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500">{formatQ(columnTotals.totLiquido)}</Th>
+                    <Th whiteSpace="nowrap">{groupData.length} Emps</Th>
+                    <Th fontFamily="mono" fontSize="xs" whiteSpace="nowrap">{formatQ(columnTotals.totSalarioOrd)}</Th>
+                    <Th fontFamily="mono" fontSize="xs" whiteSpace="nowrap">{formatQ(columnTotals.totBonInc + columnTotals.totBonDec)}</Th>
+                    <Th fontFamily="mono" fontSize="xs" fontWeight="bold" color="gold.500" whiteSpace="nowrap">{formatQ(columnTotals.totBonos + columnTotals.totValSimple + columnTotals.totValDouble + columnTotals.totOtrosIngresos)}</Th>
+                    <Th fontFamily="mono" fontSize="xs" fontWeight="bold" color="red.500" whiteSpace="nowrap">{formatQ(columnTotals.totTotalEgresos)}</Th>
+                    <Th fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500" whiteSpace="nowrap">{formatQ(columnTotals.totLiquido)}</Th>
                     {periodType === '2da' && (
                       <>
                         <Th fontFamily="mono" fontSize="xs">{formatQ(columnTotals.totQuincena1)}</Th>

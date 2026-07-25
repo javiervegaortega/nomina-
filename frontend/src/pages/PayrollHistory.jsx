@@ -87,11 +87,60 @@ const getCatalogBonuses = (employee) => {
     .reduce((sum, value) => sum + (Number(value) || 0), 0);
 };
 
-/** ID de la nómina en historial (grupos se arman por título, no tienen id propio). */
+/** ID de la nómina en historial (grupos se arman por título+empresa). */
 export const resolveGroupPayrollId = (group) => {
   if (!group?.records?.length) return null;
   const inAudit = group.records.find((r) => r.status === 'auditoria');
   return (inAudit || group.records[0]).id;
+};
+
+const parseJsonMaybe = (raw) => {
+  if (raw == null || raw === '') return null;
+  if (typeof raw === 'object') return raw;
+  try { return JSON.parse(raw); } catch { return null; }
+};
+
+/** Normaliza un valor de empresa (id / nombre / nit) al nombre comercial si existe. */
+const resolveCompanyDisplayName = (raw, companiesList = []) => {
+  if (raw == null || raw === '') return null;
+  const found = companiesList.find((c) =>
+    String(c.id) === String(raw)
+    || c.nombre_comercial === raw
+    || c.nit === raw
+  );
+  return found ? (found.nombre_comercial || found.nit || String(found.id)) : String(raw).trim();
+};
+
+/** Clave estable de empresa(s) de un registro de historial (una nómina = una empresa). */
+const getPayrollCompanyKey = (payroll, companiesList = []) => {
+  const summary = parseJsonMaybe(payroll?.summary);
+  const fromSummary = Array.isArray(summary?.companies) ? summary.companies : [];
+  const ids = [];
+  fromSummary.forEach((raw) => {
+    const found = companiesList.find((c) =>
+      String(c.id) === String(raw)
+      || c.nombre_comercial === raw
+      || c.nit === raw
+    );
+    ids.push(found ? String(found.id) : String(raw).trim());
+  });
+  if (ids.length === 0) {
+    let emps = payroll?.data || payroll?.employees || [];
+    if (typeof emps === 'string') {
+      try { emps = JSON.parse(emps); } catch { emps = []; }
+    }
+    (Array.isArray(emps) ? emps : []).forEach((e) => {
+      if (e?.empresa_principal != null) ids.push(String(e.empresa_principal));
+      else if (e?.company) {
+        const found = companiesList.find((c) =>
+          c.nombre_comercial === e.company || c.nit === e.company
+        );
+        if (found) ids.push(String(found.id));
+      }
+    });
+  }
+  const unique = [...new Set(ids.filter(Boolean))].sort();
+  return unique.length ? unique.join('|') : 'sin-empresa';
 };
 
 export default function PayrollHistory() {
@@ -115,15 +164,19 @@ export default function PayrollHistory() {
   const [rejectNote, setRejectNote] = useState('');
   const [isRejecting, setIsRejecting] = useState(false);
 
-  // Group by title
+  // Agrupar por título + empresa (el título auto no incluye empresa y unía nóminas distintas)
   const groupedHistory = useMemo(() => {
     const groups = {};
-    payrollHistory.forEach(p => {
+    payrollHistory.forEach((p) => {
       const t = p.title || 'Nómina sin título';
-      if (!groups[t]) {
+      const companyKey = getPayrollCompanyKey(p, companies);
+      const groupKey = `${t}::${companyKey}`;
+      if (!groups[groupKey]) {
         const periodDate = p.createdAt || p.closedAt || new Date().toISOString();
-        groups[t] = {
+        groups[groupKey] = {
+          groupKey,
           title: t,
+          companyKey,
           date: periodDate,
           createdAt: periodDate,
           closedAt: p.closedAt || null,
@@ -136,17 +189,11 @@ export default function PayrollHistory() {
           companies: new Set()
         };
       }
-      
-      groups[t].records.push(p);
-      
-      const summary = (() => {
-        const raw = p.summary;
-        if (!raw) return null;
-        if (typeof raw === 'string') {
-          try { return JSON.parse(raw); } catch { return null; }
-        }
-        return raw;
-      })();
+
+      const g = groups[groupKey];
+      g.records.push(p);
+
+      const summary = parseJsonMaybe(p.summary);
       const hasInlineData = (() => {
         let emps = p.data || p.employees || [];
         if (typeof emps === 'string') {
@@ -156,59 +203,59 @@ export default function PayrollHistory() {
       })();
 
       if (summary && summary.employeesCount > 0 && !hasInlineData) {
-        groups[t].employeesCount += summary.employeesCount || 0;
-        groups[t].grossTotal += summary.grossTotal || 0;
-        groups[t].netTotal += summary.netTotal || 0;
-        (summary.companies || []).forEach((c) => groups[t].companies.add(c));
+        g.employeesCount += summary.employeesCount || 0;
+        g.grossTotal += summary.grossTotal || 0;
+        g.netTotal += summary.netTotal || 0;
+        (summary.companies || []).forEach((c) => {
+          const name = resolveCompanyDisplayName(c, companies);
+          if (name) g.companies.add(name);
+        });
       } else if (hasInlineData) {
-      // Calculate gross total from employee snapshots
-      let emps = p.data || p.employees || [];
-      if (typeof emps === 'string') {
-        try { emps = JSON.parse(emps); } catch(e) { emps = []; }
-      }
-      if (!Array.isArray(emps)) emps = [];
-      groups[t].employeesCount += emps.length;
+        let emps = p.data || p.employees || [];
+        if (typeof emps === 'string') {
+          try { emps = JSON.parse(emps); } catch (e) { emps = []; }
+        }
+        if (!Array.isArray(emps)) emps = [];
+        g.employeesCount += emps.length;
 
-      let grossSum = 0;
-      let dedSum = 0;
-      let netSum = 0;
-      const periodType = p.periodType || groups[t].periodType || '1ra';
-      emps.forEach(rawEmployee => {
-        const e = ensureEmployeeCalculation(rawEmployee, periodType);
-        grossSum += Number(e.calculated.gross) || 0;
-        dedSum += Number(e.calculated.ded) || 0;
-        netSum += getNetPayable(e, periodType);
-      });
-      
-      groups[t].grossTotal += grossSum;
-      groups[t].netTotal += netSum;
-      
-      emps.forEach(e => {
-        if (!e.empresa_principal) return;
-        const comp = companies.find(c => c.id === e.empresa_principal);
-        if (comp?.nombre_comercial) groups[t].companies.add(comp.nombre_comercial);
-      });
+        let grossSum = 0;
+        let netSum = 0;
+        const periodType = p.periodType || g.periodType || '1ra';
+        emps.forEach((rawEmployee) => {
+          const e = ensureEmployeeCalculation(rawEmployee, periodType);
+          grossSum += Number(e.calculated.gross) || 0;
+          netSum += getNetPayable(e, periodType);
+        });
+
+        g.grossTotal += grossSum;
+        g.netTotal += netSum;
+
+        emps.forEach((e) => {
+          if (!e.empresa_principal) return;
+          const name = resolveCompanyDisplayName(e.empresa_principal, companies);
+          if (name) g.companies.add(name);
+        });
       }
-      
+
       const recordPeriodDate = p.createdAt || p.closedAt;
-      if (recordPeriodDate && new Date(recordPeriodDate) > new Date(groups[t].date)) {
-        groups[t].date = recordPeriodDate;
-        groups[t].createdAt = recordPeriodDate;
+      if (recordPeriodDate && new Date(recordPeriodDate) > new Date(g.date)) {
+        g.date = recordPeriodDate;
+        g.createdAt = recordPeriodDate;
       }
       if (
         p.closedAt
-        && (!groups[t].closedAt || new Date(p.closedAt) > new Date(groups[t].closedAt))
+        && (!g.closedAt || new Date(p.closedAt) > new Date(g.closedAt))
       ) {
-        groups[t].closedAt = p.closedAt;
+        g.closedAt = p.closedAt;
       }
       if (p.status === 'auditoria') {
-        groups[t].status = 'auditoria';
-      } else if (groups[t].status !== 'auditoria') {
-        groups[t].status = p.status || 'cerrada';
+        g.status = 'auditoria';
+      } else if (g.status !== 'auditoria') {
+        g.status = p.status || 'cerrada';
       }
     });
-    
-    return Object.values(groups).sort((a,b) => new Date(b.date) - new Date(a.date));
+
+    return Object.values(groups).sort((a, b) => new Date(b.date) - new Date(a.date));
   }, [payrollHistory, companies]);
 
   const companyFilterOptions = useMemo(() => {
@@ -270,14 +317,14 @@ export default function PayrollHistory() {
       showToast('No se encontró el ID de la nómina', 'error');
       return;
     }
-    if (window.confirm('¿Aprobar esta nómina y devolverla a borradores para su cierre final?')) {
+    confirmAction('¿Aprobar esta nómina y devolverla a borradores para su cierre final?', async () => {
       try {
         await auditorApprovePayroll(payrollId);
         showToast('Nómina aprobada correctamente', 'success');
       } catch {
         showToast('Error al aprobar la nómina', 'error');
       }
-    }
+    });
   };
 
   const handleConfirmReject = async () => {
@@ -304,12 +351,20 @@ export default function PayrollHistory() {
     }
   };
 
-  const handleDeleteGroup = (title, records) => {
-    confirmAction(`¿Seguro que desea eliminar el registro consolidado "${title}"? Se borrarán ${records.length} nómina(s) de las empresas involucradas.`, () => {
-      records.forEach(r => deletePayroll(r.id));
-      showToast('Registro eliminado exitosamente', 'info');
-      if (selectedGroup && selectedGroup.title === title) setSelectedGroup(null);
-    });
+  const handleDeleteGroup = (group) => {
+    const label = group?.title || 'Nómina';
+    const companyLabel = group?.companies?.size
+      ? ` (${Array.from(group.companies).join(', ')})`
+      : '';
+    const records = group?.records || [];
+    confirmAction(
+      `¿Seguro que desea eliminar "${label}${companyLabel}"? Se borrarán ${records.length} nómina(s).`,
+      () => {
+        records.forEach((r) => deletePayroll(r.id));
+        showToast('Registro eliminado exitosamente', 'info');
+        if (selectedGroup && selectedGroup.groupKey === group.groupKey) setSelectedGroup(null);
+      }
+    );
   };
 
   const handleRequestReactivation = (group) => {
@@ -532,7 +587,7 @@ export default function PayrollHistory() {
                       ? 'Sin empresa'
                       : Array.from(group.companies).join(', ');
                     return (
-                      <Tr key={group.title} _hover={{ bg: toolbarBg }}>
+                      <Tr key={group.groupKey || `${group.title}::${companiesLabel}`} _hover={{ bg: toolbarBg }}>
                         <Td maxW="280px">
                           <Text fontWeight={700} noOfLines={2}>{group.title}</Text>
                         </Td>
@@ -604,7 +659,7 @@ export default function PayrollHistory() {
                                   size="sm"
                                   colorScheme="red"
                                   variant="ghost"
-                                  onClick={() => handleDeleteGroup(group.title, group.records)}
+                                  onClick={() => handleDeleteGroup(group)}
                                 />
                               </Tooltip>
                             )}
@@ -797,7 +852,7 @@ function calculateGroupTotals(groupData, periodType) {
 
 function PayrollHistoryDetail({ group, onBack }) {
   const { bonuses, areas, departments, divisions, subdivisions, companies, dimension5s, approvePayroll, auditorApprovePayroll, auditorRejectPayroll } = useContext(DataContext);
-  const { showToast } = useContext(AppContext);
+  const { confirmAction, showToast } = useContext(AppContext);
   const { user } = useContext(AuthContext);
   const isReadOnly = user?.role === 'AUDITOR';
   const [selectedVoucherEmp, setSelectedVoucherEmp] = useState(null);
@@ -1639,6 +1694,23 @@ function PayrollHistoryDetail({ group, onBack }) {
 
   const payrollGroup = activeGroup;
 
+  const handleApprovePayroll = () => {
+    const payrollId = resolveGroupPayrollId(group);
+    if (!payrollId) {
+      showToast('No se encontró el ID de la nómina', 'error');
+      return;
+    }
+    confirmAction('¿Aprobar esta nómina y devolverla a borradores para su cierre final?', async () => {
+      try {
+        await auditorApprovePayroll(payrollId);
+        showToast('Nómina aprobada correctamente', 'success');
+        onBack();
+      } catch {
+        showToast('Error al aprobar la nómina', 'error');
+      }
+    });
+  };
+
   return (
     <Box p={{ base: 3, md: 6, lg: 8 }} sx={{ '@media print': { p: 0 } }}>
       {/* Screen-only content */}
@@ -1671,17 +1743,7 @@ function PayrollHistoryDetail({ group, onBack }) {
         <Flex gap={2} wrap="wrap">
           {group.status === 'auditoria' && canAuditPayroll(user?.role) && (
             <>
-              <Button colorScheme="green" onClick={async () => {
-                if (window.confirm('¿Aprobar esta nómina y devolverla a borradores para su cierre final?')) {
-                  try {
-                    await auditorApprovePayroll(resolveGroupPayrollId(group));
-                    showToast('Nómina aprobada correctamente', 'success');
-                    onBack();
-                  } catch (e) {
-                    showToast('Error al aprobar', 'error');
-                  }
-                }
-              }} size={{ base: 'sm', md: 'md' }}>
+              <Button colorScheme="green" onClick={handleApprovePayroll} size={{ base: 'sm', md: 'md' }}>
                 Aprobar Nómina
               </Button>
               <Button colorScheme="red" variant="outline" onClick={() => setIsRejectModalOpen(true)} size={{ base: 'sm', md: 'md' }}>

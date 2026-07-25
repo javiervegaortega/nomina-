@@ -611,7 +611,10 @@ const sumAllocationMaps = (...maps) => {
 const getPayrollCostComponents = (payrollSnap) => {
   const totalCost = new Decimal(payrollSnap.companyCost || 0)
     .toDecimalPlaces(BILLING_PRECISION, Decimal.ROUND_HALF_UP);
-  const bonuses = new Decimal(payrollSnap.bonos || 0)
+  // Bono decreto + bonos operativos + catálogo: se reparte con component_dist.bonuses
+  // (o dist general si no hay override). No debe ir dentro de "general".
+  const bonuses = new Decimal(payrollSnap.bonusDec || 0)
+    .plus(payrollSnap.bonos || 0)
     .plus(payrollSnap.bonusesSum || 0)
     .toDecimalPlaces(BILLING_PRECISION, Decimal.ROUND_HALF_UP);
   const extrasGross = new Decimal(payrollSnap.extrasTotal || 0)
@@ -933,7 +936,7 @@ class BillingService {
 
       // Mapas de detalle; baseAmount es la autoridad para el cierre exacto.
       const salaryMap = allocateAmount(billingSnap.baseSalary, generalAllocations);
-      const bonusDecMap = allocateAmount(billingSnap.bonusDec, generalAllocations);
+      const bonusDecMap = allocateAmount(billingSnap.bonusDec, bonusAllocations);
       const bonusLeyMap = allocateAmount(billingSnap.bonusLey, generalAllocations);
       const operationalBonusMap = allocateAmount(billingSnap.bonos, bonusAllocations);
       const catalogBonusMap = allocateAmount(billingSnap.bonusesSum, bonusAllocations);
@@ -1021,14 +1024,17 @@ class BillingService {
           return;
         }
 
+        // Aporte por empleado a 2 decimales (moneda), luego se acumula.
+        // Evita deriva de céntimos vs Excel al sumar muchos importes largos.
+        const contribution = round2(amount);
         ensureMatrixCell(matrix, fromId, toId);
-        matrix[fromId][toId] = roundBilling(
-          new Decimal(matrix[fromId][toId]).plus(amount)
+        matrix[fromId][toId] = round2(
+          new Decimal(matrix[fromId][toId]).plus(contribution)
         );
 
         ensureCcMatrixCell(matrixByCostCenter, fromId, toId, centroCosto);
-        matrixByCostCenter[fromId][toId][centroCosto] = roundBilling(
-          new Decimal(matrixByCostCenter[fromId][toId][centroCosto]).plus(amount)
+        matrixByCostCenter[fromId][toId][centroCosto] = round2(
+          new Decimal(matrixByCostCenter[fromId][toId][centroCosto]).plus(contribution)
         );
 
         details.push({
@@ -1145,18 +1151,23 @@ class BillingService {
 
         const marginPerc = Number(rule.marginPercentage) || 0;
         const ivaRate = Number(rule.ivaRate ?? 0.12);
-        const marginPrecise = baseAmountPrecise.times(marginPerc).dividedBy(100);
-        const subtotalPrecise = baseAmountPrecise.plus(marginPrecise);
-        const ivaPrecise = rule.applyIva ? subtotalPrecise.times(ivaRate) : new Decimal(0);
-        const totalPrecise = subtotalPrecise.plus(ivaPrecise);
-        const baseAmount = round4(baseAmountPrecise);
-        const marginAmount = round4(marginPrecise);
-        const subtotalAmount = round4(subtotalPrecise);
-        const ivaAmount = round4(ivaPrecise);
-        const totalAmount = round4(totalPrecise);
+        const baseAdjustment = round2(rule.baseAdjustment || 0);
+        // Dinero a 2 decimales (mismo criterio contable/Excel):
+        // BASE (+ ajuste de regla) → MARGEN → IVA → TOTAL.
+        const baseAmount = round2(baseAmountPrecise.plus(baseAdjustment));
+        const marginAmount = round2(
+          new Decimal(baseAmount).times(marginPerc).dividedBy(100)
+        );
+        const subtotalAmount = round2(new Decimal(baseAmount).plus(marginAmount));
+        const ivaAmount = rule.applyIva
+          ? round2(new Decimal(subtotalAmount).times(ivaRate))
+          : 0;
+        const totalAmount = round2(new Decimal(subtotalAmount).plus(ivaAmount));
         const centroCosto = 'CONSOLIDADO GLOBAL';
         const baseConcept = rule.concept || `Servicios de RRHH ${payroll.title}`;
-        const concept = `${baseConcept} — neteo global intercompany`;
+        const concept = baseAdjustment
+          ? `${baseConcept} — neteo global intercompany (incl. ajuste Q${baseAdjustment.toFixed(2)})`
+          : `${baseConcept} — neteo global intercompany`;
 
         lines.push({
           ruleId: rule.id,
@@ -1168,6 +1179,7 @@ class BillingService {
           centroCosto,
           concept,
           baseAmount,
+          baseAdjustment,
           marginPercentage: marginPerc,
           marginAmount,
           subtotalAmount,

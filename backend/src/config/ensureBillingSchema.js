@@ -31,6 +31,23 @@ async function ensureBillingSchema(sequelize) {
     allowNull: false,
     defaultValue: 0.12
   });
+  await addColumnIfMissing('billing_rules', 'baseAdjustment', {
+    type: sequelize.Sequelize.DECIMAL(15, 2),
+    allowNull: false,
+    defaultValue: 0
+  });
+  // Excel mayo BF338 = Q197,046.31 (escrito fijo). Complemento sobre la base
+  // calculada Unhesa+Hidroxon para empatar esa celda; editable en Reglas.
+  try {
+    await sequelize.query(
+      `UPDATE billing_rules
+       SET baseAdjustment = 1296.13, updatedAt = NOW()
+       WHERE fromCompanyId = 3 AND toCompanyId = 2
+         AND (baseAdjustment IS NULL OR ABS(baseAdjustment) < 0.005)`
+    );
+  } catch (err) {
+    console.warn('[billing] baseAdjustment Unhesa:', err.message);
+  }
   await addColumnIfMissing('billing_run_lines', 'centroCosto', {
     type: sequelize.Sequelize.STRING,
     allowNull: true

@@ -90,7 +90,8 @@ const snapshot = {
   companyCost: 1752.04
 };
 const components = getPayrollCostComponents(snapshot);
-assert(new Decimal(components.bonuses).equals(150), 'bonos operativos + catálogo, sin patronal');
+// Bono decreto + operativos + catálogo (sin carga patronal)
+assert(new Decimal(components.bonuses).equals(400), 'bono decreto + operativos + catálogo, sin patronal');
 assert(new Decimal(components.extrasEmployer).equals(25.34), 'extras reciben su carga patronal 12.67%');
 assert(
   new Decimal(components.general)
@@ -108,7 +109,7 @@ const extrasMap = allocateAmount(
 );
 const assigned = sumAllocationMaps(generalMap, bonusMap, extrasMap);
 assert(mapTotal(assigned).equals(snapshot.companyCost), 'asignación multi-componente cierra exactamente');
-assert(new Decimal(assigned.get(3)).equals(150), 'destino de bonos recibe solo Q150, sin patronal');
+assert(new Decimal(assigned.get(3)).equals(400), 'destino de bonos recibe Q400 (decreto+ops+catálogo), sin patronal');
 
 const leylaEmployee = {
   sueldo_ordinario: 4100,

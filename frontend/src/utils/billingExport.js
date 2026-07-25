@@ -456,6 +456,14 @@ const MONTH_NAMES_ES_UPPER = [
 
 const ZONA_FRANCA_NOTE = 'No afecta al IVA (Decreto 65-89 Ley de Zonas Francas)';
 
+/** IDs canónicos del maestro (Proquima / Unhesa / Econacional / Cleartec). */
+const COMPANY_ID = {
+  PROQUIMA: 1,
+  UNHESA: 2,
+  ECONACIONAL: 3,
+  CLEARTEC: 4
+};
+
 const shortCompanyName = (name) => {
   if (!name) return '';
   return String(name)
@@ -463,6 +471,130 @@ const shortCompanyName = (name) => {
     .replace(/,?\s*SOCIEDAD\s+AN[OÓ]NIMA\s*$/i, '')
     .trim()
     .toUpperCase();
+};
+
+const normalizeCompanyKey = (name) => shortCompanyName(name)
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .replace(/\s+/g, ' ');
+
+const isProquimaName = (name) => {
+  const n = normalizeCompanyKey(name);
+  return n.includes('PROQUIMA');
+};
+
+const isUnhesaName = (name) => {
+  const n = normalizeCompanyKey(name);
+  return n.includes('UNHESA') || n.includes('UNION HERMANOS') || n.includes('UNION HERMANO');
+};
+
+const isEconacionalName = (name) => normalizeCompanyKey(name).includes('ECONACIONAL');
+
+const isCleartecName = (name) => normalizeCompanyKey(name).includes('CLEARTEC');
+
+const companyIdOf = (line, side) => {
+  const id = Number(side === 'from' ? line?.fromCompanyId : line?.toCompanyId);
+  return Number.isFinite(id) && id > 0 ? id : null;
+};
+
+const isProquimaUnhesaPair = (line) => {
+  const fromId = companyIdOf(line, 'from');
+  const toId = companyIdOf(line, 'to');
+  if (fromId && toId) {
+    const set = new Set([fromId, toId]);
+    return set.has(COMPANY_ID.PROQUIMA) && set.has(COMPANY_ID.UNHESA);
+  }
+  const fromP = isProquimaName(line?.fromCompany);
+  const fromU = isUnhesaName(line?.fromCompany);
+  const toP = isProquimaName(line?.toCompany);
+  const toU = isUnhesaName(line?.toCompany);
+  return (fromP && toU) || (fromU && toP);
+};
+
+const isEconacionalToCleartec = (line) => {
+  const fromId = companyIdOf(line, 'from');
+  const toId = companyIdOf(line, 'to');
+  if (fromId && toId) {
+    return fromId === COMPANY_ID.ECONACIONAL && toId === COMPANY_ID.CLEARTEC;
+  }
+  return isEconacionalName(line?.fromCompany) && isCleartecName(line?.toCompany);
+};
+
+const roundMoney2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+const splitAmountPair = (amount) => {
+  const total = roundMoney2(amount);
+  const first = roundMoney2(total / 2);
+  const second = roundMoney2(total - first);
+  return [first, second];
+};
+
+/**
+ * Transformaciones solo para hoja Vista Previa 2:
+ * - Cleartec zona franca → Cleartec + Sabomix 50/50
+ * - Proquima↔Unhesa → bloque neto positivo + espejo negativo
+ */
+const buildVistaPrevia2DisplayLines = (lines) => {
+  const withSabomix = [];
+  (lines || []).forEach((line) => {
+    if (!isEconacionalToCleartec(line)) {
+      withSabomix.push(line);
+      return;
+    }
+    const [baseA, baseB] = splitAmountPair(line.baseAmount);
+    const [marginA, marginB] = splitAmountPair(line.marginAmount);
+    const [ivaA, ivaB] = splitAmountPair(line.ivaAmount);
+    const [totalA, totalB] = splitAmountPair(line.totalAmount);
+    withSabomix.push({
+      ...line,
+      toCompany: 'CLEARTEC',
+      toCompanyId: COMPANY_ID.CLEARTEC,
+      baseAmount: baseA,
+      marginAmount: marginA,
+      ivaAmount: ivaA,
+      totalAmount: totalA,
+      applyIva: false
+    });
+    withSabomix.push({
+      ...line,
+      toCompany: 'SABOMIX',
+      toCompanyId: null,
+      baseAmount: baseB,
+      marginAmount: marginB,
+      ivaAmount: ivaB,
+      totalAmount: totalB,
+      applyIva: false
+    });
+  });
+
+  const display = [];
+  withSabomix.forEach((line) => {
+    if (!isProquimaUnhesaPair(line)) {
+      display.push(line);
+      return;
+    }
+    // Redondear ambos bloques igual para que el espejo +/- cuadre al céntimo.
+    const positive = {
+      ...line,
+      baseAmount: roundMoney2(line.baseAmount),
+      marginAmount: roundMoney2(line.marginAmount),
+      ivaAmount: roundMoney2(line.ivaAmount),
+      totalAmount: roundMoney2(line.totalAmount)
+    };
+    display.push(positive);
+    display.push({
+      ...positive,
+      fromCompanyId: positive.toCompanyId,
+      toCompanyId: positive.fromCompanyId,
+      fromCompany: positive.toCompany,
+      toCompany: positive.fromCompany,
+      baseAmount: -positive.baseAmount,
+      marginAmount: -positive.marginAmount,
+      ivaAmount: -positive.ivaAmount,
+      totalAmount: -positive.totalAmount
+    });
+  });
+  return display;
 };
 
 const resolveBillingPeriod = (data) => {
@@ -507,7 +639,9 @@ const lineSkipsIva = (line) => {
  * (como el Excel operativo: texto amarillo + tabla BASE/MARGEN/IVA/TOTAL).
  */
 const buildVistaPrevia2Sheet = (wb, data) => {
-  const lines = Array.isArray(data?.lines) ? data.lines : [];
+  const lines = buildVistaPrevia2DisplayLines(
+    Array.isArray(data?.lines) ? data.lines : []
+  );
   const period = resolveBillingPeriod(data);
   const ws = wb.addWorksheet('Vista Previa 2');
 

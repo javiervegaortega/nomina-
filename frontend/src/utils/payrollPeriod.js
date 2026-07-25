@@ -113,12 +113,14 @@ export function findMatchingActiveDraft(activePayrolls, dateStr, companyId, comp
   }) || null;
 }
 
-/** Título editable sugerido: "Segunda Quincena del mes de Julio 2026". */
-export function buildPayrollDraftTitle(dateStr, periodType) {
+/** Título editable sugerido: "Segunda Quincena del mes de Julio 2026 - ECONACIONAL,S.A.". */
+export function buildPayrollDraftTitle(dateStr, periodType, companyLabel = '') {
   const d = parseLocalDate(dateStr);
   const periodLabel = periodType === '2da' ? 'Segunda' : 'Primera';
   const monthName = MONTH_NAMES_ES[d.getMonth()] || '';
-  return `${periodLabel} Quincena del mes de ${monthName} ${d.getFullYear()}`;
+  const base = `${periodLabel} Quincena del mes de ${monthName} ${d.getFullYear()}`;
+  const company = String(companyLabel || '').trim();
+  return company ? `${base} - ${company}` : base;
 }
 
 export function getQuincenaDateRange(draftDateStr, periodType) {
