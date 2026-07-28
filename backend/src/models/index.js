@@ -54,6 +54,12 @@ OperationLog.belongsTo(OperationBatch, { foreignKey: 'batchId', as: 'batch' });
 OperationBatch.belongsTo(User, { foreignKey: 'userId', as: 'user' });
 User.hasMany(OperationBatch, { foreignKey: 'userId' });
 
+OperationBatch.belongsTo(Company, { foreignKey: 'companyId', as: 'companyData' });
+Company.hasMany(OperationBatch, { foreignKey: 'companyId' });
+
+OperationBatch.belongsTo(PayrollDraft, { foreignKey: 'payrollDraftId', as: 'payrollDraft' });
+PayrollDraft.hasMany(OperationBatch, { foreignKey: 'payrollDraftId', as: 'bonusBatches' });
+
 PayrollDraft.hasMany(PayrollDraftEmployee, { foreignKey: 'draftId', as: 'draftEmployees', onDelete: 'CASCADE' });
 PayrollDraftEmployee.belongsTo(PayrollDraft, { foreignKey: 'draftId' });
 

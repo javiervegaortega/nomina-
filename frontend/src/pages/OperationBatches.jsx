@@ -125,23 +125,32 @@ export default function OperationBatches() {
 
   return (
     <Box p={{ base: 3, md: 6, lg: 8 }}>
-      <Flex justify="space-between" align="center" mb={6}>
+      <Flex justify="space-between" align="center" mb={6} flexWrap="wrap" gap={3}>
         <Box>
           <Heading size="lg" fontWeight={800}>Lotes de Operaciones</Heading>
           <Text color="gray.500">Agrupación de bonos y horas extras</Text>
         </Box>
-        {canCreateBatch && (
-          <Button 
-            colorScheme="brand" 
-            leftIcon={<Plus size={16} />} 
-            onClick={onOpen}
-            borderRadius="lg" 
-            transition="all 0.3s"
-            _hover={{ shadow: 'lg' }}
+        <HStack>
+          <Button
+            variant="outline"
+            onClick={() => navigate('/operations/bonuses-history')}
+            borderRadius="lg"
           >
-            Nuevo Lote
+            Historial de Bonos
           </Button>
-        )}
+          {canCreateBatch && (
+            <Button 
+              colorScheme="brand" 
+              leftIcon={<Plus size={16} />} 
+              onClick={onOpen}
+              borderRadius="lg" 
+              transition="all 0.3s"
+              _hover={{ shadow: 'lg' }}
+            >
+              Nuevo Lote
+            </Button>
+          )}
+        </HStack>
       </Flex>
 
       <Box bg={bg} borderRadius="xl" shadow="sm" overflow="hidden" border="1px solid" borderColor={borderColor}>
@@ -166,7 +175,14 @@ export default function OperationBatches() {
                 batches.map(batch => (
                   <Tr key={batch.id} _hover={{ bg: hoverBg }}>
                     <Td>{new Date(batch.createdAt).toLocaleString('es-GT', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</Td>
-                    <Td fontWeight="bold">{batch.title}</Td>
+                    <Td fontWeight="bold">
+                      <HStack spacing={2}>
+                        <Text as="span">{batch.title}</Text>
+                        {batch.purpose === 'BONOS_2DA' && (
+                          <Badge colorScheme="purple" fontSize="0.65rem">Bonos 2ª</Badge>
+                        )}
+                      </HStack>
+                    </Td>
                     <Td>{batch.user?.name || 'Desconocido'}</Td>
                     <Td>{batch.logs?.length || 0}</Td>
                     <Td>{getStatusBadge(batch.status)}</Td>

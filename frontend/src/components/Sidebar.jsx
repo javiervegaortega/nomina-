@@ -35,6 +35,7 @@ const ALL_NAV_SECTIONS = [
     title: 'Operaciones',
     items: [
       { to: '/operations', label: 'Reporte Operativo', icon: ClipboardList },
+      { to: '/operations/bonuses-history', label: 'Historial Bonos', icon: History },
     ],
   },
   {
@@ -56,6 +57,7 @@ function isNavItemVisible(item, user) {
   if (role === 'AUDITOR') {
     return (
       item.to !== '/operations' &&
+      item.to !== '/operations/bonuses-history' &&
       item.to !== '/users' &&
       item.to !== '/billing' &&
       item.to !== '/payroll'
@@ -64,8 +66,12 @@ function isNavItemVisible(item, user) {
   if (role === 'DIGITADOR') {
     return item.to === '/employees' || item.to === '/users' || item.to === '/suspensions' || item.to === '/dashboard';
   }
-  if (role === 'GERENTE') return item.to === '/operations';
-  if (role === 'SOLICITANTE') return item.to === '/operations';
+  if (role === 'GERENTE') {
+    return item.to === '/operations' || item.to === '/operations/bonuses-history';
+  }
+  if (role === 'SOLICITANTE') {
+    return item.to === '/operations' || item.to === '/operations/bonuses-history';
+  }
   return false;
 }
 

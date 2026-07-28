@@ -26,6 +26,10 @@ const {
   parseLocalPayrollDate
 } = require('../services/payrollCalculator.service');
 const { applyScheduledBonusesToEmployees } = require('../services/payrollBonuses.service');
+const {
+  assertNoBlockingBonusesForAudit,
+  clearBatchDraftLink
+} = require('../services/operationBonusBatch.service');
 
 const AUDIT_ROLES = ['AUDITOR', 'ADMIN', 'GERENTE GENERAL'];
 const PAYROLL_WORKFLOW_ROLES = ['NOMINA', 'ADMIN', 'GERENTE GENERAL'];
@@ -470,6 +474,15 @@ const createPayroll = async (req, res) => {
       createdAt: draft.createdAt
     }, validatedCompanies, t);
 
+    // Solo al enviar a auditoría una 2ª: bonos operativos pendientes del mes
+    if (targetStatus === 'auditoria' && String(draft.periodType) === '2da') {
+      await assertNoBlockingBonusesForAudit(
+        canonicalCompanyId,
+        draft.createdAt,
+        t
+      );
+    }
+
     let summary = computePayrollSummary({
       companies: validatedCompanies,
       data: emps,
@@ -526,6 +539,7 @@ const createPayroll = async (req, res) => {
       where: { draftId: draft.id },
       transaction: t
     });
+    await clearBatchDraftLink(draft.id, t);
     await draft.destroy({ transaction: t });
     await t.commit();
 

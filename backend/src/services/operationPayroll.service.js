@@ -103,11 +103,47 @@ const assertActivePayrollForLog = async (date, companyId) => {
   return result.draft;
 };
 
+/** Bonos operativos solo en 2ª quincena (día 16–fin de mes). */
+const assertBonusDateInSecondQuincena = (dateStr) => {
+  if (!dateStr) {
+    const err = new Error('La fecha del bono es requerida.');
+    err.statusCode = 400;
+    throw err;
+  }
+  const parts = String(dateStr).slice(0, 10).split('-');
+  const day = Number(parts[2]);
+  if (!Number.isFinite(day) || day <= 15) {
+    const err = new Error(
+      'Los bonos operativos solo se registran en la 2ª quincena (días 16 al fin de mes).'
+    );
+    err.statusCode = 400;
+    throw err;
+  }
+};
+
+const getMonthBoundsFromDate = (dateStr) => {
+  const parts = String(dateStr || '').slice(0, 10).split('-');
+  if (parts.length < 3) return null;
+  const year = Number(parts[0]);
+  const month = Number(parts[1]);
+  if (!year || !month) return null;
+  const lastDay = new Date(year, month, 0).getDate();
+  const mm = String(month).padStart(2, '0');
+  return {
+    start: `${year}-${mm}-01`,
+    end: `${year}-${mm}-${String(lastDay).padStart(2, '0')}`,
+    year,
+    month
+  };
+};
+
 module.exports = {
   inferPeriodTypeFromDate,
   formatQuincenaLabel,
   findMatchingActiveDraft,
   assertActivePayrollForLog,
+  assertBonusDateInSecondQuincena,
+  getMonthBoundsFromDate,
   draftMatchesCompany,
   normalizeCompaniesList,
 };

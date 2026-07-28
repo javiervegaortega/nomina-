@@ -63,6 +63,45 @@ export function inferPeriodTypeFromDate(dateStr) {
   return d.getDate() <= 15 ? '1ra' : '2da';
 }
 
+/** Bonos operativos solo permitidos en 2ª (día ≥ 16). */
+export function isBonusOperationalDateAllowed(dateStr) {
+  if (!dateStr) return false;
+  return inferPeriodTypeFromDate(dateStr) === '2da';
+}
+
+/**
+ * Bonos que bloquean envío a auditoría (pendientes / devueltos) en el mes del draft.
+ */
+export function countBlockingOperationalBonuses(operationLogs, companyId, draftDateStr) {
+  if (!companyId || !draftDateStr) return 0;
+  const ref = parseLocalDate(draftDateStr);
+  const year = ref.getFullYear();
+  const month = ref.getMonth();
+  const blocking = new Set(['PENDING_MANAGER', 'RETURNED']);
+  return (Array.isArray(operationLogs) ? operationLogs : []).filter((log) => {
+    if (log?.type !== 'BONO') return false;
+    if (!blocking.has(String(log.status || ''))) return false;
+    if (String(log.companyId) !== String(companyId)) return false;
+    const d = parseLocalDate(log.date);
+    return d.getFullYear() === year && d.getMonth() === month;
+  }).length;
+}
+
+export function countApprovedOperationalBonuses(operationLogs, companyId, draftDateStr) {
+  if (!companyId || !draftDateStr) return 0;
+  const ref = parseLocalDate(draftDateStr);
+  const year = ref.getFullYear();
+  const month = ref.getMonth();
+  const ok = new Set(['APPROVED_MANAGER', 'PROCESSED_PAYROLL']);
+  return (Array.isArray(operationLogs) ? operationLogs : []).filter((log) => {
+    if (log?.type !== 'BONO') return false;
+    if (!ok.has(String(log.status || ''))) return false;
+    if (String(log.companyId) !== String(companyId)) return false;
+    const d = parseLocalDate(log.date);
+    return d.getFullYear() === year && d.getMonth() === month;
+  }).length;
+}
+
 /** Normaliza companies del draft (array, JSON string u objeto) a un array. */
 export function normalizeDraftCompanies(draftCompanies) {
   if (Array.isArray(draftCompanies)) return draftCompanies;

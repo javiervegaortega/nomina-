@@ -7,7 +7,10 @@ const {
   sequelize
 } = require('../models');
 const { sendOperationLogEmail, sendOperationRejectToManagerEmail } = require('../services/email.service');
-const { assertActivePayrollForLog } = require('../services/operationPayroll.service');
+const {
+  assertActivePayrollForLog,
+  assertBonusDateInSecondQuincena
+} = require('../services/operationPayroll.service');
 const {
   syncOperationLogTransition
 } = require('../services/payrollDraftInputs.service');
@@ -33,7 +36,17 @@ const getAll = async (req, res) => {
 const create = async (req, res) => {
   let transaction;
   try {
-    const { type, hoursQty, hourType, bonusAmount, date, companyId } = req.body;
+    const { hoursQty, hourType, bonusAmount, date, companyId, batchId } = req.body;
+    let type = req.body.type;
+    let resolvedCompanyId = companyId;
+
+    if (batchId) {
+      const batch = await OperationBatch.findByPk(batchId);
+      if (batch?.purpose === 'BONOS_2DA') {
+        type = 'BONO';
+        if (batch.companyId) resolvedCompanyId = batch.companyId;
+      }
+    }
 
     if (type === 'HORA_EXTRA') {
       if (!hourType || !['SIMPLE', 'DOBLE', 'NOCTURNA'].includes(hourType)) {
@@ -46,9 +59,10 @@ const create = async (req, res) => {
       if (!bonusAmount || Number(bonusAmount) <= 0) {
         return res.status(400).json({ error: 'bonusAmount debe ser mayor a 0 para bonos.' });
       }
+      assertBonusDateInSecondQuincena(date);
     }
 
-    await assertActivePayrollForLog(date, companyId);
+    await assertActivePayrollForLog(date, resolvedCompanyId);
 
     const isGlobalRole = ['admin', 'nomina', 'gerente general'].includes(req.user?.role?.toLowerCase());
     const status = isGlobalRole ? 'APPROVED_MANAGER' : 'PENDING_MANAGER';
@@ -56,6 +70,8 @@ const create = async (req, res) => {
     transaction = await sequelize.transaction();
     const newLog = await OperationLog.create({
       ...req.body,
+      type,
+      companyId: resolvedCompanyId,
       status: status
     }, { transaction });
     await syncOperationLogTransition({
@@ -204,6 +220,17 @@ const update = async (req, res) => {
       if (!bonusAmount || Number(bonusAmount) <= 0) {
         await transaction.rollback();
         return res.status(400).json({ error: 'bonusAmount debe ser mayor a 0 para bonos.' });
+      }
+      assertBonusDateInSecondQuincena(date);
+    }
+
+    if (log.batchId) {
+      const batch = await OperationBatch.findByPk(log.batchId, { transaction });
+      if (batch?.purpose === 'BONOS_2DA' && type !== 'BONO') {
+        await transaction.rollback();
+        return res.status(400).json({
+          error: 'Este lote es solo para bonos de 2ª quincena.'
+        });
       }
     }
 

@@ -7,6 +7,10 @@ const {
 } = require('../models');
 const { calculatePayrollBatch } = require('../services/payrollCalculator.service');
 const { applyScheduledBonusesToEmployees } = require('../services/payrollBonuses.service');
+const {
+  ensureBonos2daBatchForDraft,
+  clearBatchDraftLink
+} = require('../services/operationBonusBatch.service');
 
 /** Exige exactamente una empresa concreta (bloquea ALL / vacías / multi-empresa). */
 const requireSingleCompany = (companies) => {
@@ -196,12 +200,24 @@ const create = async (req, res) => {
       await PayrollDraftEmployee.bulkCreate(employeeRecords, { transaction: t });
     }
 
+    let bonusBatch = null;
+    if (String(periodType) === '2da' && req.user?.id) {
+      bonusBatch = await ensureBonos2daBatchForDraft({
+        draftId: id,
+        companyId,
+        draftDate: createdAt || newDraft.createdAt,
+        userId: req.user.id,
+        transaction: t
+      });
+    }
+
     await t.commit();
     res.status(201).json({
       ...req.body,
       companies: validatedCompanies,
       employees: calculatedEmployees,
-      revision: Number(newDraft.revision) || 0
+      revision: Number(newDraft.revision) || 0,
+      bonusBatchId: bonusBatch?.id || null
     }); // Return the calculated payload
   } catch (err) {
     await t.rollback();
@@ -337,14 +353,21 @@ const update = async (req, res) => {
 };
 
 const remove = async (req, res) => {
+  const t = await sequelize.transaction();
   try {
-    const draft = await PayrollDraft.findByPk(req.params.id);
-    if (!draft) return res.status(404).json({ error: 'Borrador no encontrado' });
-    
+    const draft = await PayrollDraft.findByPk(req.params.id, { transaction: t });
+    if (!draft) {
+      await t.rollback();
+      return res.status(404).json({ error: 'Borrador no encontrado' });
+    }
+
+    await clearBatchDraftLink(draft.id, t);
     // Cascade delete will handle PayrollDraftEmployee
-    await draft.destroy();
+    await draft.destroy({ transaction: t });
+    await t.commit();
     res.json({ message: 'Borrador eliminado' });
   } catch (err) {
+    await t.rollback();
     res.status(400).json({ error: err.message });
   }
 };

@@ -4,7 +4,8 @@ import {
   isDateInQuincena,
   parseLocalDate,
   formatLocalDateKey,
-  toPayrollDateISO
+  toPayrollDateISO,
+  countBlockingOperationalBonuses
 } from '../utils/payrollPeriod';
 import { getCuotaLaboralRate, getRecurringDeductionFactor } from '../utils/payrollCalculator';
 import { calculateMonthlyISR } from '../data/mockData';
@@ -618,13 +619,13 @@ export function DataProvider({ children }) {
     const snapshot = JSON.parse(JSON.stringify(draft));
     const snapshotRevision = Number(snapshot.revision);
     const overrideRevision = Number(expectedRevisionOverride);
+    const mapRevision = Number(draftServerRevisions.current.get(key));
+    const fromSnapshot = Number.isInteger(snapshotRevision) ? snapshotRevision : 0;
+    const fromMap = Number.isInteger(mapRevision) ? mapRevision : 0;
+    // Preferir la revisión de servidor conocida más alta (evita PUT con snapshot React stale).
     const capturedServerRevision = Number.isInteger(overrideRevision)
       ? overrideRevision
-      : (
-          Number.isInteger(snapshotRevision)
-            ? snapshotRevision
-            : (draftServerRevisions.current.get(key) ?? 0)
-        );
+      : Math.max(fromSnapshot, fromMap);
     const previousTask = draftSyncChains.current.get(key) || Promise.resolve();
 
     const task = previousTask
@@ -639,9 +640,14 @@ export function DataProvider({ children }) {
           // rebasar el snapshot. Un refresco externo nunca debe convertir un
           // snapshot viejo en una escritura válida contra una revisión nueva.
           const previousSavedRevision = Number(previousSaved?.revision);
-          const expectedServerRevision = Number.isInteger(previousSavedRevision)
+          const mapNow = Number(draftServerRevisions.current.get(key));
+          const baseExpected = Number.isInteger(previousSavedRevision)
             ? previousSavedRevision
             : capturedServerRevision;
+          const expectedServerRevision = Math.max(
+            baseExpected,
+            Number.isInteger(mapNow) ? mapNow : 0
+          );
           const response = await fetch(`http://localhost:3000/api/payroll-drafts/${key}`, {
             method: 'PUT',
             headers: getAuthHeader(),
@@ -748,6 +754,48 @@ export function DataProvider({ children }) {
         'Una nómina cambió en otra pestaña o sesión. Recárguela y revise los datos antes de continuar.'
       );
     }
+  };
+
+  /**
+   * Persiste el borrador antes de enviar a auditoría.
+   * Si hay 409 por revisión stale (típico tras editar un bono), reintenta una vez
+   * con currentRevision del servidor manteniendo el payload local (empleados).
+   */
+  const persistDraftBeforeClose = async (draftPayload, localRevision = null, serverRevision = null) => {
+    const key = String(draftPayload?.id ?? '');
+    if (!key) return null;
+
+    // Permitir el intento aunque un autosave previo haya marcado conflicto.
+    draftConflictIds.current.delete(key);
+
+    const known = Number(draftServerRevisions.current.get(key));
+    const hinted = Number(serverRevision);
+    const fromDraft = Number(draftPayload?.revision);
+    const expected = Math.max(
+      Number.isInteger(hinted) ? hinted : 0,
+      Number.isInteger(known) ? known : 0,
+      Number.isInteger(fromDraft) ? fromDraft : 0
+    );
+
+    let saved = await persistDraftPatch(
+      draftPayload,
+      localRevision ?? bumpDraftSyncRevision(key),
+      expected
+    );
+    if (saved) return saved;
+
+    const currentRevision = Number(draftServerRevisions.current.get(key));
+    if (!draftConflictIds.current.has(key) || !Number.isInteger(currentRevision)) {
+      return null;
+    }
+
+    draftConflictIds.current.delete(key);
+    saved = await persistDraftPatch(
+      { ...draftPayload, revision: currentRevision },
+      bumpDraftSyncRevision(key),
+      currentRevision
+    );
+    return saved;
   };
 
   // Las APIs de novedades actualizan el borrador dentro de su propia
@@ -1662,9 +1710,10 @@ export function DataProvider({ children }) {
         // aunque este guardado permanezca diferido por 1.5 segundos.
         const revision = bumpDraftSyncRevision(id);
         const draftServerRevision = Number(draft.revision);
-        const serverRevision = Number.isInteger(draftServerRevision)
-          ? draftServerRevision
-          : (draftServerRevisions.current.get(draftKey) ?? 0);
+        const knownServerRevision = Number(draftServerRevisions.current.get(draftKey));
+        const fromDraft = Number.isInteger(draftServerRevision) ? draftServerRevision : 0;
+        const fromMap = Number.isInteger(knownServerRevision) ? knownServerRevision : 0;
+        const serverRevision = Math.max(fromDraft, fromMap);
         pendingDraftSaves.current.set(draftKey, {
           draft,
           localRevision: revision,
@@ -1819,6 +1868,22 @@ export function DataProvider({ children }) {
         };
       }
 
+      // Primer envío a auditoría de 2ª: bloquear si hay bonos operativos pendientes
+      if (!draft.isApproved && draft.periodType === '2da') {
+        const companyId = draftCompanies[0];
+        const pendingBonuses = countBlockingOperationalBonuses(
+          operationLogs,
+          companyId,
+          draft.createdAt
+        );
+        if (pendingBonuses > 0) {
+          return {
+            success: false,
+            error: `Hay ${pendingBonuses} bono(s) pendientes de aprobación o sin enviar a gerencia. Resuélvelos antes de enviar la nómina a auditoría.`
+          };
+        }
+      }
+
       const logsToProcess = [];
       const commissionsToProcess = [];
 
@@ -1844,19 +1909,21 @@ export function DataProvider({ children }) {
         const pendingSave = pendingDraftSaves.current.get(String(id));
         if (pendingSave) {
           pendingDraftSaves.current.delete(String(id));
-          persistedPendingDraft = await persistDraftPatch(
+          persistedPendingDraft = await persistDraftBeforeClose(
             pendingSave.draft,
             pendingSave.localRevision,
             pendingSave.serverRevision
           );
           if (!persistedPendingDraft) {
             throw new Error(
-              'No se pudo guardar el último cambio de la nómina antes de enviarla.'
+              draftConflictIds.current.has(String(id))
+                ? 'La nómina cambió en otra pestaña o sesión. Recargue la aplicación, revise los valores actualizados y vuelva a enviarla.'
+                : 'No se pudo guardar el último cambio de la nómina antes de enviarla.'
             );
           }
         }
         if (!draft.isApproved && !persistedPendingDraft) {
-          const persistedDraft = await persistDraftPatch(draft);
+          const persistedDraft = await persistDraftBeforeClose(draft);
           if (!persistedDraft) {
             const conflictMessage = draftConflictIds.current.has(String(id))
               ? 'La nómina cambió en otra pestaña o sesión. Recargue la aplicación, revise los valores actualizados y vuelva a enviarla.'

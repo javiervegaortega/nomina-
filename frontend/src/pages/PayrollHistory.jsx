@@ -20,7 +20,7 @@ import {
   Modal, ModalOverlay, ModalContent, ModalHeader, ModalBody,
   ModalFooter, ModalCloseButton, Divider, SimpleGrid,
   Menu, MenuButton, MenuList, MenuItem, MenuItemOption, MenuOptionGroup,
-  Skeleton, SkeletonText, ButtonGroup, Tooltip
+  Skeleton, SkeletonText, ButtonGroup, Tooltip, Collapse
 } from '@chakra-ui/react';
 
 const getHtml2Canvas = () => import('html2canvas').then(m => m.default);
@@ -35,21 +35,18 @@ const MONTH_NAMES_ES = [
   'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
 ];
 
-/** Clave de sección: YYYY-MM|1ra|2da */
+/** Clave de sección: YYYY-MM */
 export const getPeriodKey = (group) => {
   const d = new Date(group?.date || Date.now());
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
-  const pt = group?.periodType === '2da' ? '2da' : '1ra';
-  return `${y}-${m}|${pt}`;
+  return `${y}-${m}`;
 };
 
 export const formatPeriodLabel = (key) => {
-  const [ym, pt] = String(key || '').split('|');
-  const [y, m] = (ym || '').split('-');
+  const [y, m] = String(key || '').split('-');
   const monthName = MONTH_NAMES_ES[Number(m) - 1] || m || '';
-  const periodLabel = pt === '2da' ? '2da Quincena' : '1ra Quincena';
-  return `${monthName} ${y} · ${periodLabel}`.trim();
+  return `${monthName} ${y}`.trim();
 };
 
 export const getEmployeeFullName = (e) => {
@@ -163,6 +160,11 @@ export default function PayrollHistory() {
   const [rejectGroup, setRejectGroup] = useState(null);
   const [rejectNote, setRejectNote] = useState('');
   const [isRejecting, setIsRejecting] = useState(false);
+  const [expandedMonths, setExpandedMonths] = useState({});
+
+  const toggleMonth = useCallback((key) => {
+    setExpandedMonths((prev) => ({ ...prev, [key]: !prev[key] }));
+  }, []);
 
   // Agrupar por título + empresa (el título auto no incluye empresa y unía nóminas distintas)
   const groupedHistory = useMemo(() => {
@@ -292,7 +294,6 @@ export default function PayrollHistory() {
         sections[key] = {
           key,
           label: formatPeriodLabel(key),
-          periodType: g.periodType === '2da' ? '2da' : '1ra',
           groups: [],
           employeesCount: 0,
           grossTotal: 0,
@@ -308,7 +309,31 @@ export default function PayrollHistory() {
         sections[key].sortDate = g.date;
       }
     });
-    return Object.values(sections).sort((a, b) => new Date(b.sortDate) - new Date(a.sortDate));
+
+    const buildQuincena = (periodType, groups) => {
+      const filtered = groups
+        .filter((g) => (g.periodType || '1ra') === periodType)
+        .sort((a, b) => new Date(b.date) - new Date(a.date));
+      if (filtered.length === 0) return null;
+      return {
+        periodType,
+        label: periodType === '2da' ? '2da Quincena' : '1ra Quincena',
+        groups: filtered,
+        employeesCount: filtered.reduce((s, g) => s + (g.employeesCount || 0), 0),
+        grossTotal: filtered.reduce((s, g) => s + (g.grossTotal || 0), 0),
+        netTotal: filtered.reduce((s, g) => s + (g.netTotal || 0), 0)
+      };
+    };
+
+    return Object.values(sections)
+      .map((section) => ({
+        ...section,
+        groups: [...section.groups].sort((a, b) => new Date(b.date) - new Date(a.date)),
+        quincenas: ['1ra', '2da']
+          .map((pt) => buildQuincena(pt, section.groups))
+          .filter(Boolean)
+      }))
+      .sort((a, b) => new Date(b.sortDate) - new Date(a.sortDate));
   }, [pagination.paginatedData]);
 
   const handleApprovePayroll = async (group) => {
@@ -453,7 +478,7 @@ export default function PayrollHistory() {
           Historial de Nóminas
         </Heading>
         <Text color="gray.500">
-          Registro inmutable de procesos de nómina cerrados y agrupados por periodo
+          Registro inmutable de procesos de nómina cerrados y agrupados por mes
         </Text>
       </Box>
 
@@ -520,159 +545,217 @@ export default function PayrollHistory() {
       </Flex>
 
       <Text fontSize="sm" color="gray.500" mb={4}>
-        {filteredHistory.length} nómina{filteredHistory.length !== 1 ? 's' : ''} · agrupadas por periodo
+        {filteredHistory.length} nómina{filteredHistory.length !== 1 ? 's' : ''} · agrupadas por mes · clic para ver quincenas
       </Text>
 
       <VStack spacing={5} align="stretch">
-        {periodSections.map((section) => (
-          <Box
-            key={section.key}
-            bg={cardBg}
-            borderRadius="xl"
-            borderWidth="1px"
-            borderColor={borderColor}
-            shadow="sm"
-            overflow="hidden"
-          >
-            <Box p={{ base: 4, md: 5 }} borderBottomWidth="1px" borderColor={borderColor} bg={headerBg}>
-              <Flex justify="space-between" align="start" gap={3} flexWrap="wrap">
-                <Box>
-                  <HStack spacing={2} mb={1} flexWrap="wrap">
-                    <Flex align="center" gap={1.5} color="brand.400">
-                      <Calendar size={16} />
-                      <Text fontSize="md" fontWeight={800}>{section.label}</Text>
-                    </Flex>
-                    <Badge colorScheme={section.periodType === '2da' ? 'purple' : 'teal'}>
-                      {section.periodType === '2da' ? '2da Quincena' : '1ra Quincena'}
-                    </Badge>
-                  </HStack>
-                  <Text fontSize="xs" color="gray.500">
-                    {section.groups.length} nómina{section.groups.length !== 1 ? 's' : ''} en este periodo
-                  </Text>
-                </Box>
-                <SimpleGrid columns={{ base: 1, sm: 3 }} spacing={3} minW={{ base: '100%', sm: '360px' }}>
+        {periodSections.map((section) => {
+          const isExpanded = !!expandedMonths[section.key];
+          return (
+            <Box
+              key={section.key}
+              bg={cardBg}
+              borderRadius="xl"
+              borderWidth="1px"
+              borderColor={borderColor}
+              shadow="sm"
+              overflow="hidden"
+            >
+              <Box
+                as="button"
+                type="button"
+                w="100%"
+                textAlign="left"
+                p={{ base: 4, md: 5 }}
+                borderBottomWidth={isExpanded ? '1px' : '0'}
+                borderColor={borderColor}
+                bg={headerBg}
+                cursor="pointer"
+                _hover={{ opacity: 0.95 }}
+                onClick={() => toggleMonth(section.key)}
+                aria-expanded={isExpanded}
+              >
+                <Flex justify="space-between" align="start" gap={3} flexWrap="wrap">
                   <Box>
-                    <Text fontSize="xxs" color="gray.500" textTransform="uppercase" fontWeight={700}>Empleados</Text>
-                    <Text fontWeight="bold">{section.employeesCount}</Text>
+                    <HStack spacing={2} mb={1} flexWrap="wrap">
+                      <Flex align="center" gap={1.5} color="brand.400">
+                        <Box
+                          as="span"
+                          display="inline-flex"
+                          transition="transform 0.2s"
+                          transform={isExpanded ? 'rotate(0deg)' : 'rotate(-90deg)'}
+                        >
+                          <ChevronDown size={16} />
+                        </Box>
+                        <Calendar size={16} />
+                        <Text fontSize="md" fontWeight={800}>{section.label}</Text>
+                      </Flex>
+                    </HStack>
+                    <Text fontSize="xs" color="gray.500">
+                      {section.groups.length} nómina{section.groups.length !== 1 ? 's' : ''} en este mes
+                      {!isExpanded ? ' · clic para ver quincenas' : ''}
+                    </Text>
                   </Box>
-                  <Box>
-                    <Text fontSize="xxs" color="gray.500" textTransform="uppercase" fontWeight={700}>Bruto</Text>
-                    <Text fontWeight="bold" fontFamily="mono">{formatQ(section.grossTotal)}</Text>
-                  </Box>
-                  <Box>
-                    <Text fontSize="xxs" color="gray.500" textTransform="uppercase" fontWeight={700}>Neto</Text>
-                    <Text fontWeight="bold" fontFamily="mono" color="gold.500">{formatQ(section.netTotal)}</Text>
-                  </Box>
-                </SimpleGrid>
-              </Flex>
-            </Box>
+                  <SimpleGrid columns={{ base: 1, sm: 3 }} spacing={3} minW={{ base: '100%', sm: '360px' }}>
+                    <Box>
+                      <Text fontSize="xxs" color="gray.500" textTransform="uppercase" fontWeight={700}>Empleados</Text>
+                      <Text fontWeight="bold">{section.employeesCount}</Text>
+                    </Box>
+                    <Box>
+                      <Text fontSize="xxs" color="gray.500" textTransform="uppercase" fontWeight={700}>Bruto</Text>
+                      <Text fontWeight="bold" fontFamily="mono">{formatQ(section.grossTotal)}</Text>
+                    </Box>
+                    <Box>
+                      <Text fontSize="xxs" color="gray.500" textTransform="uppercase" fontWeight={700}>Neto</Text>
+                      <Text fontWeight="bold" fontFamily="mono" color="gold.500">{formatQ(section.netTotal)}</Text>
+                    </Box>
+                  </SimpleGrid>
+                </Flex>
+              </Box>
 
-            <TableContainer overflowX="auto">
-              <Table variant="simple" size="sm">
-                <Thead bg={headerBg}>
-                  <Tr>
-                    <Th>Título</Th>
-                    <Th>Empresa</Th>
-                    <Th>Fecha</Th>
-                    <Th>Estado</Th>
-                    <Th isNumeric>Empleados</Th>
-                    <Th isNumeric>Bruto</Th>
-                    <Th isNumeric>Neto</Th>
-                    <Th textAlign="right">Acciones</Th>
-                  </Tr>
-                </Thead>
-                <Tbody>
-                  {section.groups.map((group) => {
-                    const companiesLabel = group.companies.size === 0
-                      ? 'Sin empresa'
-                      : Array.from(group.companies).join(', ');
-                    return (
-                      <Tr key={group.groupKey || `${group.title}::${companiesLabel}`} _hover={{ bg: toolbarBg }}>
-                        <Td maxW="280px">
-                          <Text fontWeight={700} noOfLines={2}>{group.title}</Text>
-                        </Td>
-                        <Td maxW="200px">
-                          <Flex align="center" gap={1}>
-                            <Building2 size={14} />
-                            <Text fontSize="sm" noOfLines={2}>{companiesLabel}</Text>
-                          </Flex>
-                        </Td>
-                        <Td whiteSpace="nowrap">{new Date(group.date).toLocaleDateString()}</Td>
-                        <Td>
-                          <Badge colorScheme={group.status === 'auditoria' ? 'orange' : 'gray'}>
-                            {group.status === 'auditoria' ? 'En Auditoría' : 'Cerrada'}
-                          </Badge>
-                        </Td>
-                        <Td isNumeric>{group.employeesCount}</Td>
-                        <Td isNumeric fontFamily="mono">{formatQ(group.grossTotal)}</Td>
-                        <Td isNumeric fontFamily="mono" fontWeight={800} color="gold.500">{formatQ(group.netTotal)}</Td>
-                        <Td textAlign="right">
-                          <HStack spacing={1} justify="flex-end">
-                            <Tooltip label="Ver detalle">
-                              <IconButton
-                                aria-label="Ver Detalle"
-                                icon={<Eye size={16} />}
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => setSelectedGroup(group)}
-                              />
-                            </Tooltip>
-                            {group.status === 'auditoria' && canAuditPayroll(user?.role) && (
-                              <>
-                                <Tooltip label="Aprobar Nómina">
-                                  <Button size="sm" colorScheme="green" variant="ghost" onClick={() => handleApprovePayroll(group)}>
-                                    Aprobar
-                                  </Button>
-                                </Tooltip>
-                                <Tooltip label="Corregir Nómina">
-                                  <Button
-                                    size="sm"
-                                    colorScheme="red"
-                                    variant="ghost"
-                                    onClick={() => {
-                                      setRejectGroup(group);
-                                      setRejectNote('');
-                                    }}
-                                  >
-                                    Corregir
-                                  </Button>
-                                </Tooltip>
-                              </>
-                            )}
-                            {!isReadOnly && group.periodType === '2da' && (user?.role === 'ADMIN' || user?.role === 'NOMINA' || user?.role === 'GERENTE GENERAL') && (
-                              <Tooltip label="Solicitar Reactivación">
-                                <IconButton
-                                  aria-label="Reactivar Nómina"
-                                  icon={<RotateCcw size={16} />}
-                                  size="sm"
-                                  colorScheme="blue"
-                                  variant="ghost"
-                                  onClick={() => handleRequestReactivation(group)}
-                                />
-                              </Tooltip>
-                            )}
-                            {!isReadOnly && (
-                              <Tooltip label="Eliminar registro">
-                                <IconButton
-                                  aria-label="Eliminar Registro"
-                                  icon={<Trash2 size={16} />}
-                                  size="sm"
-                                  colorScheme="red"
-                                  variant="ghost"
-                                  onClick={() => handleDeleteGroup(group)}
-                                />
-                              </Tooltip>
-                            )}
+              <Collapse in={isExpanded} animateOpacity>
+                <VStack spacing={0} align="stretch">
+                  {section.quincenas.map((quincena, qIdx) => (
+                    <Box
+                      key={`${section.key}-${quincena.periodType}`}
+                      borderTopWidth={qIdx > 0 ? '1px' : '0'}
+                      borderColor={borderColor}
+                    >
+                      <Box px={{ base: 4, md: 5 }} py={3} bg={toolbarBg}>
+                        <Flex justify="space-between" align="center" gap={3} flexWrap="wrap">
+                          <HStack spacing={2}>
+                            <Badge colorScheme={quincena.periodType === '2da' ? 'purple' : 'teal'}>
+                              {quincena.label}
+                            </Badge>
+                            <Text fontSize="xs" color="gray.500">
+                              {quincena.groups.length} nómina{quincena.groups.length !== 1 ? 's' : ''}
+                            </Text>
                           </HStack>
-                        </Td>
-                      </Tr>
-                    );
-                  })}
-                </Tbody>
-              </Table>
-            </TableContainer>
-          </Box>
-        ))}
+                          <HStack spacing={4} fontSize="sm" flexWrap="wrap">
+                            <Text color="gray.500">
+                              Empleados: <Text as="span" fontWeight={700} color="inherit">{quincena.employeesCount}</Text>
+                            </Text>
+                            <Text color="gray.500">
+                              Bruto: <Text as="span" fontWeight={700} fontFamily="mono" color="inherit">{formatQ(quincena.grossTotal)}</Text>
+                            </Text>
+                            <Text color="gray.500">
+                              Neto: <Text as="span" fontWeight={700} fontFamily="mono" color="gold.500">{formatQ(quincena.netTotal)}</Text>
+                            </Text>
+                          </HStack>
+                        </Flex>
+                      </Box>
+
+                      <TableContainer overflowX="auto">
+                        <Table variant="simple" size="sm">
+                          <Thead bg={headerBg}>
+                            <Tr>
+                              <Th>Título</Th>
+                              <Th>Empresa</Th>
+                              <Th>Fecha</Th>
+                              <Th>Estado</Th>
+                              <Th isNumeric>Empleados</Th>
+                              <Th isNumeric>Bruto</Th>
+                              <Th isNumeric>Neto</Th>
+                              <Th textAlign="right">Acciones</Th>
+                            </Tr>
+                          </Thead>
+                          <Tbody>
+                            {quincena.groups.map((group) => {
+                              const companiesLabel = group.companies.size === 0
+                                ? 'Sin empresa'
+                                : Array.from(group.companies).join(', ');
+                              return (
+                                <Tr key={group.groupKey || `${group.title}::${companiesLabel}`} _hover={{ bg: toolbarBg }}>
+                                  <Td maxW="280px">
+                                    <Text fontWeight={700} noOfLines={2}>{group.title}</Text>
+                                  </Td>
+                                  <Td maxW="200px">
+                                    <Flex align="center" gap={1}>
+                                      <Building2 size={14} />
+                                      <Text fontSize="sm" noOfLines={2}>{companiesLabel}</Text>
+                                    </Flex>
+                                  </Td>
+                                  <Td whiteSpace="nowrap">{new Date(group.date).toLocaleDateString()}</Td>
+                                  <Td>
+                                    <Badge colorScheme={group.status === 'auditoria' ? 'orange' : 'gray'}>
+                                      {group.status === 'auditoria' ? 'En Auditoría' : 'Cerrada'}
+                                    </Badge>
+                                  </Td>
+                                  <Td isNumeric>{group.employeesCount}</Td>
+                                  <Td isNumeric fontFamily="mono">{formatQ(group.grossTotal)}</Td>
+                                  <Td isNumeric fontFamily="mono" fontWeight={800} color="gold.500">{formatQ(group.netTotal)}</Td>
+                                  <Td textAlign="right">
+                                    <HStack spacing={1} justify="flex-end">
+                                      <Tooltip label="Ver detalle">
+                                        <IconButton
+                                          aria-label="Ver Detalle"
+                                          icon={<Eye size={16} />}
+                                          size="sm"
+                                          variant="ghost"
+                                          onClick={() => setSelectedGroup(group)}
+                                        />
+                                      </Tooltip>
+                                      {group.status === 'auditoria' && canAuditPayroll(user?.role) && (
+                                        <>
+                                          <Tooltip label="Aprobar Nómina">
+                                            <Button size="sm" colorScheme="green" variant="ghost" onClick={() => handleApprovePayroll(group)}>
+                                              Aprobar
+                                            </Button>
+                                          </Tooltip>
+                                          <Tooltip label="Corregir Nómina">
+                                            <Button
+                                              size="sm"
+                                              colorScheme="red"
+                                              variant="ghost"
+                                              onClick={() => {
+                                                setRejectGroup(group);
+                                                setRejectNote('');
+                                              }}
+                                            >
+                                              Corregir
+                                            </Button>
+                                          </Tooltip>
+                                        </>
+                                      )}
+                                      {!isReadOnly && group.periodType === '2da' && (user?.role === 'ADMIN' || user?.role === 'NOMINA' || user?.role === 'GERENTE GENERAL') && (
+                                        <Tooltip label="Solicitar Reactivación">
+                                          <IconButton
+                                            aria-label="Reactivar Nómina"
+                                            icon={<RotateCcw size={16} />}
+                                            size="sm"
+                                            colorScheme="blue"
+                                            variant="ghost"
+                                            onClick={() => handleRequestReactivation(group)}
+                                          />
+                                        </Tooltip>
+                                      )}
+                                      {!isReadOnly && (
+                                        <Tooltip label="Eliminar registro">
+                                          <IconButton
+                                            aria-label="Eliminar Registro"
+                                            icon={<Trash2 size={16} />}
+                                            size="sm"
+                                            colorScheme="red"
+                                            variant="ghost"
+                                            onClick={() => handleDeleteGroup(group)}
+                                          />
+                                        </Tooltip>
+                                      )}
+                                    </HStack>
+                                  </Td>
+                                </Tr>
+                              );
+                            })}
+                          </Tbody>
+                        </Table>
+                      </TableContainer>
+                    </Box>
+                  ))}
+                </VStack>
+              </Collapse>
+            </Box>
+          );
+        })}
 
         {filteredHistory.length === 0 && (
           <VStack spacing={4} py={12} align="center" color="gray.500">

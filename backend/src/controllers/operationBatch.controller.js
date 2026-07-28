@@ -15,6 +15,7 @@ const {
 const {
   syncOperationLogTransitions
 } = require('../services/payrollDraftInputs.service');
+const { Op } = require('sequelize');
 
 const NOMINA_ROLES = ['ADMIN', 'NOMINA', 'AUDITOR'];
 
@@ -27,27 +28,39 @@ const getGerentesForBatch = async (batch) => {
   });
 };
 
+const batchInclude = [
+  { model: User, as: 'user', attributes: ['id', 'name', 'role', 'idDepartamento'] },
+  {
+    model: OperationLog,
+    as: 'logs',
+    include: [
+      {
+        model: Employee,
+        attributes: [
+          'id', 'primer_nombre', 'segundo_nombre', 'otro_nombre',
+          'primer_apellido', 'segundo_apellido', 'empresa_principal', 'dpi', 'puesto', 'estado'
+        ]
+      },
+      { model: Company, as: 'companyData', attributes: ['id', 'nombre_comercial', 'nit'] }
+    ]
+  },
+  { model: Company, as: 'companyData', attributes: ['id', 'nombre_comercial', 'nit'] }
+];
+
 const getAll = async (req, res) => {
   try {
     const whereClause = {};
     if (req.user?.role === 'SOLICITANTE') {
-      whereClause.userId = req.user.id;
+      // Propios + lotes compartidos de bonos 2ª (auto-creados con la nómina)
+      whereClause[Op.or] = [
+        { userId: req.user.id },
+        { purpose: 'BONOS_2DA' }
+      ];
     }
 
-    const employeeAttrs = ['id', 'primer_nombre', 'segundo_nombre', 'otro_nombre', 'primer_apellido', 'segundo_apellido', 'empresa_principal', 'dpi', 'puesto', 'estado'];
     const batches = await OperationBatch.findAll({
       where: whereClause,
-      include: [
-        { model: User, as: 'user', attributes: ['id', 'name', 'role', 'idDepartamento'] },
-        { 
-          model: OperationLog, 
-          as: 'logs',
-          include: [
-            { model: Employee, attributes: employeeAttrs },
-            { model: Company, as: 'companyData', attributes: ['id', 'nombre_comercial', 'nit'] }
-          ]
-        }
-      ],
+      include: batchInclude,
       order: [['createdAt', 'DESC']]
     });
     res.json(batches);
@@ -58,21 +71,19 @@ const getAll = async (req, res) => {
 
 const getById = async (req, res) => {
   try {
-    const employeeAttrs = ['id', 'primer_nombre', 'segundo_nombre', 'otro_nombre', 'primer_apellido', 'segundo_apellido', 'empresa_principal', 'dpi', 'puesto', 'estado'];
     const batch = await OperationBatch.findByPk(req.params.id, {
-      include: [
-        { model: User, as: 'user', attributes: ['id', 'name', 'role', 'idDepartamento'] },
-        { 
-          model: OperationLog, 
-          as: 'logs',
-          include: [
-            { model: Employee, attributes: employeeAttrs },
-            { model: Company, as: 'companyData', attributes: ['id', 'nombre_comercial', 'nit'] }
-          ]
-        }
-      ]
+      include: batchInclude
     });
     if (!batch) return res.status(404).json({ error: 'Lote no encontrado' });
+
+    if (
+      req.user?.role === 'SOLICITANTE'
+      && Number(batch.userId) !== Number(req.user.id)
+      && batch.purpose !== 'BONOS_2DA'
+    ) {
+      return res.status(403).json({ error: 'No tienes acceso a este lote.' });
+    }
+
     res.json(batch);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -81,11 +92,13 @@ const getById = async (req, res) => {
 
 const create = async (req, res) => {
   try {
-    const { title } = req.body;
+    const { title, companyId, purpose } = req.body;
     const batch = await OperationBatch.create({
       title,
       userId: req.user.id,
-      status: 'DRAFT'
+      status: 'DRAFT',
+      purpose: purpose === 'BONOS_2DA' ? 'BONOS_2DA' : 'GENERAL',
+      companyId: companyId || null
     });
     res.status(201).json(batch);
   } catch (err) {

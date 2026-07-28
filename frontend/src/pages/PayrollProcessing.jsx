@@ -20,7 +20,9 @@ import {
   buildPayrollDraftTitle,
   formatLocalDateKey,
   toPayrollDateISO,
-  formatPayrollDisplayDate
+  formatPayrollDisplayDate,
+  countBlockingOperationalBonuses,
+  countApprovedOperationalBonuses
 } from '../utils/payrollPeriod';
 import EmployeeIncidences from '../components/EmployeeIncidences';
 import EmployeeDeductions from '../components/EmployeeDeductions';
@@ -143,6 +145,7 @@ function PayrollHub({ onSelectDraft }) {
     updateDraftMetadata, 
     companies, 
     dimension5s,
+    operationLogs,
     isLoading 
   } = useContext(DataContext);
   const { confirmAction, showToast } = useContext(AppContext);
@@ -182,6 +185,9 @@ function PayrollHub({ onSelectDraft }) {
         try {
           const newId = await createActivePayroll(title, companiesPayload, periodType, draftDate ? toPayrollDateISO(draftDate) : toPayrollDateISO(), notes);
           setShowModal(false);
+          if (periodType === '2da') {
+            showToast('Nómina 2ª creada. Se generó el lote de bonos en Reporte Operativo.', 'success');
+          }
           onSelectDraft(newId);
         } catch (err) {
           showToast(err.message, 'danger');
@@ -401,6 +407,20 @@ function PayrollHub({ onSelectDraft }) {
               <Text fontSize="sm" color="gray.500" mb={2}>
                 Empleados: <Text as="span" fontWeight={700} color="brand.500">{Array.isArray(draft.employees) ? draft.employees.length : (typeof draft.employees === 'string' ? JSON.parse(draft.employees).length : 0)}</Text>
               </Text>
+              {draft.periodType === '2da' && (() => {
+                let comps = draft.companies;
+                if (typeof comps === 'string') {
+                  try { comps = JSON.parse(comps); } catch { comps = []; }
+                }
+                const companyId = Array.isArray(comps) ? comps[0] : comps;
+                const pending = countBlockingOperationalBonuses(operationLogs, companyId, draft.createdAt);
+                const approved = countApprovedOperationalBonuses(operationLogs, companyId, draft.createdAt);
+                return (
+                  <Text fontSize="sm" color={pending > 0 ? 'orange.500' : 'gray.500'} mb={2} fontWeight={pending > 0 ? 600 : 400}>
+                    Bonos: {pending} pendientes / {approved} aprobados
+                  </Text>
+                );
+              })()}
               <Box>
                 <Text fontSize="sm" color="gray.500" mb={1}>Empresas:</Text>
                 {(() => {

@@ -15,7 +15,7 @@ import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
 import usePagination from '../hooks/usePagination';
 import Pagination from '../components/Pagination';
-import { formatQuincenaLabel, findMatchingActiveDraft } from '../utils/payrollPeriod';
+import { formatQuincenaLabel, findMatchingActiveDraft, isBonusOperationalDateAllowed } from '../utils/payrollPeriod';
 
 export default function OperationLogs() {
   const { id: batchId } = useParams();
@@ -107,6 +107,10 @@ export default function OperationLogs() {
     }
     if (!hasMatchingActivePayroll(editFormData.date, editFormData.companyId)) {
       toast.error(getMissingPayrollMessage(editFormData.date, editFormData.companyId));
+      return;
+    }
+    if (editFormData.type === 'BONO' && !isBonusOperationalDateAllowed(editFormData.date)) {
+      toast.error('Los bonos operativos solo se registran en la 2ª quincena (días 16 al fin de mes).');
       return;
     }
     try {
@@ -286,6 +290,10 @@ export default function OperationLogs() {
     }
     if (!hasMatchingActivePayroll(formData.date, formData.companyId)) {
       toast.error(getMissingPayrollMessage(formData.date, formData.companyId));
+      return;
+    }
+    if (formData.type === 'BONO' && !isBonusOperationalDateAllowed(formData.date)) {
+      toast.error('Los bonos operativos solo se registran en la 2ª quincena (días 16 al fin de mes).');
       return;
     }
     setConfirmState({ isOpen: true, action: 'SAVE', data: null });
@@ -617,8 +625,16 @@ export default function OperationLogs() {
 
   if (!batch) return null;
 
+  const isBonos2daBatch = batch.purpose === 'BONOS_2DA';
   const canCreateBatch = ['ADMIN', 'GERENTE GENERAL', 'SOLICITANTE', 'NOMINA', 'GERENTE'].includes(user?.role);
   const canEdit = canCreateBatch && (batch.status === 'DRAFT' || batch.status === 'RETURNED');
+
+  const bonusDateBlocked = formData.type === 'BONO' && formData.date && !isBonusOperationalDateAllowed(formData.date);
+  const editBonusDateBlocked = editFormData?.type === 'BONO'
+    && editFormData?.date
+    && !isBonusOperationalDateAllowed(editFormData.date);
+  const saveBlockedByPayroll = formData.date && formData.companyId && !hasMatchingActivePayroll(formData.date, formData.companyId);
+  const saveBlocked = saveBlockedByPayroll || bonusDateBlocked;
 
 
   return (
@@ -639,6 +655,9 @@ export default function OperationLogs() {
                 {batch.title}
               </Heading>
               {getStatusBadge(batch.status)}
+              {isBonos2daBatch && (
+                <Badge colorScheme="purple">Bonos 2ª</Badge>
+              )}
             </Flex>
             <Text color={mutedTextColor} fontSize="md">
               {operationLogs.length} operaciones en este lote
@@ -673,8 +692,20 @@ export default function OperationLogs() {
                 colorScheme="brand" 
                 leftIcon={<Plus size={16} />} 
                 onClick={() => {
+                  const defaultType = isBonos2daBatch ? 'BONO' : 'HORA_EXTRA';
+                  const today = new Date();
+                  let defaultDate = today.toISOString().slice(0, 10);
+                  // En lote de bonos 2ª, si hoy es ≤15 sugerir día 16 del mes actual
+                  if (isBonos2daBatch && today.getDate() <= 15) {
+                    const y = today.getFullYear();
+                    const m = String(today.getMonth() + 1).padStart(2, '0');
+                    defaultDate = `${y}-${m}-16`;
+                  }
                   setFormData({
-                    employeeIds: [], companyId: '', date: new Date().toISOString().slice(0, 10), type: 'HORA_EXTRA',
+                    employeeIds: [],
+                    companyId: isBonos2daBatch && batch.companyId ? String(batch.companyId) : '',
+                    date: defaultDate,
+                    type: defaultType,
                     hoursQty: 0, hourType: 'SIMPLE', bonusQty: 1, bonusAmount: 0, taskDescription: ''
                   });
                   onOpen();
@@ -884,14 +915,14 @@ export default function OperationLogs() {
       </Box>
 
       {/* Modal Agregar Registro */}
-      <Modal isOpen={isOpen} onClose={onClose} size="2xl" isCentered>
+      <Modal isOpen={isOpen} onClose={onClose} size="3xl" isCentered scrollBehavior="inside">
         <ModalOverlay backdropFilter="blur(4px)" />
-        <ModalContent bg={bg} color={textColor}>
-          <ModalHeader>Nuevo Registro de Operación</ModalHeader>
-          <ModalBody>
-            <VStack spacing={4}>
+        <ModalContent bg={bg} color={textColor} maxH="90vh">
+          <ModalHeader py={3}>Nuevo Registro de Operación</ModalHeader>
+          <ModalBody pb={2}>
+            <VStack spacing={3} align="stretch">
               <FormControl isRequired>
-                <FormLabel fontSize="sm">Empleados</FormLabel>
+                <FormLabel fontSize="sm" mb={1}>Empleados</FormLabel>
                 <Flex mb={2} gap={2} wrap="wrap" align="center" justify="space-between">
                     <Flex gap={2} wrap="wrap" flex="1">
                       {user?.idDepartamento && !isGlobalRole ? (
@@ -989,7 +1020,7 @@ export default function OperationLogs() {
                   onChange={(e) => setModalSearchQuery(e.target.value)}
                   mb={2}
                 />
-                <Box maxH="250px" overflowY="auto" borderWidth="1px" borderRadius="md" p={2}>
+                <Box maxH="160px" overflowY="auto" borderWidth="1px" borderRadius="md" p={2}>
                   <CheckboxGroup colorScheme="brand" value={formData.employeeIds} onChange={(values) => setFormData({...formData, employeeIds: values})}>
                     <VStack align="start" spacing={1}>
                       {(() => {
@@ -1018,7 +1049,7 @@ export default function OperationLogs() {
                         });
                         return Object.keys(groups).sort().map(groupName => (
                           <Box key={groupName} w="100%">
-                            <Text fontSize="xs" fontWeight="bold" color="brand.400" textTransform="uppercase" mt={2} mb={1} borderBottomWidth="1px" borderColor="gray.600" pb={1}>
+                            <Text fontSize="xs" fontWeight="bold" color="brand.400" textTransform="uppercase" mt={1} mb={1} borderBottomWidth="1px" borderColor="gray.600" pb={1}>
                               {groupName}
                             </Text>
                             {groups[groupName].map(emp => (
@@ -1035,98 +1066,117 @@ export default function OperationLogs() {
                 </Box>
               </FormControl>
 
-              <FormControl isRequired>
-                <FormLabel fontSize="sm">Empresa a cargar</FormLabel>
-                <Select size="sm" value={formData.companyId} onChange={(e) => setFormData({...formData, companyId: e.target.value})}>
-                  <option value="" disabled>Selecciona una empresa</option>
-                  {companies.map(c => <option key={c.id} value={c.id}>{c.nombre_comercial}</option>)}
-                </Select>
-              </FormControl>
-
               {formData.date && formData.companyId && !hasMatchingActivePayroll(formData.date, formData.companyId) && (
-                <Box w="100%" p={3} borderRadius="md" bg="orange.50" borderWidth="1px" borderColor="orange.200">
+                <Box w="100%" p={2} borderRadius="md" bg="orange.50" borderWidth="1px" borderColor="orange.200">
                   <Text fontSize="sm" color="orange.700">
                     {getMissingPayrollMessage(formData.date, formData.companyId)}. No se puede guardar hasta que exista una nómina abierta para esa empresa y quincena.
                   </Text>
                 </Box>
               )}
 
-              {formData.date && formData.companyId && hasMatchingActivePayroll(formData.date, formData.companyId) && (
-                <Text fontSize="sm" color={mutedTextColor}>
-                  Quincena: {formatQuincenaLabel(formData.date)}
-                </Text>
+              {bonusDateBlocked && (
+                <Box w="100%" p={2} borderRadius="md" bg="orange.50" borderWidth="1px" borderColor="orange.200">
+                  <Text fontSize="sm" color="orange.700">
+                    Los bonos operativos solo se registran en la 2ª quincena (días 16 al fin de mes).
+                  </Text>
+                </Box>
               )}
 
-              <HStack w="full" spacing={4}>
+              <HStack w="full" spacing={3} align="start">
                 <FormControl isRequired flex={1}>
-                  <FormLabel fontSize="sm">Fecha</FormLabel>
-                  <Input type="date" value={formData.date} onChange={(e) => setFormData({...formData, date: e.target.value})} />
-                </FormControl>
-                <FormControl flex={1}>
-                  <FormLabel fontSize="sm">Tipo de Registro</FormLabel>
-                  <Select value={formData.type} onChange={(e) => setFormData({...formData, type: e.target.value})}>
-                    <option value="HORA_EXTRA">Horas Extras</option>
-                    <option value="BONO">Bono</option>
+                  <FormLabel fontSize="sm" mb={1}>Empresa a cargar</FormLabel>
+                  <Select
+                    size="sm"
+                    value={formData.companyId}
+                    isDisabled={isBonos2daBatch && !!batch.companyId}
+                    onChange={(e) => setFormData({...formData, companyId: e.target.value})}
+                  >
+                    <option value="" disabled>Selecciona una empresa</option>
+                    {companies.map(c => <option key={c.id} value={c.id}>{c.nombre_comercial}</option>)}
                   </Select>
+                </FormControl>
+                <FormControl isRequired flex={1}>
+                  <FormLabel fontSize="sm" mb={1}>
+                    Fecha
+                    {formData.date && formData.companyId && hasMatchingActivePayroll(formData.date, formData.companyId) && (
+                      <Text as="span" fontWeight="normal" color={mutedTextColor} ml={2}>
+                        ({formatQuincenaLabel(formData.date)})
+                      </Text>
+                    )}
+                  </FormLabel>
+                  <Input size="sm" type="date" value={formData.date} onChange={(e) => setFormData({...formData, date: e.target.value})} />
                 </FormControl>
               </HStack>
 
-              {formData.type === 'HORA_EXTRA' && (
-                <HStack w="100%">
-                  <FormControl flex={1}>
-                    <FormLabel fontSize="sm">Cantidad de Horas</FormLabel>
-                    <Input type="number" step="0.5" value={formData.hoursQty} onChange={(e) => setFormData({...formData, hoursQty: e.target.value})} />
-                  </FormControl>
-                  <FormControl flex={1}>
-                    <FormLabel fontSize="sm">Tipo de Hora</FormLabel>
-                    <Select value={formData.hourType} onChange={(e) => setFormData({...formData, hourType: e.target.value})}>
-                      <option value="SIMPLE">Simples</option>
-                      <option value="DOBLE">Dobles</option>
-                      <option value="NOCTURNA">Nocturnas</option>
-                    </Select>
-                  </FormControl>
-                </HStack>
-              )}
-
-              {formData.type === 'BONO' && (
-                <VStack w="100%" spacing={4}>
-                  <FormControl>
-                    <FormLabel fontSize="sm">Concepto Predeterminado</FormLabel>
-                    <Select 
-                      placeholder="Seleccionar concepto por defecto..."
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        if (val) {
-                          const [amount] = val.split('|');
-                          setFormData({...formData, bonusAmount: amount});
-                        }
-                      }}
-                    >
-                      <option value="225|Producción">Producción (Q 225.00)</option>
-                      <option value="240|Bodega y Logística">Bodega y Logística (Q 240.00)</option>
-                      <option value="250|Mantenimiento 1">Mantenimiento 1 (Q 250.00)</option>
-                      <option value="275|Mantenimiento 2">Mantenimiento 2 (Q 275.00)</option>
-                    </Select>
-                  </FormControl>
-                  <FormControl isRequired w="100%">
-                    <FormLabel fontSize="sm">Monto del Bono (Q)</FormLabel>
-                    <Input type="number" step="0.01" value={formData.bonusAmount} onChange={(e) => setFormData({...formData, bonusAmount: e.target.value})} />
-                  </FormControl>
-                </VStack>
-              )}
+              <HStack w="full" spacing={3} align="start">
+                <FormControl flex={1}>
+                  <FormLabel fontSize="sm" mb={1}>Tipo de Registro</FormLabel>
+                  <Select
+                    size="sm"
+                    value={formData.type}
+                    isDisabled={isBonos2daBatch}
+                    onChange={(e) => setFormData({...formData, type: e.target.value})}
+                  >
+                    {!isBonos2daBatch && <option value="HORA_EXTRA">Horas Extras</option>}
+                    <option value="BONO">Bono</option>
+                  </Select>
+                </FormControl>
+                {formData.type === 'HORA_EXTRA' ? (
+                  <>
+                    <FormControl flex={1}>
+                      <FormLabel fontSize="sm" mb={1}>Cantidad de Horas</FormLabel>
+                      <Input size="sm" type="number" step="0.5" value={formData.hoursQty} onChange={(e) => setFormData({...formData, hoursQty: e.target.value})} />
+                    </FormControl>
+                    <FormControl flex={1}>
+                      <FormLabel fontSize="sm" mb={1}>Tipo de Hora</FormLabel>
+                      <Select size="sm" value={formData.hourType} onChange={(e) => setFormData({...formData, hourType: e.target.value})}>
+                        <option value="SIMPLE">Simples</option>
+                        <option value="DOBLE">Dobles</option>
+                        <option value="NOCTURNA">Nocturnas</option>
+                      </Select>
+                    </FormControl>
+                  </>
+                ) : (
+                  <>
+                    <FormControl flex={1}>
+                      <FormLabel fontSize="sm" mb={1}>Concepto Predeterminado</FormLabel>
+                      <Select
+                        size="sm"
+                        placeholder="Seleccionar concepto..."
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val) {
+                            const [amount] = val.split('|');
+                            setFormData({...formData, bonusAmount: amount});
+                          }
+                        }}
+                      >
+                        <option value="225|Producción">Producción (Q 225.00)</option>
+                        <option value="240|Bodega y Logística">Bodega y Logística (Q 240.00)</option>
+                        <option value="250|Mantenimiento 1">Mantenimiento 1 (Q 250.00)</option>
+                        <option value="275|Mantenimiento 2">Mantenimiento 2 (Q 275.00)</option>
+                      </Select>
+                    </FormControl>
+                    <FormControl isRequired flex={1}>
+                      <FormLabel fontSize="sm" mb={1}>Monto del Bono (Q)</FormLabel>
+                      <Input size="sm" type="number" step="0.01" value={formData.bonusAmount} onChange={(e) => setFormData({...formData, bonusAmount: e.target.value})} />
+                    </FormControl>
+                  </>
+                )}
+              </HStack>
 
               <FormControl isRequired>
-                <FormLabel fontSize="sm">Tarea Realizada (Descripción)</FormLabel>
-                <Input value={formData.taskDescription} onChange={(e) => setFormData({...formData, taskDescription: e.target.value})} placeholder="Ej. Empaque de 4 fardos..." />
+                <FormLabel fontSize="sm" mb={1}>Tarea Realizada (Descripción)</FormLabel>
+                <Input size="sm" value={formData.taskDescription} onChange={(e) => setFormData({...formData, taskDescription: e.target.value})} placeholder="Ej. Empaque de 4 fardos..." />
               </FormControl>
             </VStack>
           </ModalBody>
-          <ModalFooter>
+          <ModalFooter py={3}>
             <Button variant="ghost" mr={3} onClick={onClose}>Cancelar</Button>
             <Button
               colorScheme="brand"
               onClick={handleSave}
-              isDisabled={formData.date && formData.companyId && !hasMatchingActivePayroll(formData.date, formData.companyId)}
+              isDisabled={saveBlocked}
             >
               Guardar Registro
             </Button>
@@ -1308,18 +1358,18 @@ export default function OperationLogs() {
       </AlertDialog>
 
       {/* Modal Editar y Reenviar */}
-      <Modal isOpen={isEditOpen} onClose={onEditClose} size="2xl" isCentered>
+      <Modal isOpen={isEditOpen} onClose={onEditClose} size="3xl" isCentered scrollBehavior="inside">
         <ModalOverlay backdropFilter="blur(4px)" />
-        <ModalContent bg={bg} color={textColor}>
-          <ModalHeader>Editar y Reenviar Solicitud</ModalHeader>
-          <ModalBody>
+        <ModalContent bg={bg} color={textColor} maxH="90vh">
+          <ModalHeader py={3}>Editar y Reenviar Solicitud</ModalHeader>
+          <ModalBody pb={2}>
             {editFormData && (
-              <VStack spacing={4} align="stretch">
+              <VStack spacing={3} align="stretch">
                 <Text fontSize="sm" color={mutedTextColor}>
                   Corrige los datos de la solicitud y vuelve a enviarla para su aprobación.
                 </Text>
                 <FormControl isRequired>
-                  <FormLabel fontSize="sm">Empleado</FormLabel>
+                  <FormLabel fontSize="sm" mb={1}>Empleado</FormLabel>
                   <Flex mb={2} gap={2} wrap="wrap">
                     {user?.idDepartamento && !isGlobalRole ? (
                       <Input 
@@ -1411,7 +1461,7 @@ export default function OperationLogs() {
                     onChange={(e) => setEditModalSearchQuery(e.target.value)}
                     mb={2}
                   />
-                  <Box maxH="250px" overflowY="auto" borderWidth="1px" borderRadius="md" p={2}>
+                  <Box maxH="160px" overflowY="auto" borderWidth="1px" borderRadius="md" p={2}>
                     <RadioGroup colorScheme="brand" value={editFormData.employeeId.toString()} onChange={(val) => setEditFormData({...editFormData, employeeId: val})}>
                       <VStack align="start" spacing={1}>
                         {(() => {
@@ -1424,7 +1474,7 @@ export default function OperationLogs() {
                           });
                           return Object.keys(groups).sort().map(groupName => (
                             <Box key={groupName} w="100%">
-                              <Text fontSize="xs" fontWeight="bold" color="brand.400" textTransform="uppercase" mt={2} mb={1} borderBottomWidth="1px" borderColor="gray.600" pb={1}>
+                              <Text fontSize="xs" fontWeight="bold" color="brand.400" textTransform="uppercase" mt={1} mb={1} borderBottomWidth="1px" borderColor="gray.600" pb={1}>
                                 {groupName}
                               </Text>
                               {groups[groupName].map(emp => (
@@ -1441,64 +1491,76 @@ export default function OperationLogs() {
                   </Box>
                 </FormControl>
 
-                <FormControl isRequired>
-                  <FormLabel fontSize="sm">Empresa a cargar</FormLabel>
-                  <Select
-                    size="sm"
-                    value={editFormData.companyId || ''}
-                    onChange={(e) => setEditFormData({ ...editFormData, companyId: e.target.value })}
-                  >
-                    <option value="" disabled>Selecciona una empresa</option>
-                    {companies.map((c) => (
-                      <option key={c.id} value={c.id}>{c.nombre_comercial}</option>
-                    ))}
-                  </Select>
-                </FormControl>
-
-                <FormControl isRequired>
-                  <FormLabel fontSize="sm">Fecha</FormLabel>
-                  <Input
-                    type="date"
-                    value={editFormData.date || ''}
-                    onChange={(e) => setEditFormData({ ...editFormData, date: e.target.value })}
-                  />
-                </FormControl>
-
                 {editFormData.date && editFormData.companyId && !hasMatchingActivePayroll(editFormData.date, editFormData.companyId) && (
-                  <Box w="100%" p={3} borderRadius="md" bg="orange.50" borderWidth="1px" borderColor="orange.200">
+                  <Box w="100%" p={2} borderRadius="md" bg="orange.50" borderWidth="1px" borderColor="orange.200">
                     <Text fontSize="sm" color="orange.700">
                       {getMissingPayrollMessage(editFormData.date, editFormData.companyId)}
                     </Text>
                   </Box>
                 )}
 
-                {editFormData.date && (
-                  <Text fontSize="sm" color={mutedTextColor}>
-                    Quincena: {formatQuincenaLabel(editFormData.date)}
-                  </Text>
+                {editBonusDateBlocked && (
+                  <Box w="100%" p={2} borderRadius="md" bg="orange.50" borderWidth="1px" borderColor="orange.200">
+                    <Text fontSize="sm" color="orange.700">
+                      Los bonos operativos solo se registran en la 2ª quincena (días 16 al fin de mes).
+                    </Text>
+                  </Box>
                 )}
 
+                <HStack w="full" spacing={3} align="start">
+                  <FormControl isRequired flex={1}>
+                    <FormLabel fontSize="sm" mb={1}>Empresa a cargar</FormLabel>
+                    <Select
+                      size="sm"
+                      value={editFormData.companyId || ''}
+                      onChange={(e) => setEditFormData({ ...editFormData, companyId: e.target.value })}
+                    >
+                      <option value="" disabled>Selecciona una empresa</option>
+                      {companies.map((c) => (
+                        <option key={c.id} value={c.id}>{c.nombre_comercial}</option>
+                      ))}
+                    </Select>
+                  </FormControl>
+                  <FormControl isRequired flex={1}>
+                    <FormLabel fontSize="sm" mb={1}>
+                      Fecha
+                      {editFormData.date && (
+                        <Text as="span" fontWeight="normal" color={mutedTextColor} ml={2}>
+                          ({formatQuincenaLabel(editFormData.date)})
+                        </Text>
+                      )}
+                    </FormLabel>
+                    <Input
+                      size="sm"
+                      type="date"
+                      value={editFormData.date || ''}
+                      onChange={(e) => setEditFormData({ ...editFormData, date: e.target.value })}
+                    />
+                  </FormControl>
+                </HStack>
+
                 {editFormData.type === 'HORA_EXTRA' ? (
-                  <>
-                    <FormControl isRequired>
-                      <FormLabel fontSize="sm">Cantidad de Horas</FormLabel>
-                      <Input type="number" step="0.5" value={editFormData.hoursQty} onChange={(e) => setEditFormData({...editFormData, hoursQty: e.target.value})} />
+                  <HStack w="full" spacing={3} align="start">
+                    <FormControl isRequired flex={1}>
+                      <FormLabel fontSize="sm" mb={1}>Cantidad de Horas</FormLabel>
+                      <Input size="sm" type="number" step="0.5" value={editFormData.hoursQty} onChange={(e) => setEditFormData({...editFormData, hoursQty: e.target.value})} />
                     </FormControl>
-                    <FormControl isRequired>
-                      <FormLabel fontSize="sm">Tipo de Hora Extra</FormLabel>
-                      <Select value={editFormData.hourType} onChange={(e) => setEditFormData({...editFormData, hourType: e.target.value})}>
+                    <FormControl isRequired flex={1}>
+                      <FormLabel fontSize="sm" mb={1}>Tipo de Hora Extra</FormLabel>
+                      <Select size="sm" value={editFormData.hourType} onChange={(e) => setEditFormData({...editFormData, hourType: e.target.value})}>
                         <option value="SIMPLE">Simple</option>
                         <option value="DOBLE">Doble</option>
                         <option value="NOCTURNA">Nocturna</option>
                       </Select>
                     </FormControl>
-                  </>
+                  </HStack>
                 ) : (
-                  <VStack w="100%" spacing={4} align="stretch">
-                    <FormControl>
-                      <FormLabel fontSize="sm">Concepto Predeterminado</FormLabel>
-                      <Select 
-                        placeholder="Seleccionar concepto por defecto..."
+                  <HStack w="full" spacing={3} align="start">
+                    <FormControl flex={1}>
+                      <FormLabel fontSize="sm" mb={1}>Concepto Predeterminado</FormLabel>
+                      <Select
+                        size="sm"
+                        placeholder="Seleccionar concepto..."
                         onChange={(e) => {
                           const val = e.target.value;
                           if (val) {
@@ -1513,20 +1575,20 @@ export default function OperationLogs() {
                         <option value="275|Mantenimiento 2">Mantenimiento 2 (Q 275.00)</option>
                       </Select>
                     </FormControl>
-                    <FormControl isRequired>
-                      <FormLabel fontSize="sm">Monto del Bono</FormLabel>
-                      <Input type="number" step="0.01" value={editFormData.bonusAmount} onChange={(e) => setEditFormData({...editFormData, bonusAmount: e.target.value})} />
+                    <FormControl isRequired flex={1}>
+                      <FormLabel fontSize="sm" mb={1}>Monto del Bono</FormLabel>
+                      <Input size="sm" type="number" step="0.01" value={editFormData.bonusAmount} onChange={(e) => setEditFormData({...editFormData, bonusAmount: e.target.value})} />
                     </FormControl>
-                  </VStack>
+                  </HStack>
                 )}
                 <FormControl isRequired>
-                  <FormLabel fontSize="sm">Justificación / Tarea Realizada</FormLabel>
-                  <Input value={editFormData.taskDescription} onChange={(e) => setEditFormData({...editFormData, taskDescription: e.target.value})} />
+                  <FormLabel fontSize="sm" mb={1}>Justificación / Tarea Realizada</FormLabel>
+                  <Input size="sm" value={editFormData.taskDescription} onChange={(e) => setEditFormData({...editFormData, taskDescription: e.target.value})} />
                 </FormControl>
               </VStack>
             )}
           </ModalBody>
-          <ModalFooter>
+          <ModalFooter py={3}>
             {user?.role?.toUpperCase() === 'SOLICITANTE' && (
               <Text fontSize="sm" color="blue.500" fontWeight="medium" flex="1" mr={4}>
                 Se enviará una notificación a tu gerente.
@@ -1538,6 +1600,7 @@ export default function OperationLogs() {
               onClick={handleEditSave}
               isDisabled={
                 !editFormData ||
+                editBonusDateBlocked ||
                 (editFormData.date &&
                   editFormData.companyId &&
                   !hasMatchingActivePayroll(editFormData.date, editFormData.companyId))
