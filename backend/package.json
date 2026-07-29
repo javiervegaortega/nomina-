@@ -10,6 +10,7 @@
     "test:isr": "node src/scripts/test_isr.js",
     "test:bonos": "node src/scripts/test_overtime_bonuses.js",
     "test:billing": "node src/scripts/test_billing_snapshot.js",
+    "test:operations-policy": "node src/scripts/test_operation_log_policy.js",
     "test:email": "node src/scripts/test_email.js",
     "test:emails-op": "node src/scripts/test_operation_emails.js",
     "test:integration": "node src/scripts/test_integration_bonos.js",

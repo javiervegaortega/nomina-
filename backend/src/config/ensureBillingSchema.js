@@ -36,17 +36,16 @@ async function ensureBillingSchema(sequelize) {
     allowNull: false,
     defaultValue: 0
   });
-  // Excel mayo BF338 = Q197,046.31 (escrito fijo). Complemento sobre la base
-  // calculada Unhesa+Hidroxon para empatar esa celda; editable en Reglas.
+  // Retira el parche legado usado para empatar la celda fija BF338 de mayo.
+  // La base debe salir del detalle distribuido; no de un total escrito a mano.
   try {
     await sequelize.query(
       `UPDATE billing_rules
-       SET baseAdjustment = 1296.13, updatedAt = NOW()
-       WHERE fromCompanyId = 3 AND toCompanyId = 2
-         AND (baseAdjustment IS NULL OR ABS(baseAdjustment) < 0.005)`
+       SET baseAdjustment = 0, updatedAt = NOW()
+       WHERE baseAdjustment IS NULL OR ABS(baseAdjustment) >= 0.005`
     );
   } catch (err) {
-    console.warn('[billing] baseAdjustment Unhesa:', err.message);
+    console.warn('[billing] limpieza de ajuste legado Unhesa:', err.message);
   }
   await addColumnIfMissing('billing_run_lines', 'centroCosto', {
     type: sequelize.Sequelize.STRING,

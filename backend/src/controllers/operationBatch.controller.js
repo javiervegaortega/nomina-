@@ -4,6 +4,7 @@ const {
   Employee,
   Company,
   User,
+  PayrollHistory,
   sequelize
 } = require('../models');
 const {
@@ -15,6 +16,10 @@ const {
 const {
   syncOperationLogTransitions
 } = require('../services/payrollDraftInputs.service');
+const {
+  assertBatchAccess,
+  assertBatchStatusTransition
+} = require('../services/operationLogPolicy.service');
 const { Op } = require('sequelize');
 
 const NOMINA_ROLES = ['ADMIN', 'NOMINA', 'AUDITOR'];
@@ -38,7 +43,8 @@ const batchInclude = [
         model: Employee,
         attributes: [
           'id', 'primer_nombre', 'segundo_nombre', 'otro_nombre',
-          'primer_apellido', 'segundo_apellido', 'empresa_principal', 'dpi', 'puesto', 'estado'
+          'primer_apellido', 'segundo_apellido', 'empresa_principal', 'departmentId',
+          'dpi', 'puesto', 'estado', 'sueldo_ordinario'
         ]
       },
       { model: Company, as: 'companyData', attributes: ['id', 'nombre_comercial', 'nit'] }
@@ -63,9 +69,43 @@ const getAll = async (req, res) => {
       include: batchInclude,
       order: [['createdAt', 'DESC']]
     });
-    res.json(batches);
+    const closedPayrolls = await PayrollHistory.findAll({
+      where: { status: 'cerrada' },
+      attributes: ['id']
+    });
+    const closedPayrollIds = new Set(closedPayrolls.map((payroll) => String(payroll.id)));
+    const activeBatches = batches.filter((batch) => {
+      if (batch.purpose !== 'BONOS_2DA') return true;
+
+      const logs = Array.isArray(batch.logs) ? batch.logs : [];
+      // Un lote automático con operaciones permanece consultable mientras la
+      // nómina esté en auditoría. Se archiva solamente cuando todas sus
+      // operaciones quedaron asociadas a una nómina realmente cerrada.
+      if (logs.length > 0) {
+        const isClosed = logs.every((log) => (
+          log.status === 'PROCESSED_PAYROLL'
+          && closedPayrollIds.has(String(log.periodAssigned || ''))
+        ));
+        return !isClosed;
+      }
+
+      // Los lotes automáticos vacíos solo son útiles mientras exista el
+      // borrador activo; al terminar el proceso no generan historial.
+      return Boolean(batch.payrollDraftId);
+    });
+    const visibleBatches = req.user?.role === 'GERENTE'
+      ? activeBatches.filter((batch) => {
+        try {
+          assertBatchAccess(req.user, batch, batch.user, batch.logs);
+          return true;
+        } catch {
+          return false;
+        }
+      })
+      : activeBatches;
+    res.json(visibleBatches);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.statusCode || 500).json({ error: err.message });
   }
 };
 
@@ -83,10 +123,13 @@ const getById = async (req, res) => {
     ) {
       return res.status(403).json({ error: 'No tienes acceso a este lote.' });
     }
+    if (req.user?.role === 'GERENTE') {
+      assertBatchAccess(req.user, batch, batch.user, batch.logs);
+    }
 
     res.json(batch);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.statusCode || 500).json({ error: err.message });
   }
 };
 
@@ -102,7 +145,7 @@ const create = async (req, res) => {
     });
     res.status(201).json(batch);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    res.status(err.statusCode || 400).json({ error: err.message });
   }
 };
 
@@ -121,10 +164,13 @@ const updateStatus = async (req, res) => {
     }
     const logs = await OperationLog.findAll({
       where: { batchId: batch.id },
+      include: [{ model: Employee, attributes: ['departmentId'] }],
       transaction,
       lock: transaction.LOCK.UPDATE,
       order: [['id', 'ASC']]
     });
+    const owner = await User.findByPk(batch.userId, { transaction });
+    assertBatchStatusTransition(req.user, batch, owner, status, logs);
 
     const previousStatus = batch.status;
     const logCount = logs.length;

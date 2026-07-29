@@ -1,6 +1,29 @@
 const bcrypt = require('bcryptjs');
-const { User } = require('../models');
+const { User, Department } = require('../models');
 const { Op } = require('sequelize');
+
+const ROLES_WITH_DEPARTMENT = new Set(['SOLICITANTE', 'GERENTE']);
+
+const resolveDepartmentForRole = async (role, rawDepartmentId) => {
+  const normalizedRole = String(role || '').trim().toUpperCase();
+  if (!ROLES_WITH_DEPARTMENT.has(normalizedRole)) return null;
+
+  const departmentId = String(rawDepartmentId || '').trim();
+  if (!departmentId) {
+    const error = new Error('El departamento es obligatorio para los roles SOLICITANTE y GERENTE.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const department = await Department.findByPk(departmentId);
+  if (!department) {
+    const error = new Error('El departamento seleccionado no existe.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return String(department.id);
+};
 
 const getUsers = async (req, res) => {
   try {
@@ -9,13 +32,14 @@ const getUsers = async (req, res) => {
     });
     res.json(users);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(error.statusCode || 500).json({ error: error.message });
   }
 };
 
 const createUser = async (req, res) => {
   try {
     const { name, username, email, password, role, idDepartamento } = req.body;
+    const resolvedDepartmentId = await resolveDepartmentForRole(role, idDepartamento);
     
     // Check role constraints based on requester
     const requesterRole = req.user.role;
@@ -43,7 +67,7 @@ const createUser = async (req, res) => {
       email,
       password: hashedPassword,
       role,
-      idDepartamento
+      idDepartamento: resolvedDepartmentId
     });
 
     const userObj = newUser.toJSON();
@@ -51,7 +75,7 @@ const createUser = async (req, res) => {
     
     res.status(201).json(userObj);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(error.statusCode || 500).json({ error: error.message });
   }
 };
 
@@ -64,6 +88,9 @@ const updateUser = async (req, res) => {
     if (!userToUpdate) {
       return res.status(404).json({ error: 'Usuario no encontrado.' });
     }
+
+    const effectiveRole = role || userToUpdate.role;
+    const resolvedDepartmentId = await resolveDepartmentForRole(effectiveRole, idDepartamento);
 
     // Check role constraints
     const requesterRole = req.user.role;
@@ -82,7 +109,7 @@ const updateUser = async (req, res) => {
       name,
       username: username || null,
       email,
-      idDepartamento
+      idDepartamento: resolvedDepartmentId
     };
 
     if (role) {
@@ -100,7 +127,7 @@ const updateUser = async (req, res) => {
 
     res.json(userObj);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(error.statusCode || 500).json({ error: error.message });
   }
 };
 

@@ -1151,10 +1151,10 @@ class BillingService {
 
         const marginPerc = Number(rule.marginPercentage) || 0;
         const ivaRate = Number(rule.ivaRate ?? 0.12);
-        const baseAdjustment = round2(rule.baseAdjustment || 0);
+        const baseAdjustment = 0;
         // Dinero a 2 decimales (mismo criterio contable/Excel):
-        // BASE (+ ajuste de regla) → MARGEN → IVA → TOTAL.
-        const baseAmount = round2(baseAmountPrecise.plus(baseAdjustment));
+        // BASE calculada → MARGEN → IVA → TOTAL.
+        const baseAmount = round2(baseAmountPrecise);
         const marginAmount = round2(
           new Decimal(baseAmount).times(marginPerc).dividedBy(100)
         );
@@ -1165,9 +1165,7 @@ class BillingService {
         const totalAmount = round2(new Decimal(subtotalAmount).plus(ivaAmount));
         const centroCosto = 'CONSOLIDADO GLOBAL';
         const baseConcept = rule.concept || `Servicios de RRHH ${payroll.title}`;
-        const concept = baseAdjustment
-          ? `${baseConcept} — neteo global intercompany (incl. ajuste Q${baseAdjustment.toFixed(2)})`
-          : `${baseConcept} — neteo global intercompany`;
+        const concept = `${baseConcept} — neteo global intercompany`;
 
         lines.push({
           ruleId: rule.id,

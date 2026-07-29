@@ -35,7 +35,7 @@ const ALL_NAV_SECTIONS = [
     title: 'Operaciones',
     items: [
       { to: '/operations', label: 'Reporte Operativo', icon: ClipboardList },
-      { to: '/operations/bonuses-history', label: 'Historial Bonos', icon: History },
+      { to: '/operations/bonuses-history', label: 'Historial Operaciones', icon: History },
     ],
   },
   {

@@ -7,8 +7,7 @@ const EXCEL_ROUTE_FORMULAS = {
   '2->1': { marginPercentage: 0, applyIva: true, ivaRate: 0.12, baseAdjustment: 0 },
   '2->3': { marginPercentage: 0, applyIva: true, ivaRate: 0.12, baseAdjustment: 0 },
   '3->1': { marginPercentage: 4, applyIva: true, ivaRate: 0.12, baseAdjustment: 0 },
-  // Excel mayo Unhesa BF338 = Q197,046.31 (ajuste sobre Unhesa+Hidroxon calculado).
-  '3->2': { marginPercentage: 4, applyIva: true, ivaRate: 0.12, baseAdjustment: 1296.13 },
+  '3->2': { marginPercentage: 4, applyIva: true, ivaRate: 0.12, baseAdjustment: 0 },
   '3->4': { marginPercentage: 4, applyIva: false, ivaRate: 0, baseAdjustment: 0 }
 };
 
@@ -50,9 +49,8 @@ const validateRuleBody = async (body, ruleId = null) => {
     marginPercentage: routeFormula.marginPercentage,
     applyIva: routeFormula.applyIva,
     ivaRate: routeFormula.ivaRate,
-    baseAdjustment: body.baseAdjustment !== undefined && body.baseAdjustment !== null && body.baseAdjustment !== ''
-      ? Number(body.baseAdjustment)
-      : (routeFormula.baseAdjustment || 0),
+    // La base siempre se calcula desde el detalle distribuido.
+    baseAdjustment: routeFormula.baseAdjustment || 0,
     isActive: body.isActive !== undefined ? !!body.isActive : true
   };
 };

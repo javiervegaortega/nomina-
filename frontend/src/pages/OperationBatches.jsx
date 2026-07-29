@@ -84,7 +84,7 @@ export default function OperationBatches() {
     }
   };
 
-  const canCreateBatch = ['ADMIN', 'GERENTE GENERAL', 'SOLICITANTE', 'NOMINA', 'GERENTE'].includes(user?.role);
+  const canCreateBatch = ['ADMIN', 'GERENTE GENERAL', 'SOLICITANTE', 'NOMINA'].includes(user?.role);
   const isNominaRole = ['ADMIN', 'NOMINA', 'AUDITOR'].includes(user?.role);
 
   const handleRejectToManager = async (batchId) => {
@@ -136,7 +136,7 @@ export default function OperationBatches() {
             onClick={() => navigate('/operations/bonuses-history')}
             borderRadius="lg"
           >
-            Historial de Bonos
+            Historial de Operaciones
           </Button>
           {canCreateBatch && (
             <Button 
@@ -179,7 +179,7 @@ export default function OperationBatches() {
                       <HStack spacing={2}>
                         <Text as="span">{batch.title}</Text>
                         {batch.purpose === 'BONOS_2DA' && (
-                          <Badge colorScheme="purple" fontSize="0.65rem">Bonos 2ª</Badge>
+                          <Badge colorScheme="purple" fontSize="0.65rem">Operaciones 2ª</Badge>
                         )}
                       </HStack>
                     </Td>

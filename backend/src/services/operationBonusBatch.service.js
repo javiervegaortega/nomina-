@@ -18,11 +18,11 @@ const buildBonos2daTitle = (companyName, draftDate) => {
   const monthName = bounds ? (MONTH_NAMES_ES[bounds.month - 1] || '') : '';
   const year = bounds?.year || '';
   const name = companyName || 'Empresa';
-  return `Bonos 2da – ${name} – ${monthName} ${year}`.trim();
+  return `Operaciones 2ª - ${name} - ${monthName} ${year}`.trim();
 };
 
 /**
- * Crea o reutiliza el lote BONOS_2DA al abrir una nómina de 2ª quincena.
+ * Crea o reutiliza el lote tecnico BONOS_2DA al abrir una nomina de 2ª quincena.
  */
 const ensureBonos2daBatchForDraft = async ({
   draftId,

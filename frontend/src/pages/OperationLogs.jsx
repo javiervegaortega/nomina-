@@ -17,6 +17,61 @@ import usePagination from '../hooks/usePagination';
 import Pagination from '../components/Pagination';
 import { formatQuincenaLabel, findMatchingActiveDraft, isBonusOperationalDateAllowed } from '../utils/payrollPeriod';
 
+const getEmployeePrincipalCompanyId = (employee) => String(
+  employee?.empresa_principal ?? employee?.companyId ?? employee?.id_empresa ?? ''
+);
+
+const MONTH_NUMBER_BY_NAME = {
+  enero: '01', febrero: '02', marzo: '03', abril: '04', mayo: '05', junio: '06',
+  julio: '07', agosto: '08', septiembre: '09', octubre: '10', noviembre: '11', diciembre: '12'
+};
+
+const getAutomaticBatchMonth = (batch) => {
+  const datedLog = (batch?.logs || []).find((log) => /^\d{4}-\d{2}/.test(String(log?.date || '')));
+  if (datedLog) return String(datedLog.date).slice(0, 7);
+  if (batch?.purpose !== 'BONOS_2DA') return '';
+
+  const normalizedTitle = String(batch?.title || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+  const match = normalizedTitle.match(/\b(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+(\d{4})\b/);
+  return match ? `${match[2]}-${MONTH_NUMBER_BY_NAME[match[1]]}` : '';
+};
+
+const getDateInMonth = (month) => {
+  const [year, monthNumber] = String(month || '').split('-').map(Number);
+  if (!year || !monthNumber) return '';
+  const currentDay = new Date().getDate();
+  const lastDay = new Date(year, monthNumber, 0).getDate();
+  return `${month}-${String(Math.min(currentDay, lastDay)).padStart(2, '0')}`;
+};
+
+const OVERTIME_FACTOR = { SIMPLE: 1.5, DOBLE: 2, NOCTURNA: 2 };
+
+const formatMoneyQ = (value) =>
+  `Q${Number(value || 0).toLocaleString('es-GT', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+const getHourlyRate = (sueldoOrdinario) => (Number(sueldoOrdinario) || 0) / 30 / 8;
+
+const getOvertimeFactor = (hourType) =>
+  OVERTIME_FACTOR[String(hourType || '').trim().toUpperCase()] || 0;
+
+const calcOvertimeAmount = (sueldoOrdinario, hoursQty, hourType) => {
+  const hours = Number(hoursQty) || 0;
+  const factor = getOvertimeFactor(hourType);
+  if (hours <= 0 || factor <= 0) return 0;
+  return getHourlyRate(sueldoOrdinario) * factor * hours;
+};
+
+const resolveEmployeeSalary = (log, employeesList = []) => {
+  const fromLog = Number(log?.Employee?.sueldo_ordinario);
+  if (Number.isFinite(fromLog) && fromLog > 0) return fromLog;
+  const employeeId = log?.employeeId ?? log?.Employee?.id;
+  const fromContext = employeesList.find((emp) => String(emp.id) === String(employeeId));
+  return Number(fromContext?.sueldo_ordinario) || 0;
+};
+
 export default function OperationLogs() {
   const { id: batchId } = useParams();
   const navigate = useNavigate();
@@ -101,12 +156,12 @@ export default function OperationLogs() {
     !!findMatchingActiveDraft(activePayrolls, date, companyId, companies);
 
   const handleEditSave = async () => {
-    if (!editFormData.taskDescription || !editFormData.employeeId || !editFormData.date || !editFormData.companyId) {
-      toast.warning('Completa la descripción, empleado, fecha y empresa');
+    if (!editFormData.taskDescription || !editFormData.employeeId || !editFormData.date || !editEmployeeCompanyId) {
+      toast.warning('Completa la descripción, empleado y fecha');
       return;
     }
-    if (!hasMatchingActivePayroll(editFormData.date, editFormData.companyId)) {
-      toast.error(getMissingPayrollMessage(editFormData.date, editFormData.companyId));
+    if (!hasMatchingActivePayroll(editFormData.date, editEmployeeCompanyId)) {
+      toast.error(getMissingPayrollMessage(editFormData.date, editEmployeeCompanyId));
       return;
     }
     if (editFormData.type === 'BONO' && !isBonusOperationalDateAllowed(editFormData.date)) {
@@ -116,7 +171,6 @@ export default function OperationLogs() {
     try {
       await updateOperationLog(editFormData.id, {
         employeeId: Number(editFormData.employeeId),
-        companyId: Number(editFormData.companyId),
         date: editFormData.date,
         hoursQty: editFormData.type === 'HORA_EXTRA' ? Number(editFormData.hoursQty) : 0,
         hourType: editFormData.hourType,
@@ -134,9 +188,23 @@ export default function OperationLogs() {
   const [confirmState, setConfirmState] = useState({ isOpen: false, action: null, data: null, justification: '' });
   const cancelRef = React.useRef();
 
-  const isManagerOrAdmin = ['gerente', 'nomina', 'admin'].includes(user?.role?.toLowerCase());
+  const normalizedRole = String(user?.role || '').toUpperCase();
+  const isGlobalReviewer = ['ADMIN', 'GERENTE GENERAL', 'NOMINA'].includes(normalizedRole);
+  const isAutomaticDepartmentBatch = batch?.purpose === 'BONOS_2DA'
+    && !batch?.user?.idDepartamento
+    && (batch?.logs || []).length > 0
+    && (batch?.logs || []).every(log => String(log?.Employee?.departmentId) === String(user?.idDepartamento));
+  const canReviewBatch = isGlobalReviewer || (
+    normalizedRole === 'GERENTE'
+    && (isAutomaticDepartmentBatch || (
+      user?.idDepartamento
+      && batch?.user?.idDepartamento
+      && String(user.idDepartamento) === String(batch.user.idDepartamento)
+    ))
+  );
   const isNominaRole = ['admin', 'nomina', 'auditor'].includes(user?.role?.toLowerCase());
-  const isGlobalRole = ['admin', 'nomina', 'gerente general'].includes(user?.role?.toLowerCase());
+  const isSolicitante = user?.role?.toUpperCase() === 'SOLICITANTE';
+  const isBonos2daBatch = batch?.purpose === 'BONOS_2DA';
   const isReadOnly = user?.role === 'AUDITOR';
 
   const bg = useColorModeValue('white', 'gray.800');
@@ -147,21 +215,45 @@ export default function OperationLogs() {
   const detailBg = useColorModeValue('gray.50', 'whiteAlpha.100');
   const bulkBg = useColorModeValue('blue.50', 'rgba(14, 165, 233, 0.15)');
   const bulkTextColor = useColorModeValue('blue.700', 'blue.200');
+  const infoBorderColor = useColorModeValue('blue.200', 'blue.700');
+
+  const overtimeCalcInfo = (
+    <Box
+      w="full"
+      p={3}
+      borderRadius="md"
+      bg={bulkBg}
+      borderWidth="1px"
+      borderColor={infoBorderColor}
+    >
+      <Text fontSize="xs" fontWeight="bold" color={bulkTextColor} mb={1}>
+        Cómo se calcula (solo informativo)
+      </Text>
+      <Text fontSize="xs" color={bulkTextColor} lineHeight="tall">
+        Valor hora ordinaria = Sueldo ordinario ÷ 30 ÷ 8
+      </Text>
+      <Text fontSize="xs" color={bulkTextColor} lineHeight="tall">
+        • Simples: horas × valor hora × 1.5
+      </Text>
+      <Text fontSize="xs" color={bulkTextColor} lineHeight="tall">
+        • Dobles / Nocturnas: horas × valor hora × 2
+      </Text>
+      <Text fontSize="xs" color={bulkTextColor} mt={1} opacity={0.85}>
+        El monto se aplica al liquidar la nómina según el sueldo del empleado.
+      </Text>
+    </Box>
+  );
 
   const availableEmployees = useMemo(() => {
     let filtered = employees;
-    
-    // Bypass department filter for ADMIN and NOMINA so they can create bonuses for anyone
 
-    if (user && user.idDepartamento && !isGlobalRole) {
-      const normalize = (str) => (str ? str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase() : "");
-      const userDept = normalize(user.idDepartamento);
-      
-      filtered = employees.filter(emp => {
-        const dept = departments?.find(d => String(d.id) === String(emp.departmentId));
-        const groupName = dept?.nombre_dimension || emp.departmentData?.nombre_dimension || '';
-        return normalize(groupName).includes(userDept);
-      });
+    if (String(user?.role || '').toUpperCase() === 'SOLICITANTE'
+      && user?.idDepartamento !== undefined
+      && user?.idDepartamento !== null
+      && user.idDepartamento !== '') {
+      filtered = employees.filter(
+        emp => String(emp.departmentId) === String(user.idDepartamento)
+      );
     }
 
     return filtered
@@ -171,7 +263,7 @@ export default function OperationLogs() {
         const nameB = [b.primer_nombre, b.segundo_nombre, b.otro_nombre, b.primer_apellido, b.segundo_apellido].filter(Boolean).join(' ').trim();
         return nameA.localeCompare(nameB);
       });
-  }, [employees, user, isManagerOrAdmin]);
+  }, [employees, user]);
 
   const [modalAreaFilter, setModalAreaFilter] = useState([]);
   const [modalFilterArea, setModalFilterArea] = useState([]);
@@ -182,7 +274,6 @@ export default function OperationLogs() {
 
   const [formData, setFormData] = useState({
     employeeIds: [],
-    companyId: '',
     date: new Date().toISOString().slice(0, 10),
     type: 'HORA_EXTRA',
     hoursQty: 0,
@@ -192,6 +283,37 @@ export default function OperationLogs() {
     taskDescription: ''
   });
 
+  // Los lotes automáticos pertenecen a una quincena concreta. El filtro no
+  // debe depender del mes actual del navegador, porque puede ocultar un
+  // registro recién creado para un lote del mes siguiente.
+  useEffect(() => {
+    const batchMonth = getAutomaticBatchMonth(batch);
+    if (!batchMonth) return;
+    setFilterMonth(batchMonth);
+    setFormData((previous) => ({
+      ...previous,
+      date: getDateInMonth(batchMonth) || previous.date
+    }));
+  }, [batch?.id]);
+
+  const selectedEmployeeCompanyId = (() => {
+    const selectedIds = new Set(formData.employeeIds.map(String));
+    const companyIds = new Set(
+      availableEmployees
+        .filter(employee => selectedIds.has(String(employee.id)))
+        .map(getEmployeePrincipalCompanyId)
+        .filter(Boolean)
+    );
+    return companyIds.size === 1 ? [...companyIds][0] : '';
+  })();
+
+  const editEmployeeCompanyId = (() => {
+    if (!editFormData?.employeeId) return '';
+    return getEmployeePrincipalCompanyId(
+      employees.find(employee => String(employee.id) === String(editFormData.employeeId))
+    );
+  })();
+
   const filteredModalEmployees = useMemo(() => {
     const normalize = (str) => {
       if (!str) return '';
@@ -200,6 +322,11 @@ export default function OperationLogs() {
 
     let result = availableEmployees;
 
+    if (isBonos2daBatch && batch?.companyId) {
+      result = result.filter(
+        employee => getEmployeePrincipalCompanyId(employee) === String(batch.companyId)
+      );
+    }
 
 
     if (modalAreaFilter.length > 0) {
@@ -227,7 +354,7 @@ export default function OperationLogs() {
     }
 
     return result;
-  }, [availableEmployees, modalAreaFilter, modalFilterArea, modalFilterDiv, modalFilterSubdiv, modalFilterDim5, areas, modalSearchQuery]);
+  }, [availableEmployees, batch, isBonos2daBatch, modalAreaFilter, modalFilterArea, modalFilterDiv, modalFilterSubdiv, modalFilterDim5, modalSearchQuery]);
 
   const filteredEditModalEmployees = useMemo(() => {
     const normalize = (str) => {
@@ -237,6 +364,11 @@ export default function OperationLogs() {
 
     let result = availableEmployees;
 
+    if (isBonos2daBatch && batch?.companyId) {
+      result = result.filter(
+        employee => getEmployeePrincipalCompanyId(employee) === String(batch.companyId)
+      );
+    }
 
 
     if (editModalAreaFilter.length > 0) {
@@ -264,14 +396,46 @@ export default function OperationLogs() {
     }
 
     return result;
-  }, [availableEmployees, editModalAreaFilter, editModalFilterArea, editModalFilterDiv, editModalFilterSubdiv, editModalFilterDim5, areas, editModalSearchQuery]);
+  }, [availableEmployees, batch, isBonos2daBatch, editModalAreaFilter, editModalFilterArea, editModalFilterDiv, editModalFilterSubdiv, editModalFilterDim5, editModalSearchQuery]);
 
   const handleSelectAllEmployees = () => {
-    if (formData.employeeIds.length === filteredModalEmployees.length) {
-      setFormData({ ...formData, employeeIds: [] });
-    } else {
-      setFormData({ ...formData, employeeIds: filteredModalEmployees.map(e => e.id.toString()) });
+    if (!selectedEmployeeCompanyId) {
+      toast.warning('Selecciona primero un empleado para definir su empresa principal.');
+      return;
     }
+    const eligibleEmployees = filteredModalEmployees.filter(
+      employee => getEmployeePrincipalCompanyId(employee) === selectedEmployeeCompanyId
+    );
+    const eligibleIds = eligibleEmployees.map(employee => employee.id.toString());
+    const allSelected = eligibleIds.length > 0 && eligibleIds.every(
+      id => formData.employeeIds.map(String).includes(id)
+    );
+    setFormData(previous => ({
+      ...previous,
+      employeeIds: allSelected ? [] : eligibleIds
+    }));
+  };
+
+  const handleEmployeeSelection = (values) => {
+    const selectedIds = new Set(values.map(String));
+    const companyIds = new Set(
+      availableEmployees
+        .filter(employee => selectedIds.has(String(employee.id)))
+        .map(getEmployeePrincipalCompanyId)
+        .filter(Boolean)
+    );
+    if (companyIds.size > 1) {
+      toast.warning('Solo puedes registrar empleados de una misma empresa principal a la vez.');
+      return;
+    }
+    setFormData(previous => ({ ...previous, employeeIds: values }));
+  };
+
+  const handleEditEmployeeChange = (employeeId) => {
+    setEditFormData(previous => ({
+      ...previous,
+      employeeId
+    }));
   };
 
   const filteredLogs = useMemo(() => {
@@ -284,12 +448,12 @@ export default function OperationLogs() {
   }, [operationLogs, filterMonth, filterType, filterStatus]);
 
   const handleSave = () => {
-    if (formData.employeeIds.length === 0 || !formData.date || !formData.taskDescription || !formData.companyId) {
-      toast.warning('Selecciona al menos un empleado, la empresa y completa los campos requeridos');
+    if (formData.employeeIds.length === 0 || !formData.date || !formData.taskDescription || !selectedEmployeeCompanyId) {
+      toast.warning('Selecciona al menos un empleado y completa los campos requeridos');
       return;
     }
-    if (!hasMatchingActivePayroll(formData.date, formData.companyId)) {
-      toast.error(getMissingPayrollMessage(formData.date, formData.companyId));
+    if (!hasMatchingActivePayroll(formData.date, selectedEmployeeCompanyId)) {
+      toast.error(getMissingPayrollMessage(formData.date, selectedEmployeeCompanyId));
       return;
     }
     if (formData.type === 'BONO' && !isBonusOperationalDateAllowed(formData.date)) {
@@ -318,7 +482,6 @@ export default function OperationLogs() {
           const payload = {
             ...formData,
             employeeId: Number(empId),
-            companyId: Number(formData.companyId),
             hoursQty: formData.type === 'HORA_EXTRA' ? Number(formData.hoursQty) : 0,
             bonusQty: formData.type === 'BONO' ? Number(formData.bonusQty) : 0,
             bonusAmount: formData.type === 'BONO' ? Number(formData.bonusAmount) : 0,
@@ -625,15 +788,14 @@ export default function OperationLogs() {
 
   if (!batch) return null;
 
-  const isBonos2daBatch = batch.purpose === 'BONOS_2DA';
-  const canCreateBatch = ['ADMIN', 'GERENTE GENERAL', 'SOLICITANTE', 'NOMINA', 'GERENTE'].includes(user?.role);
+  const canCreateBatch = ['ADMIN', 'GERENTE GENERAL', 'SOLICITANTE', 'NOMINA'].includes(user?.role);
   const canEdit = canCreateBatch && (batch.status === 'DRAFT' || batch.status === 'RETURNED');
 
   const bonusDateBlocked = formData.type === 'BONO' && formData.date && !isBonusOperationalDateAllowed(formData.date);
   const editBonusDateBlocked = editFormData?.type === 'BONO'
     && editFormData?.date
     && !isBonusOperationalDateAllowed(editFormData.date);
-  const saveBlockedByPayroll = formData.date && formData.companyId && !hasMatchingActivePayroll(formData.date, formData.companyId);
+  const saveBlockedByPayroll = formData.date && selectedEmployeeCompanyId && !hasMatchingActivePayroll(formData.date, selectedEmployeeCompanyId);
   const saveBlocked = saveBlockedByPayroll || bonusDateBlocked;
 
 
@@ -656,7 +818,7 @@ export default function OperationLogs() {
               </Heading>
               {getStatusBadge(batch.status)}
               {isBonos2daBatch && (
-                <Badge colorScheme="purple">Bonos 2ª</Badge>
+                <Badge colorScheme="purple">Operaciones 2ª</Badge>
               )}
             </Flex>
             <Text color={mutedTextColor} fontSize="md">
@@ -692,18 +854,11 @@ export default function OperationLogs() {
                 colorScheme="brand" 
                 leftIcon={<Plus size={16} />} 
                 onClick={() => {
-                  const defaultType = isBonos2daBatch ? 'BONO' : 'HORA_EXTRA';
+                  const defaultType = 'HORA_EXTRA';
                   const today = new Date();
                   let defaultDate = today.toISOString().slice(0, 10);
-                  // En lote de bonos 2ª, si hoy es ≤15 sugerir día 16 del mes actual
-                  if (isBonos2daBatch && today.getDate() <= 15) {
-                    const y = today.getFullYear();
-                    const m = String(today.getMonth() + 1).padStart(2, '0');
-                    defaultDate = `${y}-${m}-16`;
-                  }
                   setFormData({
                     employeeIds: [],
-                    companyId: isBonos2daBatch && batch.companyId ? String(batch.companyId) : '',
                     date: defaultDate,
                     type: defaultType,
                     hoursQty: 0, hourType: 'SIMPLE', bonusQty: 1, bonusAmount: 0, taskDescription: ''
@@ -737,7 +892,7 @@ export default function OperationLogs() {
             </Text>
           )}
 
-          {isManagerOrAdmin && batch.status === 'PENDING_MANAGER' && (
+          {canReviewBatch && batch.status === 'PENDING_MANAGER' && (
             <>
               <Button colorScheme="red" variant="outline" leftIcon={<X size={16} />} onClick={handleRejectBatch} borderRadius="lg" transition="all 0.3s" _hover={{ shadow: 'lg' }}>Devolver a Solicitante</Button>
               <Button
@@ -789,7 +944,7 @@ export default function OperationLogs() {
 
       </HStack>
 
-      {selectedRowIds.length > 0 && isManagerOrAdmin && (
+      {selectedRowIds.length > 0 && canReviewBatch && (
         <HStack mb={4} p={3} bg={bulkBg} borderRadius="md" shadow="sm" justify="space-between">
           <Text fontSize="sm" fontWeight="bold" color={bulkTextColor}>
             {selectedRowIds.length} solicitudes seleccionadas
@@ -805,7 +960,7 @@ export default function OperationLogs() {
         <Table variant="simple" size="sm">
           <Thead bg={theadBg}>
             <Tr>
-              {isManagerOrAdmin && (
+              {canReviewBatch && (
                 <Th w="40px">
                   <Checkbox 
                     colorScheme="brand" 
@@ -830,7 +985,7 @@ export default function OperationLogs() {
           <Tbody>
             {paginatedLogs.map(log => (
               <Tr key={log.id}>
-                {isManagerOrAdmin && (
+                {canReviewBatch && (
                   <Td>
                     {log.status === 'PENDING_MANAGER' ? (
                       <Checkbox 
@@ -852,10 +1007,24 @@ export default function OperationLogs() {
                 <Td>{log.Employee ? [log.Employee.primer_nombre, log.Employee.segundo_nombre, log.Employee.otro_nombre, log.Employee.primer_apellido, log.Employee.segundo_apellido].filter(Boolean).join(' ') : 'Desconocido'}</Td>
                 <Td>{log.type === 'HORA_EXTRA' ? 'Hrs Extras' : 'Bono'}</Td>
                 <Td>
-                  {log.type === 'HORA_EXTRA' 
-                    ? `${log.hoursQty} hrs (${log.hourType})`
-                    : `Q${log.bonusAmount}`
-                  }
+                  {log.type === 'HORA_EXTRA' ? (
+                    (() => {
+                      const salary = resolveEmployeeSalary(log, employees);
+                      const amount = calcOvertimeAmount(salary, log.hoursQty, log.hourType);
+                      return (
+                        <Box>
+                          <Text>{log.hoursQty} hrs ({log.hourType})</Text>
+                          {salary > 0 ? (
+                            <Text fontSize="xs" fontWeight="semibold" color="brand.500">
+                              {formatMoneyQ(amount)}
+                            </Text>
+                          ) : null}
+                        </Box>
+                      );
+                    })()
+                  ) : (
+                    `Q${log.bonusAmount}`
+                  )}
                 </Td>
                 <Td maxW="200px" isTruncated>{log.taskDescription}</Td>
                 <Td>{getStatusBadge(log.status)}</Td>
@@ -865,12 +1034,12 @@ export default function OperationLogs() {
                     <Tooltip label="Ver Detalles" hasArrow>
                       <IconButton aria-label="Ver Detalles" size={{ base: 'xs', md: 'sm' }} icon={<Eye size={16} />} variant="ghost" colorScheme="teal" onClick={() => { setSelectedLog(log); onDetailsOpen(); }} transition="all 0.3s" />
                     </Tooltip>
-                    {!isManagerOrAdmin && !isReadOnly && log.status === 'RETURNED' && (
+                    {!canReviewBatch && !isReadOnly && log.status === 'RETURNED' && (
                       <Tooltip label="Editar y Reenviar" hasArrow>
                         <IconButton aria-label="Editar" size={{ base: 'xs', md: 'sm' }} icon={<Edit2 size={16} />} variant="ghost" colorScheme="blue" onClick={() => openEdit(log)} transition="all 0.3s" />
                       </Tooltip>
                     )}
-                    {isManagerOrAdmin && log.status === 'PENDING_MANAGER' && (
+                    {canReviewBatch && log.status === 'PENDING_MANAGER' && (
                       <>
                         <Tooltip label="Aprobar" hasArrow>
                           <IconButton aria-label="Aprobar" size={{ base: 'xs', md: 'sm' }} icon={<Check size={16} />} variant="ghost" colorScheme="blue" onClick={() => handleApprove(log.id)} transition="all 0.3s" />
@@ -925,7 +1094,7 @@ export default function OperationLogs() {
                 <FormLabel fontSize="sm" mb={1}>Empleados</FormLabel>
                 <Flex mb={2} gap={2} wrap="wrap" align="center" justify="space-between">
                     <Flex gap={2} wrap="wrap" flex="1">
-                      {user?.idDepartamento && !isGlobalRole ? (
+                      {isSolicitante && user?.idDepartamento ? (
                         <Input 
                           size="sm" 
                           flex={1} 
@@ -1009,8 +1178,8 @@ export default function OperationLogs() {
                       )}
                     </Flex>
                     
-                    <Button size="sm" flexShrink={0} variant="outline" colorScheme="brand" borderRadius="md" onClick={handleSelectAllEmployees}>
-                      {formData.employeeIds.length === filteredModalEmployees.length && filteredModalEmployees.length > 0 ? 'Deseleccionar Todos' : 'Seleccionar Todos'}
+                    <Button size="sm" flexShrink={0} variant="outline" colorScheme="brand" borderRadius="md" onClick={handleSelectAllEmployees} isDisabled={!selectedEmployeeCompanyId}>
+                      {formData.employeeIds.length > 0 ? 'Deseleccionar Todos' : 'Seleccionar Todos'}
                     </Button>
                   </Flex>
                 <Input 
@@ -1021,7 +1190,7 @@ export default function OperationLogs() {
                   mb={2}
                 />
                 <Box maxH="160px" overflowY="auto" borderWidth="1px" borderRadius="md" p={2}>
-                  <CheckboxGroup colorScheme="brand" value={formData.employeeIds} onChange={(values) => setFormData({...formData, employeeIds: values})}>
+                  <CheckboxGroup colorScheme="brand" value={formData.employeeIds} onChange={handleEmployeeSelection}>
                     <VStack align="start" spacing={1}>
                       {(() => {
                         const groups = {};
@@ -1053,7 +1222,13 @@ export default function OperationLogs() {
                               {groupName}
                             </Text>
                             {groups[groupName].map(emp => (
-                              <Checkbox key={emp.id} value={emp.id.toString()} w="100%" py={0.5}>
+                              <Checkbox
+                                key={emp.id}
+                                value={emp.id.toString()}
+                                w="100%"
+                                py={0.5}
+                                isDisabled={!!selectedEmployeeCompanyId && getEmployeePrincipalCompanyId(emp) !== selectedEmployeeCompanyId}
+                              >
                                 {[emp.primer_nombre, emp.segundo_nombre, emp.otro_nombre, emp.primer_apellido, emp.segundo_apellido].filter(Boolean).join(' ')}
                               </Checkbox>
                             ))}
@@ -1066,10 +1241,10 @@ export default function OperationLogs() {
                 </Box>
               </FormControl>
 
-              {formData.date && formData.companyId && !hasMatchingActivePayroll(formData.date, formData.companyId) && (
+              {formData.date && selectedEmployeeCompanyId && !hasMatchingActivePayroll(formData.date, selectedEmployeeCompanyId) && (
                 <Box w="100%" p={2} borderRadius="md" bg="orange.50" borderWidth="1px" borderColor="orange.200">
                   <Text fontSize="sm" color="orange.700">
-                    {getMissingPayrollMessage(formData.date, formData.companyId)}. No se puede guardar hasta que exista una nómina abierta para esa empresa y quincena.
+                    {getMissingPayrollMessage(formData.date, selectedEmployeeCompanyId)}. No se puede guardar hasta que exista una nómina abierta para esa empresa y quincena.
                   </Text>
                 </Box>
               )}
@@ -1084,21 +1259,18 @@ export default function OperationLogs() {
 
               <HStack w="full" spacing={3} align="start">
                 <FormControl isRequired flex={1}>
-                  <FormLabel fontSize="sm" mb={1}>Empresa a cargar</FormLabel>
-                  <Select
+                  <FormLabel fontSize="sm" mb={1}>Empresa principal</FormLabel>
+                  <Input
                     size="sm"
-                    value={formData.companyId}
-                    isDisabled={isBonos2daBatch && !!batch.companyId}
-                    onChange={(e) => setFormData({...formData, companyId: e.target.value})}
-                  >
-                    <option value="" disabled>Selecciona una empresa</option>
-                    {companies.map(c => <option key={c.id} value={c.id}>{c.nombre_comercial}</option>)}
-                  </Select>
+                    isReadOnly
+                    cursor="not-allowed"
+                    value={companies.find(c => String(c.id) === selectedEmployeeCompanyId)?.nombre_comercial || 'Se determina al seleccionar empleados'}
+                  />
                 </FormControl>
                 <FormControl isRequired flex={1}>
                   <FormLabel fontSize="sm" mb={1}>
                     Fecha
-                    {formData.date && formData.companyId && hasMatchingActivePayroll(formData.date, formData.companyId) && (
+                    {formData.date && selectedEmployeeCompanyId && hasMatchingActivePayroll(formData.date, selectedEmployeeCompanyId) && (
                       <Text as="span" fontWeight="normal" color={mutedTextColor} ml={2}>
                         ({formatQuincenaLabel(formData.date)})
                       </Text>
@@ -1114,10 +1286,9 @@ export default function OperationLogs() {
                   <Select
                     size="sm"
                     value={formData.type}
-                    isDisabled={isBonos2daBatch}
                     onChange={(e) => setFormData({...formData, type: e.target.value})}
                   >
-                    {!isBonos2daBatch && <option value="HORA_EXTRA">Horas Extras</option>}
+                    <option value="HORA_EXTRA">Horas Extras</option>
                     <option value="BONO">Bono</option>
                   </Select>
                 </FormControl>
@@ -1164,6 +1335,8 @@ export default function OperationLogs() {
                   </>
                 )}
               </HStack>
+
+              {formData.type === 'HORA_EXTRA' && overtimeCalcInfo}
 
               <FormControl isRequired>
                 <FormLabel fontSize="sm" mb={1}>Tarea Realizada (Descripción)</FormLabel>
@@ -1230,6 +1403,7 @@ export default function OperationLogs() {
                 </Grid>
                 
                 {selectedLog.type === 'HORA_EXTRA' ? (
+                  <>
                   <Grid templateColumns="repeat(2, 1fr)" gap={4}>
                     <GridItem>
                       <Text fontSize="xs" color={mutedTextColor} textTransform="uppercase" fontWeight="bold">Cantidad de Horas</Text>
@@ -1238,10 +1412,42 @@ export default function OperationLogs() {
                     <GridItem>
                       <Text fontSize="xs" color={mutedTextColor} textTransform="uppercase" fontWeight="bold">Tipo de Hora</Text>
                       <Text fontSize="md">
-                        {selectedLog.hourType === 'SIMPLE' ? 'Simple (1x)' : selectedLog.hourType === 'DOBLE' ? 'Doble (2x)' : selectedLog.hourType}
+                        {selectedLog.hourType === 'SIMPLE' ? 'Simple (×1.5)' : selectedLog.hourType === 'DOBLE' ? 'Doble (×2)' : selectedLog.hourType === 'NOCTURNA' ? 'Nocturna (×2)' : selectedLog.hourType}
                       </Text>
                     </GridItem>
                   </Grid>
+                  {(() => {
+                    const salary = resolveEmployeeSalary(selectedLog, employees);
+                    const amount = calcOvertimeAmount(salary, selectedLog.hoursQty, selectedLog.hourType);
+                    const rate = getHourlyRate(salary);
+                    const factor = getOvertimeFactor(selectedLog.hourType);
+                    return (
+                      <Box
+                        p={3}
+                        borderRadius="md"
+                        bg={bulkBg}
+                        borderWidth="1px"
+                        borderColor={infoBorderColor}
+                      >
+                        <Text fontSize="xs" color={bulkTextColor} textTransform="uppercase" fontWeight="bold">
+                          Monto estimado a pagar
+                        </Text>
+                        <Text fontSize="2xl" fontWeight="bold" color={bulkTextColor} lineHeight="short">
+                          {salary > 0 ? formatMoneyQ(amount) : '—'}
+                        </Text>
+                        {salary > 0 ? (
+                          <Text fontSize="xs" color={bulkTextColor} mt={1} opacity={0.9}>
+                            Valor hora {formatMoneyQ(rate)} × {factor} × {Number(selectedLog.hoursQty) || 0} hrs
+                          </Text>
+                        ) : (
+                          <Text fontSize="xs" color="orange.500" mt={1}>
+                            No se encontró el sueldo ordinario del empleado para calcular el monto.
+                          </Text>
+                        )}
+                      </Box>
+                    );
+                  })()}
+                  </>
                 ) : (
                   <Grid templateColumns="repeat(2, 1fr)" gap={4}>
                     <GridItem>
@@ -1371,7 +1577,7 @@ export default function OperationLogs() {
                 <FormControl isRequired>
                   <FormLabel fontSize="sm" mb={1}>Empleado</FormLabel>
                   <Flex mb={2} gap={2} wrap="wrap">
-                    {user?.idDepartamento && !isGlobalRole ? (
+                    {isSolicitante && user?.idDepartamento ? (
                       <Input 
                         size="sm" 
                         flex={1} 
@@ -1462,7 +1668,7 @@ export default function OperationLogs() {
                     mb={2}
                   />
                   <Box maxH="160px" overflowY="auto" borderWidth="1px" borderRadius="md" p={2}>
-                    <RadioGroup colorScheme="brand" value={editFormData.employeeId.toString()} onChange={(val) => setEditFormData({...editFormData, employeeId: val})}>
+                    <RadioGroup colorScheme="brand" value={editFormData.employeeId.toString()} onChange={handleEditEmployeeChange}>
                       <VStack align="start" spacing={1}>
                         {(() => {
                           const groups = {};
@@ -1491,10 +1697,10 @@ export default function OperationLogs() {
                   </Box>
                 </FormControl>
 
-                {editFormData.date && editFormData.companyId && !hasMatchingActivePayroll(editFormData.date, editFormData.companyId) && (
+                {editFormData.date && editEmployeeCompanyId && !hasMatchingActivePayroll(editFormData.date, editEmployeeCompanyId) && (
                   <Box w="100%" p={2} borderRadius="md" bg="orange.50" borderWidth="1px" borderColor="orange.200">
                     <Text fontSize="sm" color="orange.700">
-                      {getMissingPayrollMessage(editFormData.date, editFormData.companyId)}
+                      {getMissingPayrollMessage(editFormData.date, editEmployeeCompanyId)}
                     </Text>
                   </Box>
                 )}
@@ -1509,17 +1715,13 @@ export default function OperationLogs() {
 
                 <HStack w="full" spacing={3} align="start">
                   <FormControl isRequired flex={1}>
-                    <FormLabel fontSize="sm" mb={1}>Empresa a cargar</FormLabel>
-                    <Select
+                    <FormLabel fontSize="sm" mb={1}>Empresa principal</FormLabel>
+                    <Input
                       size="sm"
-                      value={editFormData.companyId || ''}
-                      onChange={(e) => setEditFormData({ ...editFormData, companyId: e.target.value })}
-                    >
-                      <option value="" disabled>Selecciona una empresa</option>
-                      {companies.map((c) => (
-                        <option key={c.id} value={c.id}>{c.nombre_comercial}</option>
-                      ))}
-                    </Select>
+                      isReadOnly
+                      cursor="not-allowed"
+                      value={companies.find(c => String(c.id) === editEmployeeCompanyId)?.nombre_comercial || 'Sin empresa principal'}
+                    />
                   </FormControl>
                   <FormControl isRequired flex={1}>
                     <FormLabel fontSize="sm" mb={1}>
@@ -1540,6 +1742,7 @@ export default function OperationLogs() {
                 </HStack>
 
                 {editFormData.type === 'HORA_EXTRA' ? (
+                  <>
                   <HStack w="full" spacing={3} align="start">
                     <FormControl isRequired flex={1}>
                       <FormLabel fontSize="sm" mb={1}>Cantidad de Horas</FormLabel>
@@ -1554,6 +1757,8 @@ export default function OperationLogs() {
                       </Select>
                     </FormControl>
                   </HStack>
+                  {overtimeCalcInfo}
+                  </>
                 ) : (
                   <HStack w="full" spacing={3} align="start">
                     <FormControl flex={1}>
@@ -1602,8 +1807,8 @@ export default function OperationLogs() {
                 !editFormData ||
                 editBonusDateBlocked ||
                 (editFormData.date &&
-                  editFormData.companyId &&
-                  !hasMatchingActivePayroll(editFormData.date, editFormData.companyId))
+                  editEmployeeCompanyId &&
+                  !hasMatchingActivePayroll(editFormData.date, editEmployeeCompanyId))
               }
             >
               Guardar y Reenviar

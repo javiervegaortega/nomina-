@@ -37,13 +37,13 @@ const assert = (condition, message) => {
 
 const verifyBillingConfiguration = async () => {
   const expectedRoutes = [
-    { from: 1, to: 2, margin: 0, iva: true, ivaRate: 0.12, totalFor100: 112 },
-    { from: 1, to: 3, margin: 0, iva: true, ivaRate: 0.12, totalFor100: 112 },
-    { from: 2, to: 1, margin: 0, iva: true, ivaRate: 0.12, totalFor100: 112 },
-    { from: 2, to: 3, margin: 0, iva: true, ivaRate: 0.12, totalFor100: 112 },
-    { from: 3, to: 1, margin: 4, iva: true, ivaRate: 0.12, totalFor100: 116.48 },
-    { from: 3, to: 2, margin: 4, iva: true, ivaRate: 0.12, totalFor100: 116.48 },
-    { from: 3, to: 4, margin: 4, iva: false, ivaRate: 0, totalFor100: 104 }
+    { from: 1, to: 2, margin: 0, iva: true, ivaRate: 0.12, adjustment: 0, totalFor100: 112 },
+    { from: 1, to: 3, margin: 0, iva: true, ivaRate: 0.12, adjustment: 0, totalFor100: 112 },
+    { from: 2, to: 1, margin: 0, iva: true, ivaRate: 0.12, adjustment: 0, totalFor100: 112 },
+    { from: 2, to: 3, margin: 0, iva: true, ivaRate: 0.12, adjustment: 0, totalFor100: 112 },
+    { from: 3, to: 1, margin: 4, iva: true, ivaRate: 0.12, adjustment: 0, totalFor100: 116.48 },
+    { from: 3, to: 2, margin: 4, iva: true, ivaRate: 0.12, adjustment: 0, totalFor100: 116.48 },
+    { from: 3, to: 4, margin: 4, iva: false, ivaRate: 0, adjustment: 0, totalFor100: 104 }
   ];
   const activeRules = await BillingRule.findAll({ where: { isActive: true } });
 
@@ -64,6 +64,11 @@ const verifyBillingConfiguration = async () => {
     assert(
       Number(rule.ivaRate) === expected.ivaRate,
       `tasa IVA ${(expected.ivaRate * 100).toFixed(0)}% en ${expected.from}→${expected.to}`
+    );
+
+    assert(
+      Number(rule.baseAdjustment || 0) === expected.adjustment,
+      `ajuste base Q${expected.adjustment.toFixed(2)} en ${expected.from}→${expected.to}`
     );
 
     const base = 100;

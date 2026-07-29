@@ -19,7 +19,7 @@ const ROUTE_DEFAULTS = {
   '2->1': { marginPercentage: 0, applyIva: true, ivaRate: 0.12, baseAdjustment: 0 },
   '2->3': { marginPercentage: 0, applyIva: true, ivaRate: 0.12, baseAdjustment: 0 },
   '3->1': { marginPercentage: 4, applyIva: true, ivaRate: 0.12, baseAdjustment: 0 },
-  '3->2': { marginPercentage: 4, applyIva: true, ivaRate: 0.12, baseAdjustment: 1296.13 },
+  '3->2': { marginPercentage: 4, applyIva: true, ivaRate: 0.12, baseAdjustment: 0 },
   '3->4': { marginPercentage: 4, applyIva: false, ivaRate: 0, baseAdjustment: 0 }
 };
 const routeKey = (fromId, toId) => `${Number(fromId)}->${Number(toId)}`;
@@ -48,7 +48,6 @@ export function BillingRulesPanel() {
     marginPercentage: 0,
     applyIva: true,
     ivaRate: 0.12,
-    baseAdjustment: 0,
     isActive: true
   });
   const payerCompanies = companies.filter((c) => BILLING_PAYER_IDS.has(Number(c.id)));
@@ -96,7 +95,6 @@ export function BillingRulesPanel() {
         marginPercentage: rule.marginPercentage,
         applyIva: rule.applyIva,
         ivaRate: rule.ivaRate ?? 0.12,
-        baseAdjustment: rule.baseAdjustment ?? 0,
         isActive: rule.isActive
       });
     } else {
@@ -108,7 +106,6 @@ export function BillingRulesPanel() {
         marginPercentage: 0,
         applyIva: true,
         ivaRate: 0.12,
-        baseAdjustment: 0,
         isActive: true
       });
     }
@@ -137,7 +134,6 @@ export function BillingRulesPanel() {
         marginPercentage: Number(formData.marginPercentage),
         applyIva: formData.applyIva,
         ivaRate: Number(formData.ivaRate),
-        baseAdjustment: Number(formData.baseAdjustment) || 0,
         isActive: formData.isActive
       };
       const url = formData.id ? `${API}/rules/${formData.id}` : `${API}/rules`;
@@ -212,7 +208,7 @@ export function BillingRulesPanel() {
               <Th>Empresa receptora</Th>
               <Th>Concepto</Th>
               <Th isNumeric>Margen %</Th>
-              <Th isNumeric>Ajuste base</Th>
+              <Th>Base</Th>
               <Th>IVA</Th>
               <Th>Estado</Th>
               {canWriteBilling && <Th textAlign="right">Acciones</Th>}
@@ -226,11 +222,7 @@ export function BillingRulesPanel() {
                 <Td fontWeight="bold">{resolveName(rule, 'to')}</Td>
                 <Td>{rule.concept}</Td>
                 <Td isNumeric>{Number(rule.marginPercentage).toFixed(2)}%</Td>
-                <Td isNumeric>
-                  {Number(rule.baseAdjustment || 0) !== 0
-                    ? `Q${Number(rule.baseAdjustment).toLocaleString('es-GT', { minimumFractionDigits: 2 })}`
-                    : '—'}
-                </Td>
+                <Td><Badge colorScheme="green">Calculada</Badge></Td>
                 <Td>
                   {rule.applyIva
                     ? <Badge colorScheme="green">Sí ({(Number(rule.ivaRate || 0.12) * 100).toFixed(0)}%)</Badge>
@@ -333,16 +325,6 @@ export function BillingRulesPanel() {
                   />
                 </FormControl>
               </HStack>
-
-              <FormControl>
-                <FormLabel>Ajuste a la base (Q)</FormLabel>
-                <Input
-                  type="number"
-                  step="0.01"
-                  value={formData.baseAdjustment}
-                  onChange={(e) => setFormData({ ...formData, baseAdjustment: e.target.value })}
-                />
-              </FormControl>
 
               <HStack w="100%" spacing={4}>
                 <FormControl display="flex" alignItems="center">

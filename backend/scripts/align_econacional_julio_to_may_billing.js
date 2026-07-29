@@ -17,9 +17,11 @@ const { Sequelize } = require('sequelize');
 const { calculateEmployeePayroll } = require('../src/services/payrollCalculator.service');
 
 const APPLY = process.argv.includes('--apply');
-const PAYROLL_ID = 'draft_1784990395552_392';
+const PAYROLL_ID = process.argv.find((a) => a.startsWith('--payroll='))?.split('=')[1]
+  || 'draft_1785342374151_147';
 const EXCEL = path.resolve(__dirname, '../../nominas excel/NOMINA ECONACIONAL 28.5 Segunda Quincena.xlsx');
 const OUT_DIR = path.join(__dirname, 'output');
+const EXCEL_UNHESA_BASE = 197046.31; // BF338 Excel mayo
 
 const COMPANY = { P: 1, U: 2, H: 6, C: 4 };
 
@@ -112,6 +114,12 @@ function loadExcelRealRows() {
     const bonoDist = parseNum(r[10]);
     if (sal === 0 && bonoDist === 0) continue;
 
+    const pct = {
+      [COMPANY.P]: parseNum(r[13]),
+      [COMPANY.U]: parseNum(r[14]),
+      [COMPANY.H]: parseNum(r[15]),
+      [COMPANY.C]: parseNum(r[16])
+    };
     const dec = {
       [COMPANY.P]: parseNum(r[53]),
       [COMPANY.U]: parseNum(r[62]),
@@ -142,15 +150,36 @@ function loadExcelRealRows() {
       ? round2(decSumProrated * (30 / days))
       : bonoDist;
 
+    const distFromPct = (() => {
+      const map = {};
+      let sum = 0;
+      Object.entries(pct).forEach(([id, p]) => {
+        if (p > 0) {
+          map[id] = p;
+          sum += p;
+        }
+      });
+      if (sum <= 0) return null;
+      // Normalizar a 100 si el Excel trae redondeo
+      if (Math.abs(sum - 100) > 0.05) {
+        Object.keys(map).forEach((id) => {
+          map[id] = round2((map[id] / sum) * 100);
+        });
+      }
+      return map;
+    })();
+
     list.push({
       name,
       sal,
       bonoDist,
       bonoReal: bonoFull,
+      pct,
       dec,
       he: heUse,
       heTotal,
       days,
+      dist: distFromPct,
       bonusesPct: pctMapFromAmounts(dec),
       extrasPct: pctMapFromAmounts(heUse)
     });
@@ -207,16 +236,33 @@ async function main() {
     const next = { ...emp };
     next.bon_dec_37_2001 = best.bonoReal;
     next.days = best.days;
+    // Quitar bonos de catálogo artificiales (ej. Q225 masivo) para empatar mayo.
+    next.appliedBonuses = {};
+    next.carriedAppliedBonuses = {};
+    next.scheduledBonusIds = [];
     const extras = { ...(emp.extras || {}) };
+    extras.bonos = 0;
     extras.simplesQty = best.heTotal > 0 ? (Number(extras.simplesQty) || 0) : 0;
-    // Conservar qty si ya venía; valor = HE total mayo
     if (best.heTotal > 0) {
       extras.simplesVal = best.heTotal;
       extras.doblesVal = 0;
       extras.doblesQty = 0;
       if (!extras.simplesQty) extras.simplesQty = 1;
+    } else {
+      extras.simplesVal = 0;
+      extras.doblesVal = 0;
+      extras.doblesQty = 0;
+      extras.simplesQty = 0;
     }
     next.extras = extras;
+
+    const forcedDist = best.dist || pctMapFromAmounts({
+      [COMPANY.P]: (best.dec[COMPANY.P] || 0) + (best.he[COMPANY.P] || 0),
+      [COMPANY.U]: (best.dec[COMPANY.U] || 0) + (best.he[COMPANY.U] || 0),
+      [COMPANY.H]: (best.dec[COMPANY.H] || 0) + (best.he[COMPANY.H] || 0),
+      [COMPANY.C]: (best.dec[COMPANY.C] || 0) + (best.he[COMPANY.C] || 0)
+    });
+    if (forcedDist) next.dist = forcedDist;
 
     const componentDist = {};
     if (best.bonusesPct) componentDist.bonuses = best.bonusesPct;
