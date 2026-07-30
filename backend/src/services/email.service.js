@@ -236,6 +236,72 @@ const sendOperationRejectToManagerEmail = async (gerenteName, recipientEmail, de
   }
 };
 
+const escapeHtml = (value) => String(value ?? '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#039;');
+
+const buildOperationReturnedToRequesterEmailHtml = ({
+  requesterName,
+  employeeName,
+  periodLabel,
+  concept,
+  comment,
+  batchId,
+  rejectedBy
+}) => {
+  const operationLink = `${FRONTEND_URL}/operations/${encodeURIComponent(batchId || '')}`;
+  return `
+    <div style="font-family: 'Segoe UI', Tahoma, sans-serif; background:#f3f4f6; padding:24px;">
+      <div style="max-width:620px; margin:0 auto; background:#fff; border-radius:10px; overflow:hidden;">
+        <div style="background:#b91c1c; color:#fff; padding:20px 24px;">
+          <h2 style="margin:0; font-size:20px;">Correccion requerida por Nomina</h2>
+        </div>
+        <div style="padding:24px; color:#374151; font-size:14px;">
+          <p>Hola <strong>${escapeHtml(requesterName || 'Operaciones')}</strong>,</p>
+          <p><strong>${escapeHtml(rejectedBy || 'Nomina')}</strong> devolvio un registro para que lo corrijas y lo reenvies a gerencia.</p>
+          <table style="width:100%; border-collapse:collapse; margin:20px 0;">
+            <tr><td style="padding:9px; border-bottom:1px solid #e5e7eb; color:#6b7280;">Empleado</td><td style="padding:9px; border-bottom:1px solid #e5e7eb; font-weight:600;">${escapeHtml(employeeName || '—')}</td></tr>
+            <tr><td style="padding:9px; border-bottom:1px solid #e5e7eb; color:#6b7280;">Quincena</td><td style="padding:9px; border-bottom:1px solid #e5e7eb;">${escapeHtml(periodLabel || '—')}</td></tr>
+            <tr><td style="padding:9px; border-bottom:1px solid #e5e7eb; color:#6b7280;">Concepto</td><td style="padding:9px; border-bottom:1px solid #e5e7eb;">${escapeHtml(concept || '—')}</td></tr>
+            <tr><td style="padding:9px; color:#6b7280;">Comentario</td><td style="padding:9px; color:#991b1b; white-space:pre-wrap;">${escapeHtml(comment || '—')}</td></tr>
+          </table>
+          <div style="text-align:center;">
+            <a href="${operationLink}" style="display:inline-block; background:#b91c1c; color:#fff; text-decoration:none; padding:11px 24px; border-radius:6px; font-weight:600;">
+              Corregir y reenviar
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+};
+
+const sendOperationReturnedToRequesterEmail = async (
+  recipientEmail,
+  requesterName,
+  details
+) => {
+  const mailOptions = {
+    from: `"Sistema Nomina" <${process.env.GMAIL_USER || 'notificacioneseconsa@gmail.com'}>`,
+    to: recipientEmail,
+    subject: `Correccion requerida: ${details.employeeName || 'registro operativo'}`,
+    html: buildOperationReturnedToRequesterEmailHtml({
+      ...details,
+      requesterName
+    })
+  };
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`Email de devolucion de Nomina enviado a ${recipientEmail}`);
+  } catch (error) {
+    console.error('Error enviando correo al solicitante:', error);
+    throw new Error('No se pudo enviar el correo al solicitante.');
+  }
+};
+
 const buildPayrollAuditEmailHtml = ({ recipientName, title, periodType, action, note, auditorName }) => {
   const now = new Date();
   const dateStr = now.toLocaleDateString('es-GT', { day: '2-digit', month: '2-digit', year: 'numeric' });
@@ -398,6 +464,8 @@ module.exports = {
   getOperationEmailSubject,
   sendOperationLogEmail,
   sendOperationRejectToManagerEmail,
+  buildOperationReturnedToRequesterEmailHtml,
+  sendOperationReturnedToRequesterEmail,
   sendPayrollAuditDecisionEmail,
   sendPayrollSubmittedToAuditEmail
 };

@@ -132,7 +132,7 @@ export function formatQuincenaLabel(dateStr) {
  * Busca un draft activo que coincida con empresa + quincena de la fecha.
  * companiesList: catálogo de empresas para resolver nombre/NIT → id.
  */
-export function findMatchingActiveDraft(activePayrolls, dateStr, companyId, companiesList = []) {
+export function findMatchingPayrollDraft(activePayrolls, dateStr, companyId, companiesList = []) {
   if (!dateStr || !companyId) return null;
   const drafts = Array.isArray(activePayrolls) ? activePayrolls : [];
   return drafts.find((draft) => {
@@ -150,6 +150,12 @@ export function findMatchingActiveDraft(activePayrolls, dateStr, companyId, comp
       return compByName && String(compByName.id) === String(companyId);
     });
   }) || null;
+}
+
+export function findMatchingActiveDraft(activePayrolls, dateStr, companyId, companiesList = []) {
+  const editableDrafts = (Array.isArray(activePayrolls) ? activePayrolls : [])
+    .filter((draft) => !draft?.isApproved);
+  return findMatchingPayrollDraft(editableDrafts, dateStr, companyId, companiesList);
 }
 
 /** Título editable sugerido: "Segunda Quincena del mes de Julio 2026 - ECONACIONAL,S.A.". */

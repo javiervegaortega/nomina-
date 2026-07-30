@@ -643,11 +643,12 @@ function PayrollEditor({ draftId, onBack }) {
       // 1. Recalculate simplesVal & doblesVal automatically if simplesQty or doblesQty changes
       if (section === 'extras' && (field === 'simplesQty' || field === 'doblesQty')) {
         const sueldoOrd = Number(e.sueldo_ordinario) || 0;
-        const hourRate = sueldoOrd / 30 / 8;
         if (field === 'simplesQty') {
+          const hourRate = sueldoOrd / 30 / 8;
           updated.extras.simplesVal = (hourRate * 1.5 * Number(value)) || 0;
         } else {
-          updated.extras.doblesVal = (hourRate * 2 * Number(value)) || 0;
+          const nocturnalHourRate = sueldoOrd / 30 / 6;
+          updated.extras.doblesVal = (nocturnalHourRate * 1.5 * Number(value)) || 0;
         }
       }
 
@@ -1617,8 +1618,8 @@ function ListadoPagosTab({
                     
                     <Th w="80px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Hrs Simples</Th>
                     <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Val Hrs Simp</Th>
-                    <Th w="80px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Hrs Dobles</Th>
-                    <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Val Hrs Dobl</Th>
+                    <Th w="80px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Hrs Nocturnas</Th>
+                    <Th w="110px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Val Hrs Noct.</Th>
                     <Th w="100px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px">Otros Ingr.</Th>
                     <Th w="130px" bg={theadBg} borderBottom="2px solid" borderBottomColor="brand.500" fontSize="10px" color="gold.500">Salario Total</Th>
                     

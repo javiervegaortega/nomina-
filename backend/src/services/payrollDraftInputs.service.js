@@ -68,7 +68,8 @@ const operationAmounts = (operation, employee) => {
   }
 
   const salary = numberAsDecimal(employee?.sueldo_ordinario);
-  const hourlyRate = salary.dividedBy(30).dividedBy(8);
+  const simpleHourlyRate = salary.dividedBy(30).dividedBy(8);
+  const nocturnalHourlyRate = salary.dividedBy(30).dividedBy(6);
   const hours = numberAsDecimal(operation?.hoursQty);
   const hourType = String(operation?.hourType || '').trim().toUpperCase();
 
@@ -81,10 +82,10 @@ const operationAmounts = (operation, employee) => {
   if (operation?.type === 'HORA_EXTRA') {
     if (hourType === 'SIMPLE') {
       simpleQty = hours;
-      simpleValue = hours.times(hourlyRate).times('1.5');
-    } else if (hourType === 'DOBLE' || hourType === 'NOCTURNA') {
+      simpleValue = hours.times(simpleHourlyRate).times('1.5');
+    } else if (hourType === 'NOCTURNA') {
       doubleQty = hours;
-      doubleValue = hours.times(hourlyRate).times(2);
+      doubleValue = hours.times(nocturnalHourlyRate).times('1.5');
     }
   } else if (operation?.type === 'BONO') {
     bonus = numberAsDecimal(operation?.bonusAmount);
@@ -113,7 +114,8 @@ const commissionAmounts = (commission, employee) => {
   }
 
   const salary = numberAsDecimal(employee?.sueldo_ordinario);
-  const hourlyRate = salary.dividedBy(30).dividedBy(8);
+  const simpleHourlyRate = salary.dividedBy(30).dividedBy(8);
+  const nocturnalHourlyRate = salary.dividedBy(30).dividedBy(6);
   const hours = numberAsDecimal(commission?.horas);
   const hourType = String(commission?.tipo_hora || '').trim().toUpperCase();
   const simpleQty = hourType === 'D' ? hours : new Decimal(0);
@@ -122,8 +124,8 @@ const commissionAmounts = (commission, employee) => {
   return {
     simpleQty,
     doubleQty,
-    simpleValue: simpleQty.times(hourlyRate).times('1.5'),
-    doubleValue: doubleQty.times(hourlyRate).times(2),
+    simpleValue: simpleQty.times(simpleHourlyRate).times('1.5'),
+    doubleValue: doubleQty.times(nocturnalHourlyRate).times('1.5'),
     bonus: numberAsDecimal(commission?.monto_bono)
   };
 };

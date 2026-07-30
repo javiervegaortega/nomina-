@@ -1,6 +1,7 @@
 const {
   OperationBatch,
   OperationLog,
+  OperationLogReview,
   Employee,
   Company,
   User,
@@ -9,7 +10,6 @@ const {
 } = require('../models');
 const {
   sendOperationLogEmail,
-  sendOperationRejectToManagerEmail,
   buildOperationEmailHtml,
   getOperationEmailSubject
 } = require('../services/email.service');
@@ -17,24 +17,21 @@ const {
   syncOperationLogTransitions
 } = require('../services/payrollDraftInputs.service');
 const {
+  getRole,
   assertBatchAccess,
-  assertBatchStatusTransition
+  assertBatchStatusTransition,
+  assertOperationMutationAccess,
+  requesterOwnsLog,
+  logBelongsToDepartment
 } = require('../services/operationLogPolicy.service');
+const {
+  recalculateBatchStatus,
+  recordOperationReview
+} = require('../services/operationWorkflow.service');
 const { Op } = require('sequelize');
 
-const NOMINA_ROLES = ['ADMIN', 'NOMINA', 'AUDITOR'];
-
-const isNominaRole = (role) => NOMINA_ROLES.includes(role?.toUpperCase());
-
-const getGerentesForBatch = async (batch) => {
-  if (!batch.user?.idDepartamento) return [];
-  return User.findAll({
-    where: { role: 'GERENTE', idDepartamento: batch.user.idDepartamento }
-  });
-};
-
 const batchInclude = [
-  { model: User, as: 'user', attributes: ['id', 'name', 'role', 'idDepartamento'] },
+  { model: User, as: 'user', attributes: ['id', 'name', 'email', 'role', 'idDepartamento'] },
   {
     model: OperationLog,
     as: 'logs',
@@ -44,30 +41,77 @@ const batchInclude = [
         attributes: [
           'id', 'primer_nombre', 'segundo_nombre', 'otro_nombre',
           'primer_apellido', 'segundo_apellido', 'empresa_principal', 'departmentId',
+          'areaId', 'divisionId', 'subdivisionId', 'nivel_5', 'dimension_5',
           'dpi', 'puesto', 'estado', 'sueldo_ordinario'
         ]
       },
-      { model: Company, as: 'companyData', attributes: ['id', 'nombre_comercial', 'nit'] }
+      { model: Company, as: 'companyData', attributes: ['id', 'nombre_comercial', 'nit'] },
+      {
+        model: User,
+        as: 'requester',
+        attributes: ['id', 'name', 'email', 'role', 'idDepartamento']
+      },
+      {
+        model: OperationLogReview,
+        as: 'reviews',
+        include: [{
+          model: User,
+          as: 'actor',
+          attributes: ['id', 'name', 'role']
+        }]
+      }
     ]
   },
   { model: Company, as: 'companyData', attributes: ['id', 'nombre_comercial', 'nit'] }
 ];
 
+const operationReviewOrder = [
+  ['createdAt', 'DESC'],
+  [{ model: OperationLog, as: 'logs' }, { model: OperationLogReview, as: 'reviews' }, 'createdAt', 'ASC']
+];
+
+const filterLogsForUser = (logs, user, batch) => {
+  const role = getRole(user);
+  const source = Array.isArray(logs) ? logs : [];
+  if (['ADMIN', 'GERENTE GENERAL', 'AUDITOR'].includes(role)) return source;
+  if (role === 'NOMINA') {
+    return source.filter((log) => (
+      ['APPROVED_MANAGER', 'RETURNED', 'PROCESSED_PAYROLL'].includes(log.status)
+    ));
+  }
+  if (role === 'GERENTE') {
+    return source.filter((log) => logBelongsToDepartment(log, user?.idDepartamento));
+  }
+  if (role === 'SOLICITANTE') {
+    return source.filter((log) => requesterOwnsLog(user, log, batch));
+  }
+  return [];
+};
+
+const serializeVisibleBatch = (batch, user) => {
+  const plain = batch.toJSON ? batch.toJSON() : { ...batch };
+  plain.logs = filterLogsForUser(plain.logs, user, plain);
+  return plain;
+};
+
+const isVisibleBatch = (batch, user) => {
+  const role = getRole(user);
+  const visibleLogs = filterLogsForUser(batch.logs, user, batch);
+  if (role === 'SOLICITANTE') {
+    return batch.purpose === 'BONOS_2DA'
+      || Number(batch.userId) === Number(user.id)
+      || visibleLogs.length > 0;
+  }
+  if (role === 'GERENTE') return visibleLogs.length > 0 && batch.status !== 'DRAFT';
+  if (role === 'NOMINA') return visibleLogs.length > 0;
+  return ['ADMIN', 'GERENTE GENERAL', 'AUDITOR'].includes(role);
+};
+
 const getAll = async (req, res) => {
   try {
-    const whereClause = {};
-    if (req.user?.role === 'SOLICITANTE') {
-      // Propios + lotes compartidos de bonos 2ª (auto-creados con la nómina)
-      whereClause[Op.or] = [
-        { userId: req.user.id },
-        { purpose: 'BONOS_2DA' }
-      ];
-    }
-
     const batches = await OperationBatch.findAll({
-      where: whereClause,
       include: batchInclude,
-      order: [['createdAt', 'DESC']]
+      order: operationReviewOrder
     });
     const closedPayrolls = await PayrollHistory.findAll({
       where: { status: 'cerrada' },
@@ -76,34 +120,21 @@ const getAll = async (req, res) => {
     const closedPayrollIds = new Set(closedPayrolls.map((payroll) => String(payroll.id)));
     const activeBatches = batches.filter((batch) => {
       if (batch.purpose !== 'BONOS_2DA') return true;
-
       const logs = Array.isArray(batch.logs) ? batch.logs : [];
-      // Un lote automático con operaciones permanece consultable mientras la
-      // nómina esté en auditoría. Se archiva solamente cuando todas sus
-      // operaciones quedaron asociadas a una nómina realmente cerrada.
       if (logs.length > 0) {
-        const isClosed = logs.every((log) => (
+        return !logs.every((log) => (
           log.status === 'PROCESSED_PAYROLL'
           && closedPayrollIds.has(String(log.periodAssigned || ''))
         ));
-        return !isClosed;
       }
-
-      // Los lotes automáticos vacíos solo son útiles mientras exista el
-      // borrador activo; al terminar el proceso no generan historial.
       return Boolean(batch.payrollDraftId);
     });
-    const visibleBatches = req.user?.role === 'GERENTE'
-      ? activeBatches.filter((batch) => {
-        try {
-          assertBatchAccess(req.user, batch, batch.user, batch.logs);
-          return true;
-        } catch {
-          return false;
-        }
-      })
-      : activeBatches;
-    res.json(visibleBatches);
+
+    res.json(
+      activeBatches
+        .filter((batch) => isVisibleBatch(batch, req.user))
+        .map((batch) => serializeVisibleBatch(batch, req.user))
+    );
   } catch (err) {
     res.status(err.statusCode || 500).json({ error: err.message });
   }
@@ -112,22 +143,16 @@ const getAll = async (req, res) => {
 const getById = async (req, res) => {
   try {
     const batch = await OperationBatch.findByPk(req.params.id, {
-      include: batchInclude
+      include: batchInclude,
+      order: [[{ model: OperationLog, as: 'logs' }, { model: OperationLogReview, as: 'reviews' }, 'createdAt', 'ASC']]
     });
     if (!batch) return res.status(404).json({ error: 'Lote no encontrado' });
-
-    if (
-      req.user?.role === 'SOLICITANTE'
-      && Number(batch.userId) !== Number(req.user.id)
-      && batch.purpose !== 'BONOS_2DA'
-    ) {
+    assertBatchAccess(req.user, batch, batch.user, batch.logs);
+    const visible = serializeVisibleBatch(batch, req.user);
+    if (!isVisibleBatch(batch, req.user) && visible.logs.length === 0) {
       return res.status(403).json({ error: 'No tienes acceso a este lote.' });
     }
-    if (req.user?.role === 'GERENTE') {
-      assertBatchAccess(req.user, batch, batch.user, batch.logs);
-    }
-
-    res.json(batch);
+    res.json(visible);
   } catch (err) {
     res.status(err.statusCode || 500).json({ error: err.message });
   }
@@ -135,9 +160,13 @@ const getById = async (req, res) => {
 
 const create = async (req, res) => {
   try {
+    assertOperationMutationAccess(req.user);
     const { title, companyId, purpose } = req.body;
+    if (!String(title || '').trim()) {
+      return res.status(400).json({ error: 'El titulo del lote es requerido.' });
+    }
     const batch = await OperationBatch.create({
-      title,
+      title: String(title).trim(),
       userId: req.user.id,
       status: 'DRAFT',
       purpose: purpose === 'BONOS_2DA' ? 'BONOS_2DA' : 'GENERAL',
@@ -149,10 +178,59 @@ const create = async (req, res) => {
   }
 };
 
+const targetLogsForActor = (logs, user, batch) => {
+  const role = getRole(user);
+  if (role === 'SOLICITANTE') {
+    return logs.filter((log) => requesterOwnsLog(user, log, batch));
+  }
+  if (role === 'GERENTE') {
+    return logs.filter((log) => logBelongsToDepartment(log, user?.idDepartamento));
+  }
+  return logs;
+};
+
+const notifyManagersForLogs = async (logs, fallbackOwner) => {
+  const departmentIds = new Set(
+    logs
+      .map((log) => log.requester?.idDepartamento)
+      .filter(Boolean)
+  );
+  if (departmentIds.size === 0 && fallbackOwner?.idDepartamento) {
+    departmentIds.add(fallbackOwner.idDepartamento);
+  }
+  if (departmentIds.size === 0) return;
+
+  const managers = await User.findAll({
+    where: {
+      role: 'GERENTE',
+      idDepartamento: { [Op.in]: [...departmentIds] }
+    }
+  });
+  await Promise.all(
+    managers
+      .filter((manager) => manager.email)
+      .map((manager) => {
+        const count = logs.filter((log) => (
+          String(log.requester?.idDepartamento || fallbackOwner?.idDepartamento)
+          === String(manager.idDepartamento)
+        )).length;
+        const requesterName = logs.find((log) => (
+          String(log.requester?.idDepartamento) === String(manager.idDepartamento)
+        ))?.requester?.name || fallbackOwner?.name || 'Operaciones';
+        return sendOperationLogEmail(manager.name, manager.email, requesterName, count || logs.length);
+      })
+  );
+};
+
 const updateStatus = async (req, res) => {
   let transaction;
   try {
-    const { status, justification, rejectionFromNomina } = req.body;
+    const status = String(req.body.status || '').toUpperCase();
+    const justification = String(req.body.justification || '').trim();
+    if (status === 'RETURNED' && !justification) {
+      return res.status(400).json({ error: 'La devolucion requiere un comentario.' });
+    }
+
     transaction = await sequelize.transaction();
     const batch = await OperationBatch.findByPk(req.params.id, {
       transaction,
@@ -164,7 +242,14 @@ const updateStatus = async (req, res) => {
     }
     const logs = await OperationLog.findAll({
       where: { batchId: batch.id },
-      include: [{ model: Employee, attributes: ['departmentId'] }],
+      include: [
+        { model: Employee, attributes: ['departmentId'] },
+        {
+          model: User,
+          as: 'requester',
+          attributes: ['id', 'name', 'email', 'idDepartamento']
+        }
+      ],
       transaction,
       lock: transaction.LOCK.UPDATE,
       order: [['id', 'ASC']]
@@ -172,85 +257,74 @@ const updateStatus = async (req, res) => {
     const owner = await User.findByPk(batch.userId, { transaction });
     assertBatchStatusTransition(req.user, batch, owner, status, logs);
 
-    const previousStatus = batch.status;
-    const logCount = logs.length;
-
-    // No enviar a gerencia ni aprobar un lote vacío
-    if (status === 'PENDING_MANAGER' && ['DRAFT', 'RETURNED'].includes(previousStatus) && logCount === 0) {
+    const actorLogs = targetLogsForActor(logs, req.user, batch);
+    const targetLogs = status === 'PENDING_MANAGER'
+      ? actorLogs
+      : actorLogs.filter((log) => log.status === 'PENDING_MANAGER');
+    if (targetLogs.length === 0) {
       await transaction.rollback();
-      return res.status(400).json({
-        error: 'No se puede enviar un lote vacío. Agrega al menos un registro (bono o horas extra).'
-      });
-    }
-    if (status === 'APPROVED_MANAGER' && logCount === 0) {
-      await transaction.rollback();
-      return res.status(400).json({
-        error: 'No se puede aprobar un lote sin registros.'
-      });
+      return res.status(400).json({ error: 'No hay registros elegibles para esta accion.' });
     }
 
-    batch.status = status;
-    if (justification !== undefined) batch.justification = justification;
-    await batch.save({ transaction });
-
-    const syncedStatus = status === 'DRAFT' ? 'PENDING_MANAGER' : status;
-    await OperationLog.update(
-      { status: syncedStatus, ...(justification !== undefined ? { justification } : {}) },
-      { where: { batchId: batch.id }, transaction }
-    );
-    const transitions = logs.map((log) => {
+    const transitions = [];
+    for (const log of targetLogs) {
       const previous = log.toJSON();
-      log.status = syncedStatus;
-      if (justification !== undefined) log.justification = justification;
-      return { previous, current: log.toJSON() };
-    });
-    await syncOperationLogTransitions({ transitions, transaction });
+      if (status !== 'PENDING_MANAGER') {
+        await log.update({
+          status,
+          justification: status === 'RETURNED' ? justification : null
+        }, { transaction });
+        transitions.push({ previous, current: log.toJSON() });
+      }
+      await recordOperationReview({
+        operationLogId: log.id,
+        actor: req.user,
+        action: status === 'PENDING_MANAGER'
+          ? 'SUBMITTED_MANAGER'
+          : status === 'APPROVED_MANAGER'
+            ? 'MANAGER_APPROVED'
+            : 'MANAGER_RETURNED',
+        fromStatus: previous.status,
+        toStatus: status,
+        comment: justification,
+        transaction
+      });
+    }
+
+    if (transitions.length > 0) {
+      await syncOperationLogTransitions({ transitions, transaction });
+    }
+    if (status === 'PENDING_MANAGER') {
+      await batch.update({ status: 'PENDING_MANAGER', justification: null }, { transaction });
+    } else {
+      await recalculateBatchStatus(batch.id, {
+        transaction,
+        latestComment: justification
+      });
+    }
     await transaction.commit();
 
-    const populatedBatch = await OperationBatch.findByPk(batch.id, {
-      include: [
-        { model: User, as: 'user' },
-        { model: OperationLog, as: 'logs' }
-      ]
-    });
-
-    const isNominaReject = status === 'PENDING_MANAGER' &&
-      (previousStatus === 'APPROVED_MANAGER' || rejectionFromNomina) &&
-      isNominaRole(req.user?.role);
-
-    if (status === 'PENDING_MANAGER' && populatedBatch?.user?.idDepartamento) {
+    let notificationWarning = null;
+    if (status === 'PENDING_MANAGER') {
       try {
-        const gerentes = await getGerentesForBatch(populatedBatch);
-        const count = populatedBatch.logs?.length || 0;
-
-        if (isNominaReject) {
-          await Promise.all(
-            gerentes
-              .filter(g => g.email)
-              .map(gerente => sendOperationRejectToManagerEmail(gerente.name, gerente.email, {
-                solicitanteName: populatedBatch.user.name,
-                count,
-                justification: populatedBatch.justification,
-                batchTitle: populatedBatch.title,
-                rejectedBy: req.user?.name || 'Nómina'
-              }))
-          );
-        } else {
-          await Promise.all(
-            gerentes
-              .filter(g => g.email)
-              .map(gerente => sendOperationLogEmail(gerente.name, gerente.email, populatedBatch.user.name, count))
-          );
-        }
+        await notifyManagersForLogs(targetLogs, owner);
       } catch (emailError) {
-        console.error('Error enviando correos a los gerentes. El flujo continuará.', emailError.message);
+        notificationWarning = 'El lote fue enviado, pero no se pudo notificar al gerente.';
+        console.error('[operations] lote enviado; fallo el correo a gerencia:', emailError.message);
       }
     }
 
-    res.json(populatedBatch || batch);
+    const populatedBatch = await OperationBatch.findByPk(batch.id, {
+      include: batchInclude,
+      order: [[{ model: OperationLog, as: 'logs' }, { model: OperationLogReview, as: 'reviews' }, 'createdAt', 'ASC']]
+    });
+    res.json({
+      ...serializeVisibleBatch(populatedBatch, req.user),
+      ...(notificationWarning ? { notificationWarning } : {})
+    });
   } catch (err) {
     if (transaction && !transaction.finished) await transaction.rollback();
-    res.status(400).json({ error: err.message });
+    res.status(err.statusCode || 400).json({ error: err.message });
   }
 };
 
@@ -263,73 +337,45 @@ const getEmailPreview = async (req, res) => {
       ]
     });
     if (!batch) return res.status(404).json({ error: 'Lote no encontrado' });
+    assertBatchAccess(req.user, batch, batch.user, batch.logs);
 
-    const isRejection = batch.status === 'PENDING_MANAGER' && !!batch.justification;
     const details = {
-      gerenteName: 'Gerente de Área',
+      gerenteName: 'Gerente de Area',
       solicitanteName: batch.user?.name || 'Solicitante',
-      count: batch.logs?.length || 0,
-      justification: batch.justification,
-      isRejection,
-      batchTitle: batch.title,
-      rejectedBy: req.user?.name || 'Nómina'
+      count: filterLogsForUser(batch.logs, req.user, batch).length,
+      batchTitle: batch.title
     };
-
     res.json({
       subject: getOperationEmailSubject(details),
       html: buildOperationEmailHtml(details)
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.statusCode || 500).json({ error: err.message });
   }
 };
 
 const notifyBatch = async (req, res) => {
   try {
     const batch = await OperationBatch.findByPk(req.params.id, {
-      include: [
-        { model: User, as: 'user' },
-        { model: OperationLog, as: 'logs' }
-      ]
+      include: batchInclude
     });
     if (!batch) return res.status(404).json({ error: 'Lote no encontrado' });
-
+    assertBatchAccess(req.user, batch, batch.user, batch.logs);
     if (batch.status !== 'PENDING_MANAGER') {
-      return res.status(400).json({ error: 'Solo se puede reenviar cuando el lote está pendiente de gerente.' });
+      return res.status(400).json({ error: 'Solo se reenvia un lote pendiente de gerente.' });
     }
-
-    const gerentes = await getGerentesForBatch(batch);
-    if (gerentes.length === 0) {
-      return res.status(404).json({ error: 'No se encontró un gerente para este departamento.' });
-    }
-
-    const count = batch.logs?.length || 0;
-    const isRejection = !!batch.justification;
-
-    await Promise.all(
-      gerentes
-        .filter(g => g.email)
-        .map(gerente => isRejection
-          ? sendOperationRejectToManagerEmail(gerente.name, gerente.email, {
-              solicitanteName: batch.user.name,
-              count,
-              justification: batch.justification,
-              batchTitle: batch.title,
-              rejectedBy: req.user?.name || 'Nómina'
-            })
-          : sendOperationLogEmail(gerente.name, gerente.email, batch.user.name, count)
-        )
-    );
-
-    res.json({ message: 'Notificación reenviada exitosamente.' });
+    const visibleLogs = filterLogsForUser(batch.logs, req.user, batch);
+    await notifyManagersForLogs(visibleLogs, batch.user);
+    res.json({ message: 'Notificacion reenviada exitosamente.' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.statusCode || 500).json({ error: err.message });
   }
 };
 
 const remove = async (req, res) => {
   let transaction;
   try {
+    assertOperationMutationAccess(req.user);
     transaction = await sequelize.transaction();
     const batch = await OperationBatch.findByPk(req.params.id, {
       transaction,
@@ -339,26 +385,31 @@ const remove = async (req, res) => {
       await transaction.rollback();
       return res.status(404).json({ error: 'Lote no encontrado' });
     }
+    const owner = await User.findByPk(batch.userId, { transaction });
+    assertBatchAccess(req.user, batch, owner);
+    if (getRole(req.user) !== 'ADMIN' && batch.status !== 'DRAFT') {
+      throw Object.assign(new Error('Solo se eliminan lotes antes de enviarlos.'), { statusCode: 400 });
+    }
     const logs = await OperationLog.findAll({
       where: { batchId: batch.id },
       transaction,
-      lock: transaction.LOCK.UPDATE,
-      order: [['id', 'ASC']]
+      lock: transaction.LOCK.UPDATE
     });
     await syncOperationLogTransitions({
       transitions: logs.map((log) => ({ previous: log.toJSON() })),
       transaction
     });
-    await OperationLog.destroy({
-      where: { batchId: batch.id },
+    await OperationLogReview.destroy({
+      where: { operationLogId: logs.map((log) => log.id) },
       transaction
     });
+    await OperationLog.destroy({ where: { batchId: batch.id }, transaction });
     await batch.destroy({ transaction });
     await transaction.commit();
     res.status(204).send();
   } catch (err) {
     if (transaction && !transaction.finished) await transaction.rollback();
-    res.status(500).json({ error: err.message });
+    res.status(err.statusCode || 500).json({ error: err.message });
   }
 };
 

@@ -56,8 +56,8 @@ async function testBonusCrud() {
 function validateOperationLogPayload(body) {
   const { type, hoursQty, hourType, bonusAmount } = body;
   if (type === 'HORA_EXTRA') {
-    if (!hourType || !['SIMPLE', 'DOBLE', 'NOCTURNA'].includes(hourType)) {
-      return 'hourType es requerido (SIMPLE, DOBLE o NOCTURNA) para horas extra.';
+    if (!hourType || !['SIMPLE', 'NOCTURNA'].includes(hourType)) {
+      return 'hourType es requerido (SIMPLE o NOCTURNA) para horas extra.';
     }
     if (!hoursQty || Number(hoursQty) <= 0) {
       return 'hoursQty debe ser mayor a 0 para horas extra.';
@@ -79,6 +79,10 @@ function testOperationLogValidation() {
   assert(
     validateOperationLogPayload({ type: 'HORA_EXTRA', hoursQty: 4 }) !== null,
     'rechaza HE sin hourType'
+  );
+  assert(
+    validateOperationLogPayload({ type: 'HORA_EXTRA', hoursQty: 4, hourType: 'DOBLE' }) !== null,
+    'rechaza el tipo de hora DOBLE retirado'
   );
   assert(
     validateOperationLogPayload({ type: 'BONO', bonusAmount: 0 }) !== null,

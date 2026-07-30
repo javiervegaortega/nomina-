@@ -5,7 +5,8 @@
 require('dotenv').config();
 const {
   buildOperationEmailHtml,
-  getOperationEmailSubject
+  getOperationEmailSubject,
+  buildOperationReturnedToRequesterEmailHtml
 } = require('../services/email.service');
 
 const FRONTEND_URL = (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '');
@@ -64,6 +65,22 @@ console.log('\n4. HTML — rechazo con justificación');
   });
   assert(html.includes('Monto incorrecto en bono'), 'HTML incluye justificación');
   assert(html.includes('Corrección Requerida'), 'HTML indica corrección requerida');
+}
+
+console.log('\n5. HTML — devolución de Nómina al solicitante');
+{
+  const html = buildOperationReturnedToRequesterEmailHtml({
+    requesterName: 'Operador Test',
+    employeeName: 'Empleado Uno',
+    periodLabel: '2da · Julio 2026',
+    concept: 'Bono de Q225.00',
+    comment: 'Corregir monto',
+    batchId: 42,
+    rejectedBy: 'Nómina'
+  });
+  assert(html.includes(`${FRONTEND_URL}/operations/42`), 'enlace abre el lote rechazado');
+  assert(html.includes('Operador Test'), 'correo identifica al solicitante original');
+  assert(html.includes('Corregir monto'), 'correo incluye el comentario de Nómina');
 }
 
 console.log(`\n=== Resultado: ${passed} passed, ${failed} failed ===`);

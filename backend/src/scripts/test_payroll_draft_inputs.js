@@ -61,7 +61,7 @@ const testOperationDeltas = () => {
   const removedForUpdate = applyOperationLogDelta(first.employee, operation, 'remove');
   const updated = applyOperationLogDelta(removedForUpdate.employee, {
     ...operation,
-    hourType: 'DOBLE',
+    hourType: 'NOCTURNA',
     hoursQty: 2
   }, 'add');
   closeTo(updated.employee.extras.simplesVal, 0, 'editar quita el valor operativo anterior');
@@ -288,7 +288,7 @@ const testDatabaseTransaction = async () => {
 
     await syncOperationLogTransition({
       previous: operation,
-      current: { ...operation, status: 'PENDING_MANAGER' },
+      current: { ...operation, status: 'RETURNED' },
       transaction
     });
     row = await PayrollDraftEmployee.findOne({
@@ -296,7 +296,37 @@ const testDatabaseTransaction = async () => {
       transaction
     });
     data = typeof row.data === 'string' ? JSON.parse(row.data) : row.data;
-    closeTo(data.extras.simplesVal, 0, 'integración BD revierte HE');
+    closeTo(data.extras.simplesVal, 0, 'rechazo de Nómina retira solo la HE devuelta');
+
+    const returnedOperation = { ...operation, status: 'RETURNED' };
+    const pendingCorrection = { ...operation, status: 'PENDING_MANAGER', hoursQty: 6 };
+    const reapprovedCorrection = { ...pendingCorrection, status: 'APPROVED_MANAGER' };
+    await syncOperationLogTransition({
+      previous: returnedOperation,
+      current: pendingCorrection,
+      transaction
+    });
+    await syncOperationLogTransition({
+      previous: pendingCorrection,
+      current: reapprovedCorrection,
+      transaction
+    });
+    await syncOperationLogTransition({
+      previous: pendingCorrection,
+      current: reapprovedCorrection,
+      transaction
+    });
+    row = await PayrollDraftEmployee.findOne({
+      where: { draftId, employeeId: employee.id },
+      transaction
+    });
+    data = typeof row.data === 'string' ? JSON.parse(row.data) : row.data;
+    closeTo(data.extras.simplesVal, 150, 'la corrección reaprobada aparece exactamente una vez');
+    assert.strictEqual(data.operationLogs.length, 1, 'la reaprobación conserva un solo registro');
+    await syncOperationLogTransition({
+      previous: reapprovedCorrection,
+      transaction
+    });
 
     const commission = {
       id: 2147483002,

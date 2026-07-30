@@ -9,6 +9,7 @@ import { formatQ, CUOTA_LABORAL_RATE, CUOTA_PATRONAL_RATE, IRTRA_INTECAP_RATE } 
 import { getNetPayable } from '../utils/payrollPeriod';
 import { calculateEmployeePayroll } from '../utils/payrollCalculator';
 import { exportPayrollReportExcel } from '../utils/payrollReports';
+import { exportNominaGeneralExcel } from '../utils/nominaGeneralExport';
 import { matchesDepartmentFilter, normalizeMultiFilter, resolveEmployeeDepartment } from '../utils/orgFilters';
 import ReportPreviewModal from '../components/ReportPreviewModal';
 import EmployeeSummaryModal from '../components/EmployeeSummaryModal';
@@ -1155,68 +1156,17 @@ function PayrollHistoryDetail({ group, onBack }) {
   }, [data, filterDept, filterArea, filterDiv, filterSubdiv, filterDim5, divisions, areas, departments, subdivisions, dimension5s]);
 
   const exportExcel = async () => {
-    const XLSX = await getXLSX();
-    showToast('Generando Excel...', 'success');
-    
-    const rows = data.map((e, idx) => {
-      const row = {
-        'No.': idx + 1,
-        'Nombre': getEmployeeFullName(e),
-        'Empresa': e.company,
-        'Puesto': e.puesto || 'N/A',
-        'Días Laborados': e.days ?? 30,
-        'Salario Ordinario': e.calculated.baseSalary,
-        'Bono Incentivo': e.calculated.bonusLey,
-        'Bono Decreto 37-2001': e.calculated.bonusDec,
-        'Bonos': (Number(e.calculated.bonos) || 0) + getCatalogBonuses(e),
-        'Total Devengado': (
-          (Number(e.calculated.baseSalary) || 0)
-          + (Number(e.calculated.bonusLey) || 0)
-          + (Number(e.calculated.bonusDec) || 0)
-          + (Number(e.calculated.bonos) || 0)
-          + getCatalogBonuses(e)
-        ),
-        'Horas Simples': e.extras?.simplesQty || 0,
-        'Valor Horas Simples': e.extras?.simplesVal || 0,
-        'Horas Dobles': e.extras?.doblesQty || 0,
-        'Valor Horas Dobles': e.extras?.doblesVal || 0,
-        'Otros Ingresos': (e.extras?.otrosIngresos || 0) + (e.extras?.vacacionesVal || 0) + (e.extras?.ventasEconomicas || 0),
-        // gross ya incluye HE y otros ingresos — no sumar de nuevo
-        'Salario Total': e.calculated.gross,
-        'IGSS': e.calculated?.proratedDeductions?.igss ?? e.deductions?.igss ?? 0,
-        'ISR': e.calculated?.proratedDeductions?.isr ?? e.deductions?.isr ?? 0,
-        'Cafetería': e.calculated?.proratedDeductions?.cafe ?? e.deductions?.cafe ?? 0,
-        'Celular': e.calculated?.proratedDeductions?.cell ?? e.deductions?.cell ?? 0,
-        'Uniforme': e.calculated?.proratedDeductions?.uniform ?? e.deductions?.uniform ?? 0,
-        'Calzado': e.calculated?.proratedDeductions?.shoes ?? e.deductions?.shoes ?? 0,
-        'Equipo': e.calculated?.proratedDeductions?.equipo ?? e.deductions?.equipo ?? 0,
-        'Producto': e.calculated?.proratedDeductions?.product ?? e.deductions?.product ?? 0,
-        'Bantrab': e.calculated?.proratedDeductions?.bancos ?? e.deductions?.bancos ?? 0,
-        'Préstamo Empresa': e.calculated?.proratedDeductions?.prestamo_empresa ?? e.deductions?.prestamo_empresa ?? 0,
-        'Otros Deducción': e.calculated?.proratedDeductions?.otros ?? e.deductions?.otros ?? 0,
-        'Judiciales': e.calculated?.proratedDeductions?.judiciales ?? e.deductions?.judiciales ?? 0,
-        'Seguro': e.calculated?.proratedDeductions?.seguro ?? e.deductions?.seguro ?? 0,
-        'Parqueo': e.calculated?.proratedDeductions?.parqueo ?? e.deductions?.parqueo ?? 0,
-        'Boleta de Ornato': e.calculated?.proratedDeductions?.boleto_de_ornato ?? e.deductions?.boleto_de_ornato ?? 0,
-        'Otros Egresos': e.calculated?.proratedDeductions?.otros_egresos ?? e.deductions?.otros_egresos ?? 0,
-        'Total Egresos': e.calculated.ded,
-        'Líquido a Recibir': getNetPayable(e, group.periodType),
-        '1ra Quincena': group.periodType === '2da' ? (e.anticipo1ra || 0) : getNetPayable(e, group.periodType),
-        '2da Quincena': group.periodType === '2da' ? getNetPayable(e, group.periodType) : 0,
-        'Detalle Bonos': [...(e.priorOperationLogs || []), ...(e.operationLogs || [])]
-          .filter(l => l.type === 'BONO')
-          .map(l => `Q${Number(l.bonusAmount || 0).toFixed(2)}`)
-          .join('; '),
-        'Banco Deposito': e.banco || 'N/A',
-        'Cuenta Bancaria': e.no_cuenta || 'N/A',
-      };
-      return row;
-    });
-
-    const ws = XLSX.utils.json_to_sheet(rows);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Historial Nómina");
-    XLSX.writeFile(wb, `Nomina_${group.title.replace(/[^a-z0-9]/gi, '_')}.xlsx`);
+    try {
+      showToast('Generando Excel de Nómina General...', 'success');
+      await exportNominaGeneralExcel({
+        employees: data,
+        group,
+        totals
+      });
+    } catch (err) {
+      console.error(err);
+      showToast('No se pudo generar el Excel de Nómina General.', 'error');
+    }
   };
 
   const exportExcelCheques = async () => {
@@ -2458,10 +2408,7 @@ function BoletaTemplate({ emp, group, isPrint, companies }) {
   const prestamoBoleta = Number(proDedBoleta.prestamo_empresa) || 0;
   const isr = Number(proDedBoleta.isr) || 0;
   const cell = Number(proDedBoleta.cell) || 0;
-  const otros_egresos = Number(proDedBoleta.otros_egresos) || 0;
   const anticipo = Number(emp.anticipo1ra) || 0;
-  const vacacionesBoleta = Number(emp.extras?.vacacionesVal) || 0;
-  const ventasBoleta = Number(emp.extras?.ventasEconomicas) || 0;
   const otrosDesc = (Number(proDedBoleta.cafe) || 0) + (Number(proDedBoleta.uniform) || 0) +
     (Number(proDedBoleta.shoes) || 0) + (Number(proDedBoleta.equipo) || 0) +
     (Number(proDedBoleta.product) || 0) + (Number(proDedBoleta.otros) || 0) +
@@ -2561,8 +2508,6 @@ function BoletaTemplate({ emp, group, isPrint, companies }) {
           <IRow label="Bonificación Incentivo Decrs. 37-2001 y 78-89" value={fmt(bonusLey + bonusDec + bonos)} />
           <IRow label={`Horas extras diurnas (${simplesQty} hrs)`} value={fmt(simplesVal)} />
           <IRow label={`Horas extras nocturnas (${doblesQty} hrs)`} value={fmt(doblesVal)} />
-          <IRow label="Vacaciones" value={fmt(vacacionesBoleta)} />
-          <IRow label="Ventas Económicas" value={fmt(ventasBoleta)} />
           <IRow label="Otros Ingresos Mensuales" value={fmt(otrosIngresos)} />
 
           <Flex justify="space-between" align="baseline" pt="2px" mt="2px" borderTop="1.5px solid black">
@@ -2579,12 +2524,11 @@ function BoletaTemplate({ emp, group, isPrint, companies }) {
           </Flex>
 
           <DRow label="IGSS Mensual" value={fmt(igss)} />
-          <DRow label="Bantrab Mensual" value={fmt(bancos)} />
+          <DRow label="Bancos Mensual" value={fmt(bancos)} />
           <DRow label="ISR Mensual" value={fmt(isr)} />
           <DRow label="Celulares" value={fmt(cell)} />
           <DRow label="Otros Egresos Mensuales" value={fmt(otrosDesc)} />
           <DRow label="Primera Quincena (anticipo)" value={fmt(anticipo)} />
-          <DRow label="Otros Egresos" value={fmt(otros_egresos)} />
 
           <Flex justify="space-between" align="baseline" pt="2px" mt="2px" borderTop="1.5px solid black">
             <Text fontSize="7.5px" fontWeight="bold" color="black">LÍQUIDO A RECIBIR</Text>

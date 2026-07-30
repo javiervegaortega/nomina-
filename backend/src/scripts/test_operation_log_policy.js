@@ -8,6 +8,7 @@ const {
   assertOperationMutationAccess
 } = require('../services/operationLogPolicy.service');
 const { operationShouldApply } = require('../services/payrollDraftInputs.service');
+const { deriveBatchStatus } = require('../services/operationWorkflow.service');
 
 const assert = (condition, message) => {
   if (!condition) throw new Error(`FAIL: ${message}`);
@@ -62,7 +63,7 @@ const operationsManager = { id: 8, role: 'GERENTE', idDepartamento: 3 };
 const otherManager = { id: 9, role: 'GERENTE', idDepartamento: 4 };
 const automaticOperationsBatch = { id: 21, purpose: 'BONOS_2DA', status: 'PENDING_MANAGER' };
 const payrollOwner = { id: 2, role: 'NOMINA', idDepartamento: null };
-const automaticOperationsLogs = [{ Employee: { departmentId: 3 } }];
+const automaticOperationsLogs = [{ id: 31, Employee: { departmentId: 3 } }];
 
 assertBatchAccess(operationsManager, operationsBatch, operationsRequester);
 console.log('OK: el gerente de Operaciones puede consultar el lote de su departamento');
@@ -114,6 +115,42 @@ assertThrows(
   () => assertOperationMutationAccess(operationsManager),
   403,
   'se bloquea al gerente que intenta registrar o editar operaciones'
+);
+assertOperationStatusTransition(
+  { id: 2, role: 'NOMINA' },
+  operationsBatch,
+  operationsRequester,
+  { id: 32, status: 'APPROVED_MANAGER' },
+  'RETURNED',
+  automaticOperationsLogs,
+  'Monto incorrecto'
+);
+console.log('OK: Nomina puede devolver un registro aprobado con comentario');
+assertThrows(
+  () => assertOperationStatusTransition(
+    { id: 2, role: 'NOMINA' },
+    operationsBatch,
+    operationsRequester,
+    { id: 32, status: 'PENDING_MANAGER' },
+    'APPROVED_MANAGER',
+    automaticOperationsLogs
+  ),
+  403,
+  'Nomina no puede aprobar la etapa de gerencia'
+);
+assert(
+  deriveBatchStatus([
+    { status: 'APPROVED_MANAGER' },
+    { status: 'RETURNED' }
+  ]) === 'RETURNED',
+  'un lote mixto queda devuelto mientras exista una correccion'
+);
+assert(
+  deriveBatchStatus([
+    { status: 'APPROVED_MANAGER' },
+    { status: 'PENDING_MANAGER' }
+  ]) === 'PENDING_MANAGER',
+  'un lote corregido vuelve a pendiente de gerente'
 );
 assert(
   operationShouldApply({ type: 'HORA_EXTRA', status: 'APPROVED_MANAGER' }),

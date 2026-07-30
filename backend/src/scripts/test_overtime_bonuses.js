@@ -44,11 +44,12 @@ function isDateInQuincena(dateStr, draftDateStr, periodType) {
   return dt >= start && dt <= end;
 }
 
-function calcOvertimeValues(baseSalary, simplesQty, doblesQty) {
-  const hourlyRate = baseSalary / 30 / 8;
-  const valSimples = simplesQty * hourlyRate * 1.5;
-  const valDobles = doblesQty * hourlyRate * 2;
-  return { hourlyRate, valSimples, valDobles };
+function calcOvertimeValues(baseSalary, simplesQty, nocturnasQty) {
+  const simpleHourlyRate = baseSalary / 30 / 8;
+  const nocturnalHourlyRate = baseSalary / 30 / 6;
+  const valSimples = simplesQty * simpleHourlyRate * 1.5;
+  const valNocturnas = nocturnasQty * nocturnalHourlyRate * 1.5;
+  return { simpleHourlyRate, nocturnalHourlyRate, valSimples, valNocturnas };
 }
 
 console.log('=== Tests: Horas Extra y Bonos ===\n');
@@ -56,10 +57,11 @@ console.log('=== Tests: Horas Extra y Bonos ===\n');
 console.log('1. Fórmulas de horas extra');
 {
   const baseSalary = 3000;
-  const { hourlyRate, valSimples, valDobles } = calcOvertimeValues(baseSalary, 4, 2);
-  assert(Math.abs(hourlyRate - 12.5) < 0.01, 'hourlyRate = sueldo/30/8');
+  const { simpleHourlyRate, nocturnalHourlyRate, valSimples, valNocturnas } = calcOvertimeValues(baseSalary, 4, 2);
+  assert(Math.abs(simpleHourlyRate - 12.5) < 0.01, 'hora simple = sueldo/30/8');
+  assert(Math.abs(nocturnalHourlyRate - 16.6666666667) < 0.01, 'hora nocturna = sueldo/30/6');
   assert(Math.abs(valSimples - 75) < 0.01, '4 hrs simples × 1.5 = Q75');
-  assert(Math.abs(valDobles - 50) < 0.01, '2 hrs dobles × 2.0 = Q50');
+  assert(Math.abs(valNocturnas - 50) < 0.01, '2 hrs nocturnas /6 × 1.5 = Q50');
 }
 
 console.log('\n2. isDateInQuincena');
@@ -88,7 +90,7 @@ console.log('\n3. payrollCalculator.service — extras y bonos');
   };
   const result = calculateEmployeePayroll(emp, '1ra');
   const calc = result.calculated;
-  assert(calc.extrasTotal === 125, 'extrasTotal = simples + dobles');
+  assert(calc.extrasTotal === 125, 'extrasTotal = simples + nocturnas');
   assert(calc.bonos === 500, 'bonos operativos en extras.bonos');
   assert(calc.bonusesSum === 200, 'bonusesSum desde appliedBonuses');
   assert(Math.abs(calc.bonusDec - 125) < 0.01, 'bono decreto prorrateado 15/30');

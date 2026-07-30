@@ -168,17 +168,18 @@ function buildDraftEmployee(emp, ctx) {
       attachedLogs.push(l);
       if (l.type === 'HORA_EXTRA') {
         if (l.hourType === 'SIMPLE') qtySimples += Number(l.hoursQty) || 0;
-        else qtyDobles += Number(l.hoursQty) || 0;
+        else if (l.hourType === 'NOCTURNA') qtyDobles += Number(l.hoursQty) || 0;
       } else if (l.type === 'BONO') {
         totalBonos += Number(l.bonusAmount) || 0;
       }
     });
 
   const hourlyRate = baseSalary / 30 / 8;
+  const nocturnalHourlyRate = baseSalary / 30 / 6;
   const simplesQtyTotal = (Number(emp.horas_extras_simples) || 0) + qtySimples;
   const doblesQtyTotal = (Number(emp.horas_extras_dobles) || 0) + qtyDobles;
   const valSimples = simplesQtyTotal * hourlyRate * 1.5;
-  const valDobles = doblesQtyTotal * hourlyRate * 2;
+  const valDobles = doblesQtyTotal * nocturnalHourlyRate * 1.5;
 
   const appliedBonuses = bonuses.reduce((acc, b) => {
     const amount = b.assignments?.[emp.id] || b.assignments?.[String(emp.id)] || 0;

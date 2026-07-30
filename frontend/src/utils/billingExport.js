@@ -304,7 +304,7 @@ const buildMatrizSheet = (wb, { payrollTitle, matrix, companyNames }) => {
   return ws;
 };
 
-const buildDetalleSheet = (wb, { payrollTitle, details }) => {
+const buildDetalleSheet = (wb, { payrollTitle, billingMonth, details }) => {
   const headers = [
     'ID',
     'Empleado',
@@ -374,16 +374,12 @@ const buildDetalleSheet = (wb, { payrollTitle, details }) => {
 
   const moneyCols = [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33];
   let sumAmount = 0;
+  const detailPeriod = resolveBillingMonthYear({ billingMonth, payrollTitle }) || '—';
 
   (details || []).forEach((d, idx) => {
     const pct = Number(d.percentage) || 0;
     const amount = Number(d.baseAmount) || 0;
     const employeeCost = Number(d.employeeCost ?? d.totalCost) || (pct > 0 ? amount / (pct / 100) : 0);
-    const periodLabel = d.periodType === '1ra' ? '1ra Quincena'
-      : d.periodType === '2da' ? '2da Quincena'
-      : d.periodType === 'mensual' ? 'Mensual'
-      : (d.periodType || '—');
-
     const row = ws.addRow([
       d.employeeId ?? '',
       d.employeeName || '',
@@ -392,7 +388,7 @@ const buildDetalleSheet = (wb, { payrollTitle, details }) => {
       d.toCompany || '',
       pct,
       d.days != null ? Number(d.days) : '',
-      periodLabel,
+      detailPeriod,
       Number(d.sueldoOrdinario) || 0,
       Number(d.bonoDecreto) || 0,
       Number(d.bonoIncentivo) || 0,
@@ -453,6 +449,24 @@ const MONTH_NAMES_ES_UPPER = [
   'ENERO', 'FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO',
   'JULIO', 'AGOSTO', 'SEPTIEMBRE', 'OCTUBRE', 'NOVIEMBRE', 'DICIEMBRE'
 ];
+
+export const resolveBillingMonthYear = ({ billingMonth, payrollTitle } = {}) => {
+  const monthKey = String(billingMonth || '').trim();
+  const keyMatch = /^(\d{4})-(\d{2})$/.exec(monthKey);
+  if (keyMatch) {
+    const year = Number(keyMatch[1]);
+    const monthIndex = Number(keyMatch[2]) - 1;
+    if (monthIndex >= 0 && monthIndex < 12) {
+      return `${MONTH_NAMES_ES_UPPER[monthIndex]} ${year}`;
+    }
+  }
+
+  const titleMatch = String(payrollTitle || '').match(
+    /\b(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+(\d{4})\b/i
+  );
+  if (!titleMatch) return null;
+  return `${String(titleMatch[1]).toUpperCase()} ${titleMatch[2]}`;
+};
 
 const ZONA_FRANCA_NOTE = 'No afecta al IVA (Decreto 65-89 Ley de Zonas Francas)';
 
@@ -598,22 +612,12 @@ const buildVistaPrevia2DisplayLines = (lines) => {
 };
 
 const resolveBillingPeriod = (data) => {
-  const monthKey = String(data?.billingMonth || '').trim();
-  const keyMatch = /^(\d{4})-(\d{2})$/.exec(monthKey);
-  if (keyMatch) {
-    const year = Number(keyMatch[1]);
-    const monthIdx = Number(keyMatch[2]) - 1;
-    if (monthIdx >= 0 && monthIdx < 12) {
-      return { year, monthName: MONTH_NAMES_ES_UPPER[monthIdx] };
+  const label = resolveBillingMonthYear(data);
+  if (label) {
+    const match = /^(.*)\s+(\d{4})$/.exec(label);
+    if (match) {
+      return { year: Number(match[2]), monthName: match[1] };
     }
-  }
-  const title = String(data?.payrollTitle || '');
-  const fromTitle = title.match(
-    /\b(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+(\d{4})\b/i
-  );
-  if (fromTitle) {
-    const idx = MONTH_NAMES_ES_UPPER.findIndex((m) => m === fromTitle[1].toUpperCase());
-    if (idx >= 0) return { year: Number(fromTitle[2]), monthName: MONTH_NAMES_ES_UPPER[idx] };
   }
   const now = new Date();
   return { year: now.getFullYear(), monthName: MONTH_NAMES_ES_UPPER[now.getMonth()] };
@@ -809,7 +813,7 @@ const buildResumenSheet = (wb, data) => {
   return ws;
 };
 
-export const exportBillingExcel = async (data, filename) => {
+export const buildBillingWorkbook = (data) => {
   const payload = {
     payrollTitle: data?.payrollTitle,
     billingMonth: data?.billingMonth,
@@ -832,7 +836,11 @@ export const exportBillingExcel = async (data, filename) => {
   buildPorCentroCostoSheet(wb, payload);
   buildMatrizSheet(wb, payload);
   buildDetalleSheet(wb, payload);
+  return wb;
+};
 
+export const exportBillingExcel = async (data, filename) => {
+  const wb = buildBillingWorkbook(data);
   const buffer = await wb.xlsx.writeBuffer();
   const blob = new Blob([buffer], {
     type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'

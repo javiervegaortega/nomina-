@@ -468,7 +468,7 @@ export default function Commissions() {
                 <Select name="tipo_hora" value={form.tipo_hora} onChange={handleChange} size="sm">
                   <option value="">Seleccione...</option>
                   <option value="D">D (Diurna - Simple)</option>
-                  <option value="N">N (Nocturna - Doble)</option>
+                  <option value="N">N (Nocturna)</option>
                 </Select>
               </FormControl>
               <FormControl>

@@ -885,7 +885,7 @@ export function DataProvider({ children }) {
   const updateOperationLog = async (id, data) => {
     await flushPendingDraftSaves();
     const prevLog = operationLogs.find((l) => String(l.id) === String(id));
-    const res = await fetch(`http://localhost:3000/api/operation-logs/${id}`, {
+    const res = await fetch(`http://localhost:3000/api/operation-logs/${id}/correct-and-resubmit`, {
       method: 'PUT',
       headers: getAuthHeader(),
       body: JSON.stringify(data),
@@ -1481,14 +1481,15 @@ export function DataProvider({ children }) {
         empOpLogs.forEach(l => {
           if (l.type === 'HORA_EXTRA') {
             if (l.hourType === 'SIMPLE') qtySimples += Number(l.hoursQty) || 0;
-            else if (l.hourType === 'DOBLE' || l.hourType === 'NOCTURNA') qtyDobles += Number(l.hoursQty) || 0;
+            else if (l.hourType === 'NOCTURNA') qtyDobles += Number(l.hoursQty) || 0;
           } else if (l.type === 'BONO') {
             totalBonos += Number(l.bonusAmount) || 0;
           }
         });
 
-        // 1 normal hour = BaseSalary / 30 / 8 (sobre sueldo mensual)
+        // Simple: sueldo / 30 / 8 × 1.5. Nocturna: sueldo / 30 / 6 × 1.5.
         const hourlyRate = baseSalary / 30 / 8;
+        const nocturnalHourlyRate = baseSalary / 30 / 6;
         const carriedExtras = periodType === '2da'
           ? firstQuincenaExtras[String(e.id)]
           : null;
@@ -1503,11 +1504,11 @@ export function DataProvider({ children }) {
           : carriedSimplesQty * hourlyRate * 1.5;
         const carriedDoblesVal = carriedExtras
           ? (Number(carriedExtras.doblesVal) || 0)
-          : carriedDoblesQty * hourlyRate * 2;
+          : carriedDoblesQty * nocturnalHourlyRate * 1.5;
         const simplesQtyTotal = carriedSimplesQty + qtySimples;
         const doblesQtyTotal = carriedDoblesQty + qtyDobles;
         const valSimples = carriedSimplesVal + (qtySimples * hourlyRate * 1.5);
-        const valDobles = carriedDoblesVal + (qtyDobles * hourlyRate * 2);
+        const valDobles = carriedDoblesVal + (qtyDobles * nocturnalHourlyRate * 1.5);
         const bonosAcumulados = (Number(carriedExtras?.bonos) || 0) + totalBonos;
 
         // Bonos del catálogo: se autoaplican por fecha/asignación. La segunda

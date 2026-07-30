@@ -109,7 +109,7 @@ export default function EmployeeSummaryModal({ isOpen, onClose, employee, compan
                     <Text fontSize="sm" fontFamily="mono">{formatQ(simplesVal)}</Text>
                   </Flex>
                   <Flex justify="space-between">
-                    <Text fontSize="sm">Horas Extras Dobles ({employee.extras?.doblesQty || 0})</Text>
+                    <Text fontSize="sm">Horas Extras Nocturnas ({employee.extras?.doblesQty || 0})</Text>
                     <Text fontSize="sm" fontFamily="mono">{formatQ(doblesVal)}</Text>
                   </Flex>
                   <Flex justify="space-between">

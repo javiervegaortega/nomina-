@@ -4,9 +4,9 @@ import {
   Box, Heading, Table, Thead, Tbody, Tr, Th, Td, IconButton, Button,
   HStack, Select, Input, Badge, useDisclosure, Modal, ModalOverlay,
   ModalContent, ModalHeader, ModalBody, ModalFooter, FormControl, FormLabel,
-  VStack, Text, Checkbox, CheckboxGroup, Radio, RadioGroup, useColorModeValue, Tooltip, Divider, Grid, GridItem,
+  VStack, Text, Checkbox, CheckboxGroup, Radio, RadioGroup, useColorModeValue, Tooltip, Grid, GridItem,
   AlertDialog, AlertDialogBody, AlertDialogFooter, AlertDialogHeader, AlertDialogContent, AlertDialogOverlay,
-  Tabs, TabList, Tab, TabPanels, TabPanel, Skeleton, Flex,
+  Tabs, TabList, Tab, Skeleton, Flex,
   Menu, MenuButton, MenuList, MenuOptionGroup, MenuItemOption
 } from '@chakra-ui/react';
 import { Plus, Check, X, Trash2, Eye, Edit2, ChevronDown, ArrowLeft, Send, Mail } from 'lucide-react';
@@ -15,10 +15,19 @@ import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
 import usePagination from '../hooks/usePagination';
 import Pagination from '../components/Pagination';
-import { formatQuincenaLabel, findMatchingActiveDraft, isBonusOperationalDateAllowed } from '../utils/payrollPeriod';
+import {
+  formatQuincenaLabel,
+  findMatchingActiveDraft,
+  findMatchingPayrollDraft,
+  isBonusOperationalDateAllowed
+} from '../utils/payrollPeriod';
 
 const getEmployeePrincipalCompanyId = (employee) => String(
   employee?.empresa_principal ?? employee?.companyId ?? employee?.id_empresa ?? ''
+);
+
+const getEmployeeDimension5Value = (employee) => String(
+  employee?.nivel_5 ?? employee?.dimension_5 ?? ''
 );
 
 const MONTH_NUMBER_BY_NAME = {
@@ -47,21 +56,25 @@ const getDateInMonth = (month) => {
   return `${month}-${String(Math.min(currentDay, lastDay)).padStart(2, '0')}`;
 };
 
-const OVERTIME_FACTOR = { SIMPLE: 1.5, DOBLE: 2, NOCTURNA: 2 };
-
 const formatMoneyQ = (value) =>
   `Q${Number(value || 0).toLocaleString('es-GT', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-const getHourlyRate = (sueldoOrdinario) => (Number(sueldoOrdinario) || 0) / 30 / 8;
+const getHourlyRate = (sueldoOrdinario, hourType = 'SIMPLE') => (
+  (Number(sueldoOrdinario) || 0) / 30 / (hourType === 'NOCTURNA' ? 6 : 8)
+);
 
-const getOvertimeFactor = (hourType) =>
-  OVERTIME_FACTOR[String(hourType || '').trim().toUpperCase()] || 0;
+const getOvertimeFactor = (hourType) => (
+  ['SIMPLE', 'NOCTURNA'].includes(String(hourType || '').trim().toUpperCase()) ? 1.5 : 0
+);
 
 const calcOvertimeAmount = (sueldoOrdinario, hoursQty, hourType) => {
   const hours = Number(hoursQty) || 0;
   const factor = getOvertimeFactor(hourType);
   if (hours <= 0 || factor <= 0) return 0;
-  return getHourlyRate(sueldoOrdinario) * factor * hours;
+  return getHourlyRate(
+    sueldoOrdinario,
+    String(hourType || '').trim().toUpperCase()
+  ) * factor * hours;
 };
 
 const resolveEmployeeSalary = (log, employeesList = []) => {
@@ -111,6 +124,7 @@ export default function OperationLogs() {
   const { isOpen: isDetailsOpen, onOpen: onDetailsOpen, onClose: onDetailsClose } = useDisclosure();
   const [selectedLog, setSelectedLog] = useState(null);
   const [selectedRowIds, setSelectedRowIds] = useState([]);
+  const [expandedSummaryGroups, setExpandedSummaryGroups] = useState([]);
 
   const { isOpen: isEditOpen, onOpen: onEditOpen, onClose: onEditClose } = useDisclosure();
   const { isOpen: isEmailOpen, onOpen: onEmailOpen, onClose: onEmailClose } = useDisclosure();
@@ -149,6 +163,15 @@ export default function OperationLogs() {
     const company = companies.find((c) => String(c.id) === String(companyId));
     const companyName = company?.nombre_comercial || 'la empresa seleccionada';
     const quincena = formatQuincenaLabel(date) || 'esa quincena';
+    const matchingDraft = findMatchingPayrollDraft(
+      activePayrolls,
+      date,
+      companyId,
+      companies
+    );
+    if (matchingDraft?.isApproved) {
+      return `La nómina de ${companyName} para ${quincena} ya fue aprobada por Auditoría y no admite más bonos ni horas extras`;
+    }
     return `No hay nómina activa para ${companyName} en ${quincena}`;
   };
 
@@ -169,7 +192,7 @@ export default function OperationLogs() {
       return;
     }
     try {
-      await updateOperationLog(editFormData.id, {
+      const updated = await updateOperationLog(editFormData.id, {
         employeeId: Number(editFormData.employeeId),
         date: editFormData.date,
         hoursQty: editFormData.type === 'HORA_EXTRA' ? Number(editFormData.hoursQty) : 0,
@@ -178,6 +201,7 @@ export default function OperationLogs() {
         taskDescription: editFormData.taskDescription
       });
       await fetchBatch();
+      if (updated?.notificationWarning) toast.warning(updated.notificationWarning);
       toast.success('Registro corregido exitosamente');
       onEditClose();
     } catch (e) {
@@ -189,12 +213,12 @@ export default function OperationLogs() {
   const cancelRef = React.useRef();
 
   const normalizedRole = String(user?.role || '').toUpperCase();
-  const isGlobalReviewer = ['ADMIN', 'GERENTE GENERAL', 'NOMINA'].includes(normalizedRole);
+  const isGlobalManager = ['ADMIN', 'GERENTE GENERAL'].includes(normalizedRole);
   const isAutomaticDepartmentBatch = batch?.purpose === 'BONOS_2DA'
     && !batch?.user?.idDepartamento
     && (batch?.logs || []).length > 0
     && (batch?.logs || []).every(log => String(log?.Employee?.departmentId) === String(user?.idDepartamento));
-  const canReviewBatch = isGlobalReviewer || (
+  const canManagerReviewBatch = isGlobalManager || (
     normalizedRole === 'GERENTE'
     && (isAutomaticDepartmentBatch || (
       user?.idDepartamento
@@ -202,7 +226,9 @@ export default function OperationLogs() {
       && String(user.idDepartamento) === String(batch.user.idDepartamento)
     ))
   );
-  const isNominaRole = ['admin', 'nomina', 'auditor'].includes(user?.role?.toLowerCase());
+  const canPayrollReview = ['ADMIN', 'NOMINA'].includes(normalizedRole);
+  const canReviewBatch = canManagerReviewBatch || canPayrollReview;
+  const isNominaRole = ['ADMIN', 'NOMINA'].includes(normalizedRole);
   const isSolicitante = user?.role?.toUpperCase() === 'SOLICITANTE';
   const isBonos2daBatch = batch?.purpose === 'BONOS_2DA';
   const isReadOnly = user?.role === 'AUDITOR';
@@ -216,6 +242,13 @@ export default function OperationLogs() {
   const bulkBg = useColorModeValue('blue.50', 'rgba(14, 165, 233, 0.15)');
   const bulkTextColor = useColorModeValue('blue.700', 'blue.200');
   const infoBorderColor = useColorModeValue('blue.200', 'blue.700');
+  const cardBorderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
+  const sectionBg = useColorModeValue('gray.50', 'whiteAlpha.50');
+  const justifyBg = useColorModeValue('orange.50', 'rgba(237, 137, 54, 0.15)');
+  const justifyBorder = useColorModeValue('orange.200', 'orange.700');
+  const justifyText = useColorModeValue('orange.800', 'orange.200');
+  const timelineDot = useColorModeValue('brand.500', 'brand.300');
+  const timelineLine = useColorModeValue('gray.200', 'whiteAlpha.300');
 
   const overtimeCalcInfo = (
     <Box
@@ -230,13 +263,13 @@ export default function OperationLogs() {
         Cómo se calcula (solo informativo)
       </Text>
       <Text fontSize="xs" color={bulkTextColor} lineHeight="tall">
-        Valor hora ordinaria = Sueldo ordinario ÷ 30 ÷ 8
+        Hora simple = Sueldo ordinario ÷ 30 ÷ 8
       </Text>
       <Text fontSize="xs" color={bulkTextColor} lineHeight="tall">
         • Simples: horas × valor hora × 1.5
       </Text>
       <Text fontSize="xs" color={bulkTextColor} lineHeight="tall">
-        • Dobles / Nocturnas: horas × valor hora × 2
+        • Nocturnas: sueldo ÷ 30 ÷ 6 × 1.5 × horas
       </Text>
       <Text fontSize="xs" color={bulkTextColor} mt={1} opacity={0.85}>
         El monto se aplica al liquidar la nómina según el sueldo del empleado.
@@ -342,7 +375,7 @@ export default function OperationLogs() {
       result = result.filter(emp => modalFilterSubdiv.some(id => String(emp.subdivisionId) === id));
     }
     if (modalFilterDim5.length > 0) {
-      result = result.filter(emp => modalFilterDim5.some(id => String(emp.dimension5Id) === id));
+      result = result.filter(emp => modalFilterDim5.some(id => getEmployeeDimension5Value(emp) === id));
     }
 
     if (modalSearchQuery.trim()) {
@@ -384,7 +417,7 @@ export default function OperationLogs() {
       result = result.filter(emp => editModalFilterSubdiv.some(id => String(emp.subdivisionId) === id));
     }
     if (editModalFilterDim5.length > 0) {
-      result = result.filter(emp => editModalFilterDim5.some(id => String(emp.dimension5Id) === id));
+      result = result.filter(emp => editModalFilterDim5.some(id => getEmployeeDimension5Value(emp) === id));
     }
 
     if (editModalSearchQuery.trim()) {
@@ -460,17 +493,17 @@ export default function OperationLogs() {
       toast.error('Los bonos operativos solo se registran en la 2ª quincena (días 16 al fin de mes).');
       return;
     }
-    setConfirmState({ isOpen: true, action: 'SAVE', data: null });
+    setConfirmState({ isOpen: true, action: 'SAVE', data: null, justification: '' });
   };
 
-  const handleApprove = (id) => setConfirmState({ isOpen: true, action: 'APPROVE', data: id });
-  const handleReject = (id) => setConfirmState({ isOpen: true, action: 'REJECT', data: id });
-  const handleRejectToManager = (id) => setConfirmState({ isOpen: true, action: 'REJECT_TO_MANAGER', data: id });
-  const handleDelete = (id) => setConfirmState({ isOpen: true, action: 'DELETE', data: id });
+  const handleApprove = (id) => setConfirmState({ isOpen: true, action: 'APPROVE', data: id, justification: '' });
+  const handleReject = (id) => setConfirmState({ isOpen: true, action: 'REJECT', data: id, justification: '' });
+  const handlePayrollReject = (id) => setConfirmState({ isOpen: true, action: 'PAYROLL_REJECT', data: id, justification: '' });
+  const handleDelete = (id) => setConfirmState({ isOpen: true, action: 'DELETE', data: id, justification: '' });
 
-  const handleBulkApprove = () => setConfirmState({ isOpen: true, action: 'BULK_APPROVE', data: null });
-  const handleBulkReject = () => setConfirmState({ isOpen: true, action: 'BULK_REJECT', data: null });
-  const handleBulkRejectToManager = () => setConfirmState({ isOpen: true, action: 'BULK_REJECT_TO_MANAGER', data: null });
+  const handleBulkApprove = () => setConfirmState({ isOpen: true, action: 'BULK_APPROVE', data: null, justification: '' });
+  const handleBulkReject = () => setConfirmState({ isOpen: true, action: 'BULK_REJECT', data: null, justification: '' });
+  const handleBulkPayrollReject = () => setConfirmState({ isOpen: true, action: 'BULK_PAYROLL_REJECT', data: null, justification: '' });
 
   const executeConfirm = async () => {
     const { action, data, justification } = confirmState;
@@ -490,29 +523,33 @@ export default function OperationLogs() {
           delete payload.employeeIds;
           return addOperationLog(payload);
         });
-        await Promise.all(promises);
+        const createdLogs = await Promise.all(promises);
         
         await fetchBatch();
         
         onClose();
         setFormData(prev => ({ ...prev, employeeIds: [] }));
         setModalAreaFilter([]);
+        const warning = createdLogs.find((log) => log?.notificationWarning)?.notificationWarning;
+        if (warning) toast.warning(warning);
         toast.success(`Se agregaron ${formData.employeeIds.length} registros al lote`);
       } else if (action === 'APPROVE') {
         const log = operationLogs.find((l) => String(l.id) === String(data));
-        await updateOperationLogStatus(data, 'APPROVED_MANAGER', null, null, false, log);
+        const updated = await updateOperationLogStatus(data, 'APPROVED_MANAGER', null, null, false, log);
         await fetchBatch();
+        if (updated?.notificationWarning) toast.warning(updated.notificationWarning);
         toast.success('Solicitud aprobada');
       } else if (action === 'REJECT') {
         const log = operationLogs.find((l) => String(l.id) === String(data));
         await updateOperationLogStatus(data, 'RETURNED', null, justification, false, log);
         await fetchBatch();
         toast.success('Solicitud devuelta al solicitante');
-      } else if (action === 'REJECT_TO_MANAGER') {
+      } else if (action === 'PAYROLL_REJECT') {
         const log = operationLogs.find((l) => String(l.id) === String(data));
-        await updateOperationLogStatus(data, 'PENDING_MANAGER', null, justification, true, log);
+        const updated = await updateOperationLogStatus(data, 'RETURNED', null, justification, true, log);
         await fetchBatch();
-        toast.success('Solicitud devuelta al gerente');
+        if (updated?.notificationWarning) toast.warning(updated.notificationWarning);
+        toast.success('Registro devuelto a Operaciones');
       } else if (action === 'BULK_APPROVE') {
         const promises = selectedRowIds.map((id) => {
           const log = operationLogs.find((l) => String(l.id) === String(id));
@@ -531,15 +568,17 @@ export default function OperationLogs() {
         await fetchBatch();
         setSelectedRowIds([]);
         toast.success(`${selectedRowIds.length} solicitudes devueltas`);
-      } else if (action === 'BULK_REJECT_TO_MANAGER') {
+      } else if (action === 'BULK_PAYROLL_REJECT') {
         const promises = selectedRowIds.map((id) => {
           const log = operationLogs.find((l) => String(l.id) === String(id));
-          return updateOperationLogStatus(id, 'PENDING_MANAGER', null, justification, true, log);
+          return updateOperationLogStatus(id, 'RETURNED', null, justification, true, log);
         });
-        await Promise.all(promises);
+        const updatedLogs = await Promise.all(promises);
         await fetchBatch();
         setSelectedRowIds([]);
-        toast.success(`${selectedRowIds.length} solicitudes devueltas al gerente`);
+        const warning = updatedLogs.find((updated) => updated?.notificationWarning)?.notificationWarning;
+        if (warning) toast.warning(warning);
+        toast.success(`${selectedRowIds.length} registros devueltos a Operaciones`);
       } else if (action === 'DELETE') {
         await deleteOperationLog(data);
         await fetchBatch();
@@ -550,22 +589,158 @@ export default function OperationLogs() {
     }
   };
 
-  const getStatusBadge = (status) => {
-    const badgeProps = { variant: "subtle", borderRadius: "full", px: 2.5, py: 0.5, textTransform: "capitalize", fontWeight: "medium", fontSize: "xs" };
-    switch(status) {
-      case 'DRAFT': return <Badge colorScheme="gray" {...badgeProps}>Borrador</Badge>;
-      case 'PENDING_MANAGER': return <Badge colorScheme="yellow" {...badgeProps}>Pdte. Gerente</Badge>;
-      case 'APPROVED_MANAGER': return <Badge colorScheme="blue" {...badgeProps}>Aprobado</Badge>;
-      case 'RETURNED': return <Badge colorScheme="orange" {...badgeProps}>Devuelto</Badge>;
-      case 'PROCESSED_PAYROLL': return <Badge colorScheme="green" {...badgeProps}>En Nómina</Badge>;
-      default: return <Badge {...badgeProps}>{status}</Badge>;
+  const getStatusLabel = (status) => {
+    switch (status) {
+      case 'DRAFT': return 'Borrador';
+      case 'PENDING_MANAGER': return 'Pdte. Gerente';
+      case 'APPROVED_MANAGER': return 'Aprobado Gerencia';
+      case 'RETURNED': return 'En corrección';
+      case 'PROCESSED_PAYROLL': return 'En Nómina';
+      default: return status || '';
     }
   };
 
-  const pendingVisibleLogs = useMemo(
-    () => filteredLogs.filter(l => l.status === 'PENDING_MANAGER'),
-    [filteredLogs]
+  const getReviewActionLabel = (action) => {
+    switch (action) {
+      case 'CREATED': return 'Creado';
+      case 'SUBMITTED_MANAGER': return 'Enviado a gerente';
+      case 'MANAGER_APPROVED': return 'Aprobado por gerente';
+      case 'MANAGER_RETURNED': return 'Devuelto por gerente';
+      case 'PAYROLL_RETURNED': return 'Devuelto por nómina';
+      case 'CORRECTED_RESUBMITTED': return 'Corregido y reenviado';
+      default: return action || '';
+    }
+  };
+
+  const formatReviewTransition = (review) => {
+    if (review.fromStatus || review.toStatus) {
+      const from = review.fromStatus ? getStatusLabel(review.fromStatus) : null;
+      const to = getStatusLabel(review.toStatus);
+      return from ? `${from} → ${to}` : to;
+    }
+    return getReviewActionLabel(review.action);
+  };
+
+  const getStatusBadge = (status) => {
+    const badgeProps = { variant: "subtle", borderRadius: "full", px: 2.5, py: 0.5, textTransform: "capitalize", fontWeight: "medium", fontSize: "xs" };
+    switch(status) {
+      case 'DRAFT': return <Badge colorScheme="gray" {...badgeProps}>{getStatusLabel(status)}</Badge>;
+      case 'PENDING_MANAGER': return <Badge colorScheme="yellow" {...badgeProps}>{getStatusLabel(status)}</Badge>;
+      case 'APPROVED_MANAGER': return <Badge colorScheme="blue" {...badgeProps}>{getStatusLabel(status)}</Badge>;
+      case 'RETURNED': return <Badge colorScheme="orange" {...badgeProps}>{getStatusLabel(status)}</Badge>;
+      case 'PROCESSED_PAYROLL': return <Badge colorScheme="green" {...badgeProps}>{getStatusLabel(status)}</Badge>;
+      default: return <Badge {...badgeProps}>{getStatusLabel(status)}</Badge>;
+    }
+  };
+
+  const DetailField = ({ label, children, colSpan }) => (
+    <GridItem colSpan={colSpan}>
+      <Box
+        p={3}
+        h="100%"
+        bg={sectionBg}
+        borderWidth="1px"
+        borderColor={cardBorderColor}
+        borderRadius="lg"
+      >
+        <Text fontSize="xs" color={mutedTextColor} textTransform="uppercase" fontWeight="bold" letterSpacing="wide" mb={1.5}>
+          {label}
+        </Text>
+        <Box fontSize="sm" fontWeight="medium" lineHeight="short">
+          {children}
+        </Box>
+      </Box>
+    </GridItem>
   );
+
+  const reviewableVisibleLogs = useMemo(
+    () => filteredLogs.filter((log) => (
+      (canManagerReviewBatch && log.status === 'PENDING_MANAGER')
+      || (canPayrollReview && log.status === 'APPROVED_MANAGER')
+    )),
+    [filteredLogs, canManagerReviewBatch, canPayrollReview]
+  );
+
+  const payrollSummary = useMemo(() => {
+    const groups = new Map();
+    filteredLogs.forEach((log) => {
+      const employeeId = log.employeeId ?? log.Employee?.id ?? 'sin-empleado';
+      const companyId = log.companyId ?? log.companyData?.id ?? 'sin-empresa';
+      const month = String(log.date || '').slice(0, 7) || 'sin-mes';
+      const day = Number(String(log.date || '').slice(8, 10));
+      const period = Number.isFinite(day) && day <= 15 ? '1ra' : '2da';
+      const key = `${employeeId}|${companyId}|${month}|${period}`;
+      if (!groups.has(key)) {
+        groups.set(key, {
+          key,
+          employeeName: log.Employee
+            ? [
+                log.Employee.primer_nombre,
+                log.Employee.segundo_nombre,
+                log.Employee.otro_nombre,
+                log.Employee.primer_apellido,
+                log.Employee.segundo_apellido
+              ].filter(Boolean).join(' ')
+            : 'Desconocido',
+          companyName: log.companyData?.nombre_comercial || 'Sin empresa',
+          periodLabel: formatQuincenaLabel(log.date),
+          bonusCount: 0,
+          bonusTotal: 0,
+          simpleQty: 0,
+          simpleValue: 0,
+          nocturnalQty: 0,
+          nocturnalValue: 0,
+          correctionCount: 0,
+          records: []
+        });
+      }
+      const group = groups.get(key);
+      group.records.push(log);
+      const hasPayrollReturn = (log.reviews || []).some(
+        (review) => review.action === 'PAYROLL_RETURNED'
+      );
+      if (
+        log.status === 'RETURNED'
+        || (hasPayrollReturn && !['APPROVED_MANAGER', 'PROCESSED_PAYROLL'].includes(log.status))
+      ) {
+        group.correctionCount += 1;
+      }
+
+      if (!['APPROVED_MANAGER', 'PROCESSED_PAYROLL'].includes(log.status)) return;
+      if (log.type === 'BONO') {
+        group.bonusCount += Number(log.bonusQty) || 1;
+        group.bonusTotal += Number(log.bonusAmount) || 0;
+        return;
+      }
+      const salary = resolveEmployeeSalary(log, employees);
+      const amount = calcOvertimeAmount(salary, log.hoursQty, log.hourType);
+      if (log.hourType === 'SIMPLE') {
+        group.simpleQty += Number(log.hoursQty) || 0;
+        group.simpleValue += amount;
+      } else if (log.hourType === 'NOCTURNA') {
+        group.nocturnalQty += Number(log.hoursQty) || 0;
+        group.nocturnalValue += amount;
+      }
+    });
+    return [...groups.values()]
+      .map((group) => ({
+        ...group,
+        variableTotal: group.bonusTotal + group.simpleValue + group.nocturnalValue
+      }))
+      .sort((left, right) => (
+        left.employeeName.localeCompare(right.employeeName, 'es')
+        || left.periodLabel.localeCompare(right.periodLabel, 'es')
+      ));
+  }, [filteredLogs, employees]);
+
+  const selectedLogs = useMemo(
+    () => operationLogs.filter((log) => selectedRowIds.includes(log.id)),
+    [operationLogs, selectedRowIds]
+  );
+  const selectedArePayrollApproved = selectedLogs.length > 0
+    && selectedLogs.every((log) => log.status === 'APPROVED_MANAGER');
+  const selectedAreManagerPending = selectedLogs.length > 0
+    && selectedLogs.every((log) => log.status === 'PENDING_MANAGER');
 
   const {
     paginatedData: paginatedLogs,
@@ -579,10 +754,10 @@ export default function OperationLogs() {
   } = usePagination(filteredLogs, 25);
   
   const handleSelectAllRows = () => {
-    if (selectedRowIds.length === pendingVisibleLogs.length && pendingVisibleLogs.length > 0) {
+    if (selectedRowIds.length === reviewableVisibleLogs.length && reviewableVisibleLogs.length > 0) {
       setSelectedRowIds([]);
     } else {
-      setSelectedRowIds(pendingVisibleLogs.map(l => l.id));
+      setSelectedRowIds(reviewableVisibleLogs.map(l => l.id));
     }
   };
 
@@ -592,6 +767,14 @@ export default function OperationLogs() {
     } else {
       setSelectedRowIds(prev => [...prev, id]);
     }
+  };
+
+  const toggleSummaryGroup = (key) => {
+    setExpandedSummaryGroups((previous) => (
+      previous.includes(key)
+        ? previous.filter((item) => item !== key)
+        : [...previous, key]
+    ));
   };
 
   if (isLoading) {
@@ -718,34 +901,6 @@ export default function OperationLogs() {
     }
   };
 
-  const handleRejectBatchToManager = async () => {
-    const note = prompt('Justificación del rechazo al gerente:');
-    if (!note) return;
-    try {
-      await flushPendingDraftSaves();
-      const token = localStorage.getItem('nomina-token');
-      const res = await fetch(`http://localhost:3000/api/operation-batches/${batchId}/status`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ status: 'PENDING_MANAGER', justification: note, rejectionFromNomina: true })
-      });
-      if (res.ok) {
-        operationLogs
-          .filter((l) => l.status === 'APPROVED_MANAGER')
-          .forEach((log) => revertLogFromActiveDrafts(log));
-        toast.success('Lote devuelto al gerente');
-        await fetchBatch();
-      } else {
-        toast.error('Error al rechazar');
-      }
-    } catch (e) {
-      toast.error('Error al rechazar');
-    }
-  };
-
   const handleViewEmail = async () => {
     setEmailLoading(true);
     try {
@@ -788,8 +943,30 @@ export default function OperationLogs() {
 
   if (!batch) return null;
 
-  const canCreateBatch = ['ADMIN', 'GERENTE GENERAL', 'SOLICITANTE', 'NOMINA'].includes(user?.role);
-  const canEdit = canCreateBatch && (batch.status === 'DRAFT' || batch.status === 'RETURNED');
+  const automaticBatchMonth = getAutomaticBatchMonth(batch);
+  const automaticBatchDate = automaticBatchMonth ? `${automaticBatchMonth}-16` : '';
+  const editableBatchPayroll = isBonos2daBatch && batch.companyId && automaticBatchDate
+    ? findMatchingActiveDraft(
+      activePayrolls,
+      automaticBatchDate,
+      batch.companyId,
+      companies
+    )
+    : null;
+  const approvedBatchPayroll = !editableBatchPayroll
+    && isBonos2daBatch
+    && batch.companyId
+    && automaticBatchDate
+    ? findMatchingPayrollDraft(
+      activePayrolls,
+      automaticBatchDate,
+      batch.companyId,
+      companies
+    )
+    : null;
+  const canAddRecords = ['ADMIN', 'SOLICITANTE'].includes(normalizedRole)
+    && (batch.status === 'DRAFT' || isBonos2daBatch)
+    && !approvedBatchPayroll?.isApproved;
 
   const bonusDateBlocked = formData.type === 'BONO' && formData.date && !isBonusOperationalDateAllowed(formData.date);
   const editBonusDateBlocked = editFormData?.type === 'BONO'
@@ -848,7 +1025,7 @@ export default function OperationLogs() {
             Ver correo
           </Button>
 
-          {canEdit && (
+          {canAddRecords && (
             <>
               <Button 
                 colorScheme="brand" 
@@ -872,27 +1049,34 @@ export default function OperationLogs() {
               >
                 Nuevo Registro
               </Button>
-              <Button 
-                colorScheme="brand" 
-                leftIcon={<Send size={16} />} 
-                onClick={handleSendToManager}
-                isDisabled={!operationLogs || operationLogs.length === 0}
-                title={!operationLogs || operationLogs.length === 0 ? 'Agrega al menos un registro antes de enviar' : undefined}
-                borderRadius="lg" 
-                transition="all 0.3s"
-                _hover={{ shadow: 'lg' }}
-              >
-                Enviar a Gerencia
-              </Button>
+              {batch.status === 'DRAFT' && !isBonos2daBatch && (
+                <Button
+                  colorScheme="brand"
+                  leftIcon={<Send size={16} />}
+                  onClick={handleSendToManager}
+                  isDisabled={!operationLogs || operationLogs.length === 0}
+                  title={!operationLogs || operationLogs.length === 0 ? 'Agrega al menos un registro antes de enviar' : undefined}
+                  borderRadius="lg"
+                  transition="all 0.3s"
+                  _hover={{ shadow: 'lg' }}
+                >
+                  Enviar a Gerencia
+                </Button>
+              )}
             </>
           )}
-          {canEdit && (!operationLogs || operationLogs.length === 0) && (
+          {canAddRecords && !isBonos2daBatch && (!operationLogs || operationLogs.length === 0) && (
             <Text fontSize="sm" color="orange.400" alignSelf="center">
               Agrega al menos un registro para poder enviar el lote
             </Text>
           )}
+          {approvedBatchPayroll?.isApproved && (
+            <Text fontSize="sm" color="green.400" alignSelf="center">
+              Captura cerrada: Auditoría ya aprobó esta nómina
+            </Text>
+          )}
 
-          {canReviewBatch && batch.status === 'PENDING_MANAGER' && (
+          {canManagerReviewBatch && batch.status === 'PENDING_MANAGER' && (
             <>
               <Button colorScheme="red" variant="outline" leftIcon={<X size={16} />} onClick={handleRejectBatch} borderRadius="lg" transition="all 0.3s" _hover={{ shadow: 'lg' }}>Devolver a Solicitante</Button>
               <Button
@@ -909,15 +1093,172 @@ export default function OperationLogs() {
             </>
           )}
 
-          {isNominaRole && batch.status === 'APPROVED_MANAGER' && (
-            <Button colorScheme="orange" variant="outline" leftIcon={<X size={16} />} onClick={handleRejectBatchToManager} borderRadius="lg" transition="all 0.3s" _hover={{ shadow: 'lg' }}>
-              Rechazar a Gerente
-            </Button>
-          )}
         </Flex>
       </Flex>
 
+      {isNominaRole && (
+        <Tabs index={tabIndex} onChange={setTabIndex} colorScheme="brand" mb={4}>
+          <TabList>
+            <Tab>Resumen por persona</Tab>
+            <Tab>Detalle de registros</Tab>
+          </TabList>
+        </Tabs>
+      )}
 
+      {isNominaRole && tabIndex === 0 && (
+        <Box>
+          <HStack mb={4} spacing={4} bg={bg} p={4} borderRadius="lg" shadow="sm">
+            <FormControl w="220px">
+              <FormLabel fontSize="xs" color={mutedTextColor}>Mes de la nómina</FormLabel>
+              <Input type="month" value={filterMonth} onChange={(e) => setFilterMonth(e.target.value)} size="sm" />
+            </FormControl>
+          </HStack>
+          {selectedArePayrollApproved && (
+            <HStack mb={4} p={3} bg={bulkBg} borderRadius="md" justify="space-between">
+              <Text fontSize="sm" fontWeight="bold" color={bulkTextColor}>
+                {selectedRowIds.length} registros aprobados seleccionados
+              </Text>
+              <Button size="sm" colorScheme="red" onClick={handleBulkPayrollReject}>
+                Rechazar y devolver a Operaciones
+              </Button>
+            </HStack>
+          )}
+          <Box bg={bg} borderRadius="lg" overflowX="auto" shadow="sm">
+            <Table variant="simple" size="sm">
+              <Thead bg={theadBg}>
+                <Tr>
+                  <Th>Empleado / período</Th>
+                  <Th>Empresa</Th>
+                  <Th isNumeric>Bonos</Th>
+                  <Th isNumeric>Total bonos</Th>
+                  <Th isNumeric>Hrs simples</Th>
+                  <Th isNumeric>Valor simples</Th>
+                  <Th isNumeric>Hrs nocturnas</Th>
+                  <Th isNumeric>Valor nocturnas</Th>
+                  <Th isNumeric>Total variable</Th>
+                  <Th>Correcciones</Th>
+                  <Th>Detalle</Th>
+                </Tr>
+              </Thead>
+              <Tbody>
+                {payrollSummary.map((group) => (
+                  <React.Fragment key={group.key}>
+                    <Tr>
+                      <Td>
+                        <Text fontWeight="semibold">{group.employeeName}</Text>
+                        <Text fontSize="xs" color={mutedTextColor}>{group.periodLabel}</Text>
+                      </Td>
+                      <Td>{group.companyName}</Td>
+                      <Td isNumeric>{group.bonusCount}</Td>
+                      <Td isNumeric>{formatMoneyQ(group.bonusTotal)}</Td>
+                      <Td isNumeric>{group.simpleQty}</Td>
+                      <Td isNumeric>{formatMoneyQ(group.simpleValue)}</Td>
+                      <Td isNumeric>{group.nocturnalQty}</Td>
+                      <Td isNumeric>{formatMoneyQ(group.nocturnalValue)}</Td>
+                      <Td isNumeric fontWeight="bold">{formatMoneyQ(group.variableTotal)}</Td>
+                      <Td>
+                        {group.correctionCount > 0
+                          ? <Badge colorScheme="orange">{group.correctionCount} en corrección</Badge>
+                          : <Badge colorScheme="green">Sin correcciones</Badge>}
+                      </Td>
+                      <Td>
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          rightIcon={<ChevronDown size={14} />}
+                          onClick={() => toggleSummaryGroup(group.key)}
+                        >
+                          {expandedSummaryGroups.includes(group.key) ? 'Ocultar' : `Ver ${group.records.length}`}
+                        </Button>
+                      </Td>
+                    </Tr>
+                    {expandedSummaryGroups.includes(group.key) && (
+                      <Tr>
+                        <Td colSpan={11} bg={detailBg} p={3}>
+                          <Table size="sm" variant="simple">
+                            <Thead>
+                              <Tr>
+                                <Th w="40px"></Th>
+                                <Th>Fecha</Th>
+                                <Th>Concepto</Th>
+                                <Th>Detalle</Th>
+                                <Th>Estado</Th>
+                                <Th>Comentario</Th>
+                                <Th>Acción</Th>
+                              </Tr>
+                            </Thead>
+                            <Tbody>
+                              {group.records.map((log) => {
+                                const salary = resolveEmployeeSalary(log, employees);
+                                const amount = log.type === 'BONO'
+                                  ? Number(log.bonusAmount) || 0
+                                  : calcOvertimeAmount(salary, log.hoursQty, log.hourType);
+                                return (
+                                  <Tr key={log.id}>
+                                    <Td>
+                                      {log.status === 'APPROVED_MANAGER' && (
+                                        <Checkbox
+                                          colorScheme="brand"
+                                          isChecked={selectedRowIds.includes(log.id)}
+                                          onChange={() => toggleRowSelection(log.id)}
+                                        />
+                                      )}
+                                    </Td>
+                                    <Td>{log.date}</Td>
+                                    <Td>{log.type === 'BONO' ? 'Bono' : `Horas ${String(log.hourType || '').toLowerCase()}`}</Td>
+                                    <Td>
+                                      {log.type === 'BONO'
+                                        ? formatMoneyQ(amount)
+                                        : `${log.hoursQty} hrs · ${formatMoneyQ(amount)}`}
+                                    </Td>
+                                    <Td>{getStatusBadge(log.status)}</Td>
+                                    <Td maxW="260px">{log.justification || '—'}</Td>
+                                    <Td>
+                                      <HStack spacing={1}>
+                                        <IconButton
+                                          aria-label="Ver detalles"
+                                          icon={<Eye size={15} />}
+                                          size="xs"
+                                          variant="ghost"
+                                          onClick={() => { setSelectedLog(log); onDetailsOpen(); }}
+                                        />
+                                        {log.status === 'APPROVED_MANAGER' && (
+                                          <IconButton
+                                            aria-label="Rechazar a Operaciones"
+                                            icon={<X size={15} />}
+                                            size="xs"
+                                            colorScheme="red"
+                                            variant="ghost"
+                                            onClick={() => handlePayrollReject(log.id)}
+                                          />
+                                        )}
+                                      </HStack>
+                                    </Td>
+                                  </Tr>
+                                );
+                              })}
+                            </Tbody>
+                          </Table>
+                        </Td>
+                      </Tr>
+                    )}
+                  </React.Fragment>
+                ))}
+                {payrollSummary.length === 0 && (
+                  <Tr>
+                    <Td colSpan={11} textAlign="center" py={8} color={mutedTextColor}>
+                      No hay registros visibles para el período seleccionado.
+                    </Td>
+                  </Tr>
+                )}
+              </Tbody>
+            </Table>
+          </Box>
+        </Box>
+      )}
+
+      {(!isNominaRole || tabIndex === 1) && (
+      <>
       <HStack mb={4} spacing={4} bg={bg} p={4} borderRadius="lg" shadow="sm">
         <FormControl w="200px">
           <FormLabel fontSize="xs" color={mutedTextColor}>Mes</FormLabel>
@@ -936,8 +1277,8 @@ export default function OperationLogs() {
           <Select size="sm" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
             <option value="ALL">Todos</option>
             <option value="PENDING_MANAGER">Pdte. Gerente</option>
-            <option value="APPROVED_MANAGER">Aprobado</option>
-            <option value="RETURNED">Devuelto</option>
+            <option value="APPROVED_MANAGER">Aprobado por Gerencia</option>
+            <option value="RETURNED">En corrección</option>
             <option value="PROCESSED_PAYROLL">En Nómina</option>
           </Select>
         </FormControl>
@@ -950,8 +1291,17 @@ export default function OperationLogs() {
             {selectedRowIds.length} solicitudes seleccionadas
           </Text>
           <HStack>
-            <Button size="sm" colorScheme="orange" onClick={handleBulkReject}>Devolver Seleccionados</Button>
-            <Button size="sm" colorScheme="blue" onClick={handleBulkApprove}>Aprobar Seleccionados</Button>
+            {selectedAreManagerPending && canManagerReviewBatch && (
+              <>
+                <Button size="sm" colorScheme="orange" onClick={handleBulkReject}>Devolver seleccionados</Button>
+                <Button size="sm" colorScheme="blue" onClick={handleBulkApprove}>Aprobar seleccionados</Button>
+              </>
+            )}
+            {selectedArePayrollApproved && canPayrollReview && (
+              <Button size="sm" colorScheme="red" onClick={handleBulkPayrollReject}>
+                Rechazar y devolver a Operaciones
+              </Button>
+            )}
           </HStack>
         </HStack>
       )}
@@ -964,10 +1314,10 @@ export default function OperationLogs() {
                 <Th w="40px">
                   <Checkbox 
                     colorScheme="brand" 
-                    isChecked={selectedRowIds.length === pendingVisibleLogs.length && pendingVisibleLogs.length > 0}
-                    isIndeterminate={selectedRowIds.length > 0 && selectedRowIds.length < pendingVisibleLogs.length}
+                    isChecked={selectedRowIds.length === reviewableVisibleLogs.length && reviewableVisibleLogs.length > 0}
+                    isIndeterminate={selectedRowIds.length > 0 && selectedRowIds.length < reviewableVisibleLogs.length}
                     onChange={handleSelectAllRows}
-                    isDisabled={pendingVisibleLogs.length === 0}
+                    isDisabled={reviewableVisibleLogs.length === 0}
                   />
                 </Th>
               )}
@@ -987,7 +1337,10 @@ export default function OperationLogs() {
               <Tr key={log.id}>
                 {canReviewBatch && (
                   <Td>
-                    {log.status === 'PENDING_MANAGER' ? (
+                    {(
+                      (canManagerReviewBatch && log.status === 'PENDING_MANAGER')
+                      || (canPayrollReview && log.status === 'APPROVED_MANAGER')
+                    ) ? (
                       <Checkbox 
                         colorScheme="brand" 
                         isChecked={selectedRowIds.includes(log.id)} 
@@ -1034,12 +1387,20 @@ export default function OperationLogs() {
                     <Tooltip label="Ver Detalles" hasArrow>
                       <IconButton aria-label="Ver Detalles" size={{ base: 'xs', md: 'sm' }} icon={<Eye size={16} />} variant="ghost" colorScheme="teal" onClick={() => { setSelectedLog(log); onDetailsOpen(); }} transition="all 0.3s" />
                     </Tooltip>
-                    {!canReviewBatch && !isReadOnly && log.status === 'RETURNED' && (
+                    {!isReadOnly
+                      && log.status === 'RETURNED'
+                      && (
+                        normalizedRole === 'ADMIN'
+                        || (
+                          normalizedRole === 'SOLICITANTE'
+                          && Number(log.requesterId) === Number(user?.id)
+                        )
+                      ) && (
                       <Tooltip label="Editar y Reenviar" hasArrow>
                         <IconButton aria-label="Editar" size={{ base: 'xs', md: 'sm' }} icon={<Edit2 size={16} />} variant="ghost" colorScheme="blue" onClick={() => openEdit(log)} transition="all 0.3s" />
                       </Tooltip>
                     )}
-                    {canReviewBatch && log.status === 'PENDING_MANAGER' && (
+                    {canManagerReviewBatch && log.status === 'PENDING_MANAGER' && (
                       <>
                         <Tooltip label="Aprobar" hasArrow>
                           <IconButton aria-label="Aprobar" size={{ base: 'xs', md: 'sm' }} icon={<Check size={16} />} variant="ghost" colorScheme="blue" onClick={() => handleApprove(log.id)} transition="all 0.3s" />
@@ -1049,12 +1410,16 @@ export default function OperationLogs() {
                         </Tooltip>
                       </>
                     )}
-                    {isNominaRole && log.status === 'APPROVED_MANAGER' && (
-                      <Tooltip label="Rechazar a Gerente" hasArrow>
-                        <IconButton aria-label="Rechazar a Gerente" size={{ base: 'xs', md: 'sm' }} icon={<X size={16} />} variant="ghost" colorScheme="orange" onClick={() => handleRejectToManager(log.id)} transition="all 0.3s" />
+                    {canPayrollReview && log.status === 'APPROVED_MANAGER' && (
+                      <Tooltip label="Rechazar y devolver a Operaciones" hasArrow>
+                        <IconButton aria-label="Rechazar a Operaciones" size={{ base: 'xs', md: 'sm' }} icon={<X size={16} />} variant="ghost" colorScheme="red" onClick={() => handlePayrollReject(log.id)} transition="all 0.3s" />
                       </Tooltip>
                     )}
-                    {!isReadOnly && log.status !== 'PROCESSED_PAYROLL' && (
+                    {!isReadOnly
+                      && (
+                        normalizedRole === 'ADMIN'
+                        || (canAddRecords && log.status === 'PENDING_MANAGER')
+                      ) && (
                       <Tooltip label="Eliminar" hasArrow>
                         <IconButton aria-label="Eliminar" size={{ base: 'xs', md: 'sm' }} icon={<Trash2 size={16} />} variant="ghost" colorScheme="red" onClick={() => handleDelete(log.id)} transition="all 0.3s" />
                       </Tooltip>
@@ -1082,6 +1447,8 @@ export default function OperationLogs() {
           </Box>
         )}
       </Box>
+      </>
+      )}
 
       {/* Modal Agregar Registro */}
       <Modal isOpen={isOpen} onClose={onClose} size="3xl" isCentered scrollBehavior="inside">
@@ -1197,7 +1564,7 @@ export default function OperationLogs() {
                         filteredModalEmployees.forEach(emp => {
                           let groupName = 'Sin Departamento';
                           if (modalFilterDim5.length > 0) {
-                            const dim = dimension5s?.find(d => String(d.id) === String(emp.dimension5Id));
+                            const dim = dimension5s?.find(d => String(d.id) === getEmployeeDimension5Value(emp));
                             groupName = dim?.nombre || 'Sin Dimensión 5';
                           } else if (modalFilterSubdiv.length > 0) {
                             const dim = subdivisions?.find(s => String(s.id) === String(emp.subdivisionId));
@@ -1302,7 +1669,6 @@ export default function OperationLogs() {
                       <FormLabel fontSize="sm" mb={1}>Tipo de Hora</FormLabel>
                       <Select size="sm" value={formData.hourType} onChange={(e) => setFormData({...formData, hourType: e.target.value})}>
                         <option value="SIMPLE">Simples</option>
-                        <option value="DOBLE">Dobles</option>
                         <option value="NOCTURNA">Nocturnas</option>
                       </Select>
                     </FormControl>
@@ -1358,137 +1724,227 @@ export default function OperationLogs() {
       </Modal>
 
       {/* Modal Detalles */}
-      <Modal isOpen={isDetailsOpen} onClose={onDetailsClose} size="md" isCentered>
+      <Modal isOpen={isDetailsOpen} onClose={onDetailsClose} size="4xl" isCentered scrollBehavior="inside">
         <ModalOverlay backdropFilter="blur(4px)" />
-        <ModalContent bg={bg} color={textColor}>
-          <ModalHeader>Detalles de la Solicitud</ModalHeader>
-          <ModalBody>
+        <ModalContent bg={bg} color={textColor} maxH="90vh" mx={4} w="100%">
+          <ModalHeader pb={2} borderBottomWidth="1px" borderColor={cardBorderColor}>
+            Detalles de la Solicitud
+          </ModalHeader>
+          <ModalBody py={5}>
             {selectedLog && (
-              <VStack spacing={4} align="stretch">
-                <Grid templateColumns="repeat(2, 1fr)" gap={4}>
-                  <GridItem>
-                    <Text fontSize="xs" color={mutedTextColor} textTransform="uppercase" fontWeight="bold">Empleado</Text>
-                    <Text fontSize="md">
-                      {selectedLog.Employee ? [selectedLog.Employee.primer_nombre, selectedLog.Employee.segundo_nombre, selectedLog.Employee.otro_nombre, selectedLog.Employee.primer_apellido, selectedLog.Employee.segundo_apellido].filter(Boolean).join(' ') : 'Desconocido'}
-                    </Text>
-                  </GridItem>
-                  <GridItem>
-                    <Text fontSize="xs" color={mutedTextColor} textTransform="uppercase" fontWeight="bold">Área</Text>
-                    <Text fontSize="md">
-                      {selectedLog.Employee && areas?.find(a => String(a.id) === String(selectedLog.Employee.areaId))?.nombre || 'No asignada'}
-                    </Text>
-                  </GridItem>
-                  <GridItem>
-                    <Text fontSize="xs" color={mutedTextColor} textTransform="uppercase" fontWeight="bold">Empresa</Text>
-                    <Text fontSize="md">
-                      {selectedLog.companyData ? selectedLog.companyData.nombre_comercial : 'S/E'}
-                    </Text>
-                  </GridItem>
-                  <GridItem>
-                    <Text fontSize="xs" color={mutedTextColor} textTransform="uppercase" fontWeight="bold">Fecha</Text>
-                    <Text fontSize="md">{selectedLog.date}</Text>
-                  </GridItem>
-                  <GridItem>
-                    <Text fontSize="xs" color={mutedTextColor} textTransform="uppercase" fontWeight="bold">Quincena</Text>
-                    <Text fontSize="md">{formatQuincenaLabel(selectedLog.date)}</Text>
-                  </GridItem>
-                  <GridItem>
-                    <Text fontSize="xs" color={mutedTextColor} textTransform="uppercase" fontWeight="bold">Tipo</Text>
-                    <Text fontSize="md">{selectedLog.type === 'HORA_EXTRA' ? 'Horas Extras' : 'Bono'}</Text>
-                  </GridItem>
-                  <GridItem>
-                    <Text fontSize="xs" color={mutedTextColor} textTransform="uppercase" fontWeight="bold">Estado</Text>
-                    <Box mt={1}>{getStatusBadge(selectedLog.status)}</Box>
-                  </GridItem>
-                </Grid>
-                
-                {selectedLog.type === 'HORA_EXTRA' ? (
-                  <>
-                  <Grid templateColumns="repeat(2, 1fr)" gap={4}>
-                    <GridItem>
-                      <Text fontSize="xs" color={mutedTextColor} textTransform="uppercase" fontWeight="bold">Cantidad de Horas</Text>
-                      <Text fontSize="md">{selectedLog.hoursQty}</Text>
-                    </GridItem>
-                    <GridItem>
-                      <Text fontSize="xs" color={mutedTextColor} textTransform="uppercase" fontWeight="bold">Tipo de Hora</Text>
-                      <Text fontSize="md">
-                        {selectedLog.hourType === 'SIMPLE' ? 'Simple (×1.5)' : selectedLog.hourType === 'DOBLE' ? 'Doble (×2)' : selectedLog.hourType === 'NOCTURNA' ? 'Nocturna (×2)' : selectedLog.hourType}
+              <Grid
+                templateColumns={{ base: '1fr', lg: '1.35fr 1fr' }}
+                gap={{ base: 5, lg: 6 }}
+                alignItems="start"
+              >
+                <GridItem>
+                  <VStack spacing={4} align="stretch">
+                    <Box>
+                      <Text fontSize="xs" color={mutedTextColor} textTransform="uppercase" fontWeight="bold" letterSpacing="wide" mb={3}>
+                        Información general
                       </Text>
-                    </GridItem>
-                  </Grid>
-                  {(() => {
-                    const salary = resolveEmployeeSalary(selectedLog, employees);
-                    const amount = calcOvertimeAmount(salary, selectedLog.hoursQty, selectedLog.hourType);
-                    const rate = getHourlyRate(salary);
-                    const factor = getOvertimeFactor(selectedLog.hourType);
-                    return (
+                      <Grid templateColumns={{ base: 'repeat(2, 1fr)', md: 'repeat(3, 1fr)' }} gap={3}>
+                        <DetailField label="Empleado" colSpan={{ base: 2, md: 1 }}>
+                          {selectedLog.Employee
+                            ? [selectedLog.Employee.primer_nombre, selectedLog.Employee.segundo_nombre, selectedLog.Employee.otro_nombre, selectedLog.Employee.primer_apellido, selectedLog.Employee.segundo_apellido].filter(Boolean).join(' ')
+                            : 'Desconocido'}
+                        </DetailField>
+                        <DetailField label="Área">
+                          {selectedLog.Employee && areas?.find(a => String(a.id) === String(selectedLog.Employee.areaId))?.nombre || 'No asignada'}
+                        </DetailField>
+                        <DetailField label="Empresa">
+                          {selectedLog.companyData ? selectedLog.companyData.nombre_comercial : 'S/E'}
+                        </DetailField>
+                        <DetailField label="Fecha">{selectedLog.date}</DetailField>
+                        <DetailField label="Quincena">{formatQuincenaLabel(selectedLog.date)}</DetailField>
+                        <DetailField label="Tipo">
+                          {selectedLog.type === 'HORA_EXTRA' ? 'Horas Extras' : 'Bono'}
+                        </DetailField>
+                        <DetailField label="Estado">{getStatusBadge(selectedLog.status)}</DetailField>
+                        <DetailField label="Ingresado por">
+                          {selectedLog.requester?.name || 'No disponible'}
+                        </DetailField>
+                        {selectedLog.type === 'HORA_EXTRA' ? (
+                          <>
+                            <DetailField label="Cantidad de Horas">{selectedLog.hoursQty}</DetailField>
+                            <DetailField label="Tipo de Hora">
+                              {selectedLog.hourType === 'SIMPLE'
+                                ? 'Simple (/30/8 × 1.5)'
+                                : selectedLog.hourType === 'NOCTURNA'
+                                  ? 'Nocturna (/30/6 × 1.5)'
+                                  : selectedLog.hourType}
+                            </DetailField>
+                          </>
+                        ) : (
+                          <>
+                            <DetailField label="Cantidad de Bonos">{selectedLog.bonusQty || 1}</DetailField>
+                            <DetailField label="Monto Unitario">
+                              Q{parseFloat(selectedLog.bonusAmount).toFixed(2)}
+                            </DetailField>
+                          </>
+                        )}
+                      </Grid>
+                    </Box>
+
+                    {selectedLog.type === 'HORA_EXTRA' && (() => {
+                      const salary = resolveEmployeeSalary(selectedLog, employees);
+                      const amount = calcOvertimeAmount(salary, selectedLog.hoursQty, selectedLog.hourType);
+                      const rate = getHourlyRate(salary, selectedLog.hourType);
+                      const factor = getOvertimeFactor(selectedLog.hourType);
+                      return (
+                        <Box
+                          p={4}
+                          borderRadius="lg"
+                          bg={bulkBg}
+                          borderWidth="1px"
+                          borderColor={infoBorderColor}
+                        >
+                          <Text fontSize="xs" color={bulkTextColor} textTransform="uppercase" fontWeight="bold" letterSpacing="wide">
+                            Monto estimado a pagar
+                          </Text>
+                          <Text fontSize="2xl" fontWeight="bold" color={bulkTextColor} lineHeight="short" mt={1}>
+                            {salary > 0 ? formatMoneyQ(amount) : '—'}
+                          </Text>
+                          {salary > 0 ? (
+                            <Text fontSize="xs" color={bulkTextColor} mt={1} opacity={0.9}>
+                              Valor hora {formatMoneyQ(rate)} × {factor} × {Number(selectedLog.hoursQty) || 0} hrs
+                            </Text>
+                          ) : (
+                            <Text fontSize="xs" color="orange.500" mt={1}>
+                              No se encontró el sueldo ordinario del empleado para calcular el monto.
+                            </Text>
+                          )}
+                        </Box>
+                      );
+                    })()}
+
+                    <Box
+                      p={3}
+                      bg={sectionBg}
+                      borderWidth="1px"
+                      borderColor={cardBorderColor}
+                      borderRadius="lg"
+                    >
+                      <Text fontSize="xs" color={mutedTextColor} textTransform="uppercase" fontWeight="bold" letterSpacing="wide" mb={2}>
+                        Tarea / Descripción
+                      </Text>
+                      <Text fontSize="sm" whiteSpace="pre-wrap">
+                        {selectedLog.taskDescription || '—'}
+                      </Text>
+                    </Box>
+
+                    {selectedLog.justification && (
                       <Box
                         p={3}
-                        borderRadius="md"
-                        bg={bulkBg}
+                        bg={justifyBg}
                         borderWidth="1px"
-                        borderColor={infoBorderColor}
+                        borderColor={justifyBorder}
+                        borderRadius="lg"
                       >
-                        <Text fontSize="xs" color={bulkTextColor} textTransform="uppercase" fontWeight="bold">
-                          Monto estimado a pagar
+                        <Text fontSize="xs" color="orange.500" textTransform="uppercase" fontWeight="bold" letterSpacing="wide" mb={2}>
+                          Motivo de Devolución
                         </Text>
-                        <Text fontSize="2xl" fontWeight="bold" color={bulkTextColor} lineHeight="short">
-                          {salary > 0 ? formatMoneyQ(amount) : '—'}
+                        <Text fontSize="sm" color={justifyText} whiteSpace="pre-wrap">
+                          {selectedLog.justification}
                         </Text>
-                        {salary > 0 ? (
-                          <Text fontSize="xs" color={bulkTextColor} mt={1} opacity={0.9}>
-                            Valor hora {formatMoneyQ(rate)} × {factor} × {Number(selectedLog.hoursQty) || 0} hrs
-                          </Text>
-                        ) : (
-                          <Text fontSize="xs" color="orange.500" mt={1}>
-                            No se encontró el sueldo ordinario del empleado para calcular el monto.
-                          </Text>
-                        )}
                       </Box>
-                    );
-                  })()}
-                  </>
-                ) : (
-                  <Grid templateColumns="repeat(2, 1fr)" gap={4}>
-                    <GridItem>
-                      <Text fontSize="xs" color={mutedTextColor} textTransform="uppercase" fontWeight="bold">Cantidad de Bonos</Text>
-                      <Text fontSize="md">{selectedLog.bonusQty || 1}</Text>
-                    </GridItem>
-                    <GridItem>
-                      <Text fontSize="xs" color={mutedTextColor} textTransform="uppercase" fontWeight="bold">Monto Unitario</Text>
-                      <Text fontSize="md">Q{parseFloat(selectedLog.bonusAmount).toFixed(2)}</Text>
-                    </GridItem>
-                  </Grid>
-                )}
+                    )}
+                  </VStack>
+                </GridItem>
 
-                <Box>
-                  <Text fontSize="xs" color={mutedTextColor} textTransform="uppercase" fontWeight="bold">Tarea / Descripción</Text>
-                  <Text fontSize="md" p={3} bg={detailBg} borderRadius="md" mt={1}>
-                    {selectedLog.taskDescription}
+                <GridItem
+                  borderLeftWidth={{ base: 0, lg: '1px' }}
+                  borderTopWidth={{ base: '1px', lg: 0 }}
+                  borderColor={cardBorderColor}
+                  pl={{ base: 0, lg: 6 }}
+                  pt={{ base: 4, lg: 0 }}
+                >
+                  <Text fontSize="xs" color={mutedTextColor} textTransform="uppercase" fontWeight="bold" letterSpacing="wide" mb={4}>
+                    Historial de revisión
                   </Text>
-                </Box>
-
-                {selectedLog.justification && (
-                  <Box>
-                    <Text fontSize="xs" color="orange.500" textTransform="uppercase" fontWeight="bold">Motivo de Devolución</Text>
-                    <Text fontSize="md" p={3} bg="orange.50" color="orange.800" borderRadius="md" mt={1}>
-                      {selectedLog.justification}
-                    </Text>
+                  <Box maxH={{ base: 'none', lg: '60vh' }} overflowY="auto" pr={1}>
+                    {(selectedLog.reviews || []).length === 0 ? (
+                      <Box
+                        p={4}
+                        bg={sectionBg}
+                        borderWidth="1px"
+                        borderColor={cardBorderColor}
+                        borderRadius="lg"
+                        textAlign="center"
+                      >
+                        <Text fontSize="sm" color={mutedTextColor}>Sin eventos registrados.</Text>
+                      </Box>
+                    ) : (
+                      <VStack align="stretch" spacing={0}>
+                        {(selectedLog.reviews || []).map((review, index, list) => (
+                          <Flex key={review.id} gap={3} align="stretch">
+                            <Flex direction="column" align="center" w="14px" flexShrink={0}>
+                              <Box
+                                mt={1}
+                                w="10px"
+                                h="10px"
+                                borderRadius="full"
+                                bg={timelineDot}
+                                flexShrink={0}
+                              />
+                              {index < list.length - 1 && (
+                                <Box flex="1" w="2px" bg={timelineLine} my={1} minH="24px" />
+                              )}
+                            </Flex>
+                            <Box
+                              flex="1"
+                              mb={index < list.length - 1 ? 3 : 0}
+                              p={3}
+                              bg={sectionBg}
+                              borderWidth="1px"
+                              borderColor={cardBorderColor}
+                              borderRadius="lg"
+                            >
+                              <Flex justify="space-between" gap={3} align="flex-start" mb={1}>
+                                <Text fontSize="sm" fontWeight="semibold">
+                                  {review.actor?.name || review.actorRole || 'Sistema'}
+                                </Text>
+                                <Text fontSize="xs" color={mutedTextColor} whiteSpace="nowrap">
+                                  {new Date(review.createdAt).toLocaleString('es-GT')}
+                                </Text>
+                              </Flex>
+                              <Badge
+                                variant="subtle"
+                                colorScheme="gray"
+                                borderRadius="md"
+                                fontSize="xs"
+                                fontWeight="medium"
+                                px={2}
+                                py={0.5}
+                                maxW="100%"
+                                whiteSpace="normal"
+                                textAlign="left"
+                              >
+                                {formatReviewTransition(review)}
+                              </Badge>
+                              {review.comment && (
+                                <Text fontSize="sm" mt={2} whiteSpace="pre-wrap" color={textColor}>
+                                  {review.comment}
+                                </Text>
+                              )}
+                            </Box>
+                          </Flex>
+                        ))}
+                      </VStack>
+                    )}
                   </Box>
-                )}
-
-
-              </VStack>
+                </GridItem>
+              </Grid>
             )}
           </ModalBody>
-          <ModalFooter>
+          <ModalFooter py={3} borderTopWidth="1px" borderColor={cardBorderColor}>
             <Button colorScheme="brand" onClick={onDetailsClose}>Cerrar</Button>
           </ModalFooter>
         </ModalContent>
       </Modal>
 
       {/* AlertDialog (Confirmaciones) */}
-      <AlertDialog isCentered isOpen={confirmState.isOpen} leastDestructiveRef={cancelRef} onClose={() => setConfirmState({ isOpen: false, action: null, data: null })}>
+      <AlertDialog isCentered isOpen={confirmState.isOpen} leastDestructiveRef={cancelRef} onClose={() => setConfirmState({ isOpen: false, action: null, data: null, justification: '' })}>
         <AlertDialogOverlay backdropFilter="blur(4px)">
           <AlertDialogContent bg={bg} color={textColor}>
             <AlertDialogHeader fontSize="lg" fontWeight="bold">
@@ -1519,13 +1975,13 @@ export default function OperationLogs() {
                   </FormControl>
                 </VStack>
               )}
-              {confirmState.action === 'REJECT_TO_MANAGER' && (
+              {confirmState.action === 'PAYROLL_REJECT' && (
                 <VStack align="stretch" spacing={3}>
-                  <Text>¿Deseas devolver esta solicitud al gerente para su revisión?</Text>
+                  <Text>¿Deseas rechazar este registro y devolverlo a la persona de Operaciones que lo ingresó?</Text>
                   <FormControl isRequired>
-                    <FormLabel fontSize="sm">Justificación del rechazo</FormLabel>
+                    <FormLabel fontSize="sm">Comentario para la corrección</FormLabel>
                     <Input 
-                      placeholder="Indica qué debe revisar o corregir el gerente..." 
+                      placeholder="Indica qué debe corregir Operaciones..."
                       value={confirmState.justification}
                       onChange={(e) => setConfirmState({...confirmState, justification: e.target.value})}
                     />
@@ -1546,15 +2002,28 @@ export default function OperationLogs() {
                   </FormControl>
                 </VStack>
               )}
+              {confirmState.action === 'BULK_PAYROLL_REJECT' && (
+                <VStack align="stretch" spacing={3}>
+                  <Text>{`¿Deseas rechazar y devolver a Operaciones los ${selectedRowIds.length} registros seleccionados?`}</Text>
+                  <FormControl isRequired>
+                    <FormLabel fontSize="sm">Comentario para la corrección (aplica a todos)</FormLabel>
+                    <Input
+                      placeholder="Indica qué debe corregir Operaciones..."
+                      value={confirmState.justification}
+                      onChange={(e) => setConfirmState({...confirmState, justification: e.target.value})}
+                    />
+                  </FormControl>
+                </VStack>
+              )}
               {confirmState.action === 'DELETE' && '¿Estás seguro de que deseas eliminar este registro permanentemente?'}
             </AlertDialogBody>
             <AlertDialogFooter>
-              <Button ref={cancelRef} onClick={() => setConfirmState({ isOpen: false, action: null, data: null })} variant="ghost">Cancelar</Button>
+              <Button ref={cancelRef} onClick={() => setConfirmState({ isOpen: false, action: null, data: null, justification: '' })} variant="ghost">Cancelar</Button>
               <Button 
-                colorScheme={['DELETE', 'REJECT', 'BULK_REJECT', 'REJECT_TO_MANAGER', 'BULK_REJECT_TO_MANAGER'].includes(confirmState.action) ? 'red' : 'blue'} 
+                colorScheme={['DELETE', 'REJECT', 'BULK_REJECT', 'PAYROLL_REJECT', 'BULK_PAYROLL_REJECT'].includes(confirmState.action) ? 'red' : 'blue'}
                 onClick={executeConfirm} 
                 ml={3}
-                isDisabled={['REJECT', 'BULK_REJECT', 'REJECT_TO_MANAGER', 'BULK_REJECT_TO_MANAGER'].includes(confirmState.action) && !confirmState.justification?.trim()}
+                isDisabled={['REJECT', 'BULK_REJECT', 'PAYROLL_REJECT', 'BULK_PAYROLL_REJECT'].includes(confirmState.action) && !confirmState.justification?.trim()}
               >
                 {confirmState.action === 'SAVE' ? 'Guardar' : confirmState.action === 'DELETE' ? 'Eliminar' : 'Confirmar'}
               </Button>
@@ -1752,7 +2221,6 @@ export default function OperationLogs() {
                       <FormLabel fontSize="sm" mb={1}>Tipo de Hora Extra</FormLabel>
                       <Select size="sm" value={editFormData.hourType} onChange={(e) => setEditFormData({...editFormData, hourType: e.target.value})}>
                         <option value="SIMPLE">Simple</option>
-                        <option value="DOBLE">Doble</option>
                         <option value="NOCTURNA">Nocturna</option>
                       </Select>
                     </FormControl>

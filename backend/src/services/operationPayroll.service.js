@@ -76,14 +76,21 @@ const findMatchingActiveDraft = async (date, companyId) => {
   const companyName = company?.nombre_comercial || `empresa #${companyId}`;
   const quincenaLabel = formatQuincenaLabel(date);
 
-  const match = drafts.find((draft) => {
+  const matchingDrafts = drafts.filter((draft) => {
     const draftRefDate = draft.createdAt || new Date().toISOString();
     const periodType = draft.periodType || '1ra';
     if (!isDateInQuincena(date, draftRefDate, periodType)) return false;
     return draftMatchesCompany(draft.companies, companyId, companies);
   });
+  const match = matchingDrafts.find((draft) => !draft.isApproved);
 
   if (!match) {
+    if (matchingDrafts.some((draft) => draft.isApproved)) {
+      return {
+        ok: false,
+        error: `La nómina de ${companyName} para ${quincenaLabel || 'esa quincena'} ya fue aprobada por Auditoría y no admite más bonos ni horas extras.`,
+      };
+    }
     return {
       ok: false,
       error: `No hay nómina activa para ${companyName} en ${quincenaLabel || 'esa quincena'}.`,

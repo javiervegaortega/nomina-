@@ -1,18 +1,12 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { Box, Button, Flex, Heading, Text, Table, Thead, Tbody, Tr, Th, Td, Badge, IconButton, useColorModeValue, Modal, ModalOverlay, ModalContent, ModalHeader, ModalBody, ModalFooter, ModalCloseButton, Input, FormControl, FormLabel, useDisclosure, HStack } from '@chakra-ui/react';
-import { Plus, Eye, Trash2, CheckCircle2, XCircle, X } from 'lucide-react';
+import { Plus, Eye } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { AuthContext } from '../context/AuthContext';
-import { DataContext } from '../context/DataContext';
 import { toast } from 'sonner';
 
 export default function OperationBatches() {
   const { user } = useContext(AuthContext);
-  const {
-    operationLogs,
-    revertLogFromActiveDrafts,
-    flushPendingDraftSaves
-  } = useContext(DataContext);
   const navigate = useNavigate();
   const { isOpen, onOpen, onClose } = useDisclosure();
   const [batches, setBatches] = useState([]);
@@ -78,50 +72,13 @@ export default function OperationBatches() {
     switch (status) {
       case 'DRAFT': return <Badge colorScheme="gray">Borrador</Badge>;
       case 'PENDING_MANAGER': return <Badge colorScheme="yellow">Pdte. Gerente</Badge>;
-      case 'APPROVED_MANAGER': return <Badge colorScheme="green">Aprobado</Badge>;
-      case 'RETURNED': return <Badge colorScheme="red">Devuelto</Badge>;
+      case 'APPROVED_MANAGER': return <Badge colorScheme="green">Aprobado Gerencia</Badge>;
+      case 'RETURNED': return <Badge colorScheme="red">En corrección</Badge>;
       default: return <Badge>{status}</Badge>;
     }
   };
 
-  const canCreateBatch = ['ADMIN', 'GERENTE GENERAL', 'SOLICITANTE', 'NOMINA'].includes(user?.role);
-  const isNominaRole = ['ADMIN', 'NOMINA', 'AUDITOR'].includes(user?.role);
-
-  const handleRejectToManager = async (batchId) => {
-    const note = prompt('Justificación del rechazo al gerente:');
-    if (!note) return;
-    try {
-      await flushPendingDraftSaves();
-      const token = localStorage.getItem('nomina-token');
-      const res = await fetch(`http://localhost:3000/api/operation-batches/${batchId}/status`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ status: 'PENDING_MANAGER', justification: note, rejectionFromNomina: true })
-      });
-      if (res.ok) {
-        const detailRes = await fetch(`http://localhost:3000/api/operation-batches/${batchId}`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        if (detailRes.ok) {
-          const detail = await detailRes.json();
-          (detail.logs || []).forEach((log) => revertLogFromActiveDrafts(log));
-        } else {
-          (operationLogs || [])
-            .filter((l) => String(l.batchId) === String(batchId))
-            .forEach((log) => revertLogFromActiveDrafts(log));
-        }
-        toast.success('Lote devuelto al gerente');
-        fetchBatches();
-      } else {
-        toast.error('Error al rechazar');
-      }
-    } catch (err) {
-      toast.error('Error de red');
-    }
-  };
+  const canCreateBatch = ['ADMIN', 'SOLICITANTE'].includes(user?.role);
 
   return (
     <Box p={{ base: 3, md: 6, lg: 8 }}>
@@ -196,16 +153,6 @@ export default function OperationBatches() {
                           colorScheme="blue"
                           onClick={() => navigate(`/operations/${batch.id}`)}
                         />
-                        {isNominaRole && batch.status === 'APPROVED_MANAGER' && (
-                          <IconButton
-                            aria-label="Rechazar a Gerente"
-                            icon={<X size={18} />}
-                            size="sm"
-                            variant="ghost"
-                            colorScheme="orange"
-                            onClick={() => handleRejectToManager(batch.id)}
-                          />
-                        )}
                       </HStack>
                     </Td>
                   </Tr>

@@ -17,6 +17,7 @@ const Commission = require('./Commission')(sequelize);
 const EmployeeIncidence = require('./EmployeeIncidence')(sequelize);
 const OperationLog = require('./OperationLog')(sequelize);
 const OperationBatch = require('./OperationBatch')(sequelize);
+const OperationLogReview = require('./OperationLogReview')(sequelize);
 const Dimension5 = require('./Dimension5')(sequelize);
 const BillingRule = require('./BillingRule')(sequelize);
 const BillingDistribution = require('./BillingDistribution')(sequelize);
@@ -50,6 +51,17 @@ OperationLog.belongsTo(Company, { foreignKey: 'companyId', as: 'companyData' });
 
 OperationBatch.hasMany(OperationLog, { foreignKey: 'batchId', as: 'logs' });
 OperationLog.belongsTo(OperationBatch, { foreignKey: 'batchId', as: 'batch' });
+
+OperationLog.belongsTo(User, { foreignKey: 'requesterId', as: 'requester' });
+User.hasMany(OperationLog, { foreignKey: 'requesterId', as: 'requestedOperationLogs' });
+
+OperationLog.hasMany(OperationLogReview, {
+  foreignKey: 'operationLogId',
+  as: 'reviews',
+  onDelete: 'CASCADE'
+});
+OperationLogReview.belongsTo(OperationLog, { foreignKey: 'operationLogId', as: 'operationLog' });
+OperationLogReview.belongsTo(User, { foreignKey: 'actorId', as: 'actor' });
 
 OperationBatch.belongsTo(User, { foreignKey: 'userId', as: 'user' });
 User.hasMany(OperationBatch, { foreignKey: 'userId' });
@@ -92,6 +104,7 @@ module.exports = {
   EmployeeIncidence,
   OperationLog,
   OperationBatch,
+  OperationLogReview,
   Dimension5,
   BillingRule,
   BillingDistribution,

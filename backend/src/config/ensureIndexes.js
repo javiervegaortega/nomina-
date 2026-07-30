@@ -14,6 +14,8 @@ async function ensurePerformanceIndexes(sequelize) {
     { table: 'operation_logs', name: 'idx_oplogs_batch', columns: 'batchId' },
     { table: 'operation_logs', name: 'idx_oplogs_status', columns: 'status' },
     { table: 'operation_logs', name: 'idx_oplogs_company', columns: 'companyId' },
+    { table: 'operation_logs', name: 'idx_oplogs_requester', columns: 'requesterId' },
+    { table: 'operation_log_reviews', name: 'idx_opreviews_log', columns: 'operationLogId' },
     { table: 'operation_batches', name: 'idx_opbatches_user', columns: 'userId' },
     { table: 'operation_batches', name: 'idx_opbatches_status', columns: 'status' },
   ];
