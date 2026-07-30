@@ -8,6 +8,7 @@ const {
   Bonus,
   Commission,
   OperationLog,
+  OperationLogReview,
   sequelize
 } = require('../models');
 const jwt = require('jsonwebtoken');
@@ -27,9 +28,12 @@ const {
 } = require('../services/payrollCalculator.service');
 const { applyScheduledBonusesToEmployees } = require('../services/payrollBonuses.service');
 const {
-  assertNoBlockingBonusesForAudit,
-  clearBatchDraftLink
+  assertNoBlockingOperationsForAudit,
+  clearBatchDraftLink,
+  setMonthlyOperationCaptureState,
+  ensureBonos2daBatchForDraft
 } = require('../services/operationBonusBatch.service');
+const { recalculateBatchStatus } = require('../services/operationWorkflow.service');
 
 const AUDIT_ROLES = ['AUDITOR', 'ADMIN', 'GERENTE GENERAL'];
 const PAYROLL_WORKFLOW_ROLES = ['NOMINA', 'ADMIN', 'GERENTE GENERAL'];
@@ -476,7 +480,7 @@ const createPayroll = async (req, res) => {
 
     // Solo al enviar a auditoría una 2ª: bonos operativos pendientes del mes
     if (targetStatus === 'auditoria' && String(draft.periodType) === '2da') {
-      await assertNoBlockingBonusesForAudit(
+      await assertNoBlockingOperationsForAudit(
         canonicalCompanyId,
         draft.createdAt,
         t
@@ -534,6 +538,15 @@ const createPayroll = async (req, res) => {
       t
     );
     await setPayrollCommissionsStatus(emps, 'Aplicado', t);
+    if (String(draft.periodType) === '2da') {
+      await setMonthlyOperationCaptureState({
+        companyId: canonicalCompanyId,
+        draftDate: draft.createdAt,
+        captureState: targetStatus === 'auditoria' ? 'FROZEN' : 'CLOSED',
+        payrollDraftId: null,
+        transaction: t
+      });
+    }
 
     await PayrollDraftEmployee.destroy({
       where: { draftId: draft.id },
@@ -930,6 +943,16 @@ const auditorApprove = async (req, res) => {
       await PayrollDraftEmployee.bulkCreate(employeeRecords, { transaction: t });
     }
 
+    if (String(historyRecord.periodType) === '2da' && companies.length === 1) {
+      await setMonthlyOperationCaptureState({
+        companyId: companies[0],
+        draftDate: historyRecord.createdAt || historyRecord.closedAt,
+        captureState: 'CLOSED',
+        payrollDraftId: null,
+        transaction: t
+      });
+    }
+
     await BillingService.markRunsStaleForPayroll(historyRecord.id);
     const historySnapshot = historyRecord.toJSON();
     await historyRecord.destroy({ transaction: t });
@@ -979,10 +1002,35 @@ const auditorReject = async (req, res) => {
     // a quedar disponibles para corrección. Los heredados de 1ª no se tocan.
     await setPayrollOperationLogsStatus(
       data,
-      'APPROVED_MANAGER',
+      'RETURNED',
       null,
       t
     );
+    const returnedOperationIds = getCurrentPayrollOperationLogIds(data);
+    if (returnedOperationIds.length > 0) {
+      const returnedLogs = await OperationLog.findAll({
+        where: { id: returnedOperationIds },
+        attributes: ['id', 'batchId'],
+        transaction: t,
+        lock: t.LOCK.UPDATE
+      });
+      const auditComment = note || 'Devuelto por Auditoría para corrección.';
+      await OperationLog.update(
+        { justification: auditComment },
+        { where: { id: returnedOperationIds }, transaction: t }
+      );
+      await OperationLogReview.bulkCreate(returnedLogs.map((log) => ({
+        operationLogId: log.id,
+        actorId: req.user.id,
+        actorRole: String(req.user.role || 'AUDITOR').toUpperCase(),
+        action: 'AUDIT_RETURNED',
+        fromStatus: 'PROCESSED_PAYROLL',
+        toStatus: 'RETURNED',
+        comment: auditComment
+      })), { transaction: t });
+      await Promise.all([...new Set(returnedLogs.map((log) => log.batchId).filter(Boolean))]
+        .map((batchId) => recalculateBatchStatus(batchId, { transaction: t, latestComment: auditComment })));
+    }
     await setPayrollCommissionsStatus(data, 'Pendiente', t);
 
     const draftId = `draft_${Date.now()}_${Math.floor(Math.random()*1000)}`;
@@ -1001,6 +1049,23 @@ const auditorReject = async (req, res) => {
     if (data && data.length > 0) {
       const employeeRecords = data.map(emp => ({ draftId, employeeId: emp.id, data: emp }));
       await PayrollDraftEmployee.bulkCreate(employeeRecords, { transaction: t });
+    }
+
+    if (String(historyRecord.periodType) === '2da' && companies.length === 1) {
+      await ensureBonos2daBatchForDraft({
+        draftId,
+        companyId: companies[0],
+        draftDate: historyRecord.createdAt || historyRecord.closedAt,
+        userId: req.user.id,
+        transaction: t
+      });
+      await setMonthlyOperationCaptureState({
+        companyId: companies[0],
+        draftDate: historyRecord.createdAt || historyRecord.closedAt,
+        captureState: 'OPEN',
+        payrollDraftId: draftId,
+        transaction: t
+      });
     }
 
     await BillingService.markRunsStaleForPayroll(historyRecord.id);

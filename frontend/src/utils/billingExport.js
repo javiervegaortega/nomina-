@@ -304,7 +304,75 @@ const buildMatrizSheet = (wb, { payrollTitle, matrix, companyNames }) => {
   return ws;
 };
 
+const ASSIGNED_DETAIL_FIELDS = [
+  'asgSueldo',
+  'asgBonoDecreto',
+  'asgBonoIncentivo',
+  'asgBonosExtras',
+  'asgHorasExtrasOtros',
+  'asgBruto',
+  'asgIgssLaboral',
+  'asgIsr',
+  'asgIgssPatronal',
+  'baseAmount'
+];
+
+const addDetailAmount = (left, right) => (
+  Math.round(((Number(left) || 0) + (Number(right) || 0)) * 1000000) / 1000000
+);
+
+export const consolidateBillingDetailsByEmployee = (details = []) => {
+  const grouped = new Map();
+
+  (Array.isArray(details) ? details : []).forEach((detail, index) => {
+    const employeeKey = detail?.employeeId != null
+      ? `id:${detail.employeeId}`
+      : `name:${detail?.employeeName || 'sin-empleado'}:${index}`;
+    let group = grouped.get(employeeKey);
+    if (!group) {
+      group = {
+        ...detail,
+        _costCenters: new Set(),
+        _fromCompanies: new Set(),
+        _destinations: new Map(),
+        percentage: 0
+      };
+      ASSIGNED_DETAIL_FIELDS.forEach((field) => { group[field] = 0; });
+      grouped.set(employeeKey, group);
+    }
+
+    if (detail?.centroCosto) group._costCenters.add(String(detail.centroCosto));
+    if (detail?.fromCompany) group._fromCompanies.add(String(detail.fromCompany));
+    const destination = String(detail?.toCompany || 'Sin empresa destino');
+    group._destinations.set(
+      destination,
+      addDetailAmount(group._destinations.get(destination), detail?.percentage)
+    );
+    group.percentage = addDetailAmount(group.percentage, detail?.percentage);
+    ASSIGNED_DETAIL_FIELDS.forEach((field) => {
+      group[field] = addDetailAmount(group[field], detail?.[field]);
+    });
+  });
+
+  return [...grouped.values()].map((group) => {
+    const destinations = [...group._destinations.entries()];
+    const result = {
+      ...group,
+      centroCosto: [...group._costCenters].join(' / '),
+      fromCompany: [...group._fromCompanies].join(' / '),
+      toCompany: destinations.length <= 1
+        ? (destinations[0]?.[0] || '')
+        : destinations.map(([name, percentage]) => `${name} (${Number(percentage).toFixed(2)}%)`).join(' / ')
+    };
+    delete result._costCenters;
+    delete result._fromCompanies;
+    delete result._destinations;
+    return result;
+  });
+};
+
 const buildDetalleSheet = (wb, { payrollTitle, billingMonth, details }) => {
+  const consolidatedDetails = consolidateBillingDetailsByEmployee(details);
   const headers = [
     'ID',
     'Empleado',
@@ -318,7 +386,6 @@ const buildDetalleSheet = (wb, { payrollTitle, billingMonth, details }) => {
     'Bono Decreto',
     'Bono Incentivo',
     'Bonos Extras',
-    'Bonos Catálogo',
     'H. Extras y Otros',
     'Bruto Período',
     'IGSS Laboral',
@@ -332,7 +399,6 @@ const buildDetalleSheet = (wb, { payrollTitle, billingMonth, details }) => {
     'Asg. Bono Decreto',
     'Asg. Bono Incentivo',
     'Asg. Bonos Extras',
-    'Asg. Bonos Catálogo',
     'Asg. H. Extras',
     'Asg. Bruto',
     'Asg. IGSS Laboral',
@@ -344,9 +410,9 @@ const buildDetalleSheet = (wb, { payrollTitle, billingMonth, details }) => {
   const ws = wb.addWorksheet('Detalle', { views: [{ state: 'frozen', ySplit: 4, xSplit: 2 }] });
   setCols(ws, [
     8, 28, 28, 22, 22, 10, 8, 10,
-    13, 12, 12, 12, 12, 13, 12,
-    12, 10, 13, 13, 11, 12, 13,
-    11, 13, 13, 12, 12, 11, 11, 12, 10, 12, 16
+    13, 12, 12, 12, 13, 12, 12,
+    10, 13, 13, 11, 12, 13,
+    11, 13, 13, 12, 11, 11, 12, 10, 12, 16
   ]);
 
   const title = ws.addRow(['Detalle por Empleado — Distribución de Costos (desglose de nómina)']);
@@ -357,7 +423,7 @@ const buildDetalleSheet = (wb, { payrollTitle, billingMonth, details }) => {
     `Nómina: ${payrollTitle || '—'}`,
     '',
     '',
-    `Registros: ${(details || []).length}`,
+    `Empleados: ${consolidatedDetails.length}`,
     '',
     '',
     `Generado: ${new Date().toLocaleString('es-GT')}`
@@ -372,11 +438,11 @@ const buildDetalleSheet = (wb, { payrollTitle, billingMonth, details }) => {
   const header = ws.addRow(headers);
   styleHeaderRow(header, cols);
 
-  const moneyCols = [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33];
+  const moneyCols = Array.from({ length: 23 }, (_, index) => index + 9);
   let sumAmount = 0;
   const detailPeriod = resolveBillingMonthYear({ billingMonth, payrollTitle }) || '—';
 
-  (details || []).forEach((d, idx) => {
+  consolidatedDetails.forEach((d, idx) => {
     const pct = Number(d.percentage) || 0;
     const amount = Number(d.baseAmount) || 0;
     const employeeCost = Number(d.employeeCost ?? d.totalCost) || (pct > 0 ? amount / (pct / 100) : 0);
@@ -393,7 +459,6 @@ const buildDetalleSheet = (wb, { payrollTitle, billingMonth, details }) => {
       Number(d.bonoDecreto) || 0,
       Number(d.bonoIncentivo) || 0,
       Number(d.bonosExtras) || 0,
-      Number(d.bonosAplicados) || 0,
       Number(d.horasExtrasOtros) || 0,
       Number(d.bruto) || 0,
       Number(d.igssLaboral) || 0,
@@ -407,7 +472,6 @@ const buildDetalleSheet = (wb, { payrollTitle, billingMonth, details }) => {
       Number(d.asgBonoDecreto) || 0,
       Number(d.asgBonoIncentivo) || 0,
       Number(d.asgBonosExtras) || 0,
-      Number(d.asgBonosAplicados) || 0,
       Number(d.asgHorasExtrasOtros) || 0,
       Number(d.asgBruto) || 0,
       Number(d.asgIgssLaboral) || 0,
@@ -418,11 +482,11 @@ const buildDetalleSheet = (wb, { payrollTitle, billingMonth, details }) => {
     styleDataRow(row, cols, idx % 2 === 1);
     applyPct(row.getCell(6));
     moneyCols.forEach((c) => applyMoney(row.getCell(c)));
-    row.getCell(33).font = { bold: true, size: 10, name: 'Calibri', color: { argb: '196F3D' } };
+    row.getCell(31).font = { bold: true, size: 10, name: 'Calibri', color: { argb: '196F3D' } };
     sumAmount += amount;
   });
 
-  if ((details || []).length === 0) {
+  if (consolidatedDetails.length === 0) {
     const empty = ws.addRow([
       'Sin detalle por empleado. Regenere la vista previa o confirme de nuevo la facturación para obtener el desglose completo.'
     ]);
@@ -431,7 +495,7 @@ const buildDetalleSheet = (wb, { payrollTitle, billingMonth, details }) => {
   } else {
     const totalValues = Array(cols).fill('');
     totalValues[1] = 'TOTALES';
-    totalValues[32] = sumAmount;
+    totalValues[30] = sumAmount;
     const total = ws.addRow(totalValues);
     styleDataRow(total, cols, false);
     for (let c = 1; c <= cols; c += 1) {
@@ -439,7 +503,7 @@ const buildDetalleSheet = (wb, { payrollTitle, billingMonth, details }) => {
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.totalBg } };
       cell.font = { bold: true, size: 10, name: 'Calibri' };
     }
-    applyMoney(total.getCell(33));
+    applyMoney(total.getCell(31));
   }
 
   return ws;

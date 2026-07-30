@@ -1,5 +1,5 @@
 import React, { useContext, useRef } from 'react';
-import { AppContext } from '../App';
+import { AppContext } from '../context/AppContext';
 import { AuthContext } from '../context/AuthContext';
 import { User, Shield, Bell, Database, Palette, Smartphone, Globe } from 'lucide-react';
 

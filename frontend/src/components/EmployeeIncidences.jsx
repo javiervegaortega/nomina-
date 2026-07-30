@@ -3,7 +3,7 @@ import {
   Box, VStack, HStack, FormControl, FormLabel, Select, Input, Textarea, Button, Table, Thead, Tbody, Tr, Th, Td, IconButton, Text, Badge, Checkbox
 } from '@chakra-ui/react';
 import { Trash2, Plus } from 'lucide-react';
-import { AppContext } from '../App';
+import { AppContext } from '../context/AppContext';
 import { calcSuspensionDays } from '../utils/payrollPeriod';
 
 const INCIDENCE_TYPES = [

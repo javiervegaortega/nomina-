@@ -7,6 +7,7 @@ const {
   commissionIsApplied,
   operationShouldApply,
   selectMatchingDrafts,
+  selectMatchingSecondQuincenaDrafts,
   syncCommissionTransition,
   syncOperationLogTransition
 } = require('../services/payrollDraftInputs.service');
@@ -181,6 +182,12 @@ const testDraftMatching = () => {
     'la 1ra exacta tiene prioridad y Auditoría se omite'
   );
   assert.deepStrictEqual(
+    selectMatchingSecondQuincenaDrafts([first, second, audited], '2026-07-08', 1, companies)
+      .map((draft) => draft.id),
+    ['second'],
+    'Reporte Operativo del día 1-15 se asigna exclusivamente a la segunda quincena'
+  );
+  assert.deepStrictEqual(
     selectMatchingDrafts([second, audited], '2026-07-08', 1, companies)
       .map((draft) => draft.id),
     ['second'],
@@ -248,11 +255,11 @@ const testDatabaseTransaction = async () => {
       id: draftId,
       title: 'Prueba transaccional de inputs',
       companies: [company.id],
-      periodType: '1ra',
+      periodType: '2da',
       employeesCount: 1,
       isApproved: false,
       revision: 0,
-      createdAt: '2099-07-10T12:00:00.000Z'
+      createdAt: '2099-07-20T12:00:00.000Z'
     }, { transaction });
     await PayrollDraftEmployee.create({
       draftId,

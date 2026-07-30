@@ -16,6 +16,7 @@ const {
   assertBonusDateInSecondQuincena,
   formatQuincenaLabel
 } = require('../services/operationPayroll.service');
+const { assertMonthlyOperationCaptureOpen } = require('../services/operationBonusBatch.service');
 const {
   syncOperationLogTransition
 } = require('../services/payrollDraftInputs.service');
@@ -73,7 +74,8 @@ const validateOperationPayload = ({
   hoursQty,
   hourType,
   bonusAmount,
-  date
+  date,
+  monthlyCapture = false
 }) => {
   if (!['HORA_EXTRA', 'BONO'].includes(type)) {
     const error = new Error('El tipo de registro debe ser BONO o HORA_EXTRA.');
@@ -98,7 +100,7 @@ const validateOperationPayload = ({
       error.statusCode = 400;
       throw error;
     }
-    assertBonusDateInSecondQuincena(date);
+    if (!monthlyCapture) assertBonusDateInSecondQuincena(date);
   }
 };
 
@@ -164,8 +166,13 @@ const create = async (req, res) => {
       }
     }
 
-    validateOperationPayload({ type, hoursQty, hourType, bonusAmount, date });
-    await assertActivePayrollForLog(date, resolvedCompanyId);
+    const isMonthlyCapture = batch?.purpose === 'BONOS_2DA';
+    validateOperationPayload({ type, hoursQty, hourType, bonusAmount, date, monthlyCapture: isMonthlyCapture });
+    if (isMonthlyCapture) {
+      await assertMonthlyOperationCaptureOpen({ batch, companyId: resolvedCompanyId, date });
+    } else {
+      await assertActivePayrollForLog(date, resolvedCompanyId);
+    }
 
     const status = getRole(req.user) === 'ADMIN'
       ? 'APPROVED_MANAGER'
@@ -393,12 +400,17 @@ const correctAndResubmit = async (req, res) => {
     }
     assertSolicitanteDepartmentAccess(employee, req.user);
     const resolvedCompanyId = getEmployeePrincipalCompanyId(employee);
-    validateOperationPayload({ type, hoursQty, hourType, bonusAmount, date });
+    const isMonthlyCapture = batch?.purpose === 'BONOS_2DA';
+    validateOperationPayload({ type, hoursQty, hourType, bonusAmount, date, monthlyCapture: isMonthlyCapture });
 
     if (batch?.purpose === 'BONOS_2DA') {
       assertBonusBatchCompanyMatches(batch, resolvedCompanyId);
     }
-    await assertActivePayrollForLog(date, resolvedCompanyId);
+    if (isMonthlyCapture) {
+      await assertMonthlyOperationCaptureOpen({ batch, companyId: resolvedCompanyId, date });
+    } else {
+      await assertActivePayrollForLog(date, resolvedCompanyId);
+    }
 
     const previous = log.toJSON();
     await log.update({
@@ -477,6 +489,9 @@ const remove = async (req, res) => {
     const batch = log.batchId
       ? await OperationBatch.findByPk(log.batchId, { transaction, lock: transaction.LOCK.UPDATE })
       : null;
+    if (batch?.purpose === 'BONOS_2DA') {
+      await assertMonthlyOperationCaptureOpen({ batch, companyId: log.companyId, date: log.date });
+    }
     if (getRole(req.user) !== 'ADMIN') {
       if (!requesterOwnsLog(req.user, log, batch)) {
         throw Object.assign(new Error('Solo puedes eliminar tus propios registros.'), { statusCode: 403 });

@@ -12,6 +12,14 @@ module.exports = (sequelize) => {
     justification: { type: DataTypes.TEXT, allowNull: true },
     companyId: { type: DataTypes.INTEGER, allowNull: true },
     payrollDraftId: { type: DataTypes.STRING, allowNull: true },
+    // Mes calendario al que pertenece el acumulado operativo (YYYY-MM).
+    periodMonth: { type: DataTypes.STRING(7), allowNull: true },
+    // Ciclo independiente del estado individual de cada registro.
+    captureState: {
+      type: DataTypes.ENUM('OPEN', 'FROZEN', 'CLOSED'),
+      allowNull: false,
+      defaultValue: 'OPEN'
+    },
     purpose: {
       type: DataTypes.STRING(32),
       allowNull: false,

@@ -311,6 +311,19 @@ const selectMatchingDrafts = (drafts, inputDate, companyId, companies = []) => {
     : [];
 };
 
+// Los conceptos de Reporte Operativo se acumulan todo el mes y siempre se
+// pagan en la segunda quincena; Comisiones conserva su regla anterior.
+const selectMatchingSecondQuincenaDrafts = (drafts, inputDate, companyId, companies = []) => {
+  const inputParts = getDateParts(inputDate);
+  if (!inputParts || !companyId) return [];
+  return (Array.isArray(drafts) ? drafts : []).filter((draft) => (
+    !draft?.isApproved
+    && String(draft.periodType) === '2da'
+    && draftMatchesCompany(draft?.companies, companyId, companies)
+    && isSameMonth(inputParts, getDateParts(draft?.createdAt))
+  ));
+};
+
 const commissionIsApplied = (commission) => (
   String(commission?.estado || '').trim().toLowerCase() === COMMISSION_APPLIED_STATUS
 );
@@ -401,7 +414,7 @@ const removeOperationEverywhere = async (operation, context, transaction) => (
 
 const addOperationToMatchingDrafts = async (operation, context, transaction) => {
   if (!operationShouldApply(operation)) return 0;
-  const matches = selectMatchingDrafts(
+  const matches = selectMatchingSecondQuincenaDrafts(
     context.drafts,
     operation.date,
     operation.companyId,
@@ -553,6 +566,7 @@ module.exports = {
   getDateParts,
   operationShouldApply,
   selectMatchingDrafts,
+  selectMatchingSecondQuincenaDrafts,
   syncCommissionTransition,
   syncOperationLogTransition,
   syncOperationLogTransitions

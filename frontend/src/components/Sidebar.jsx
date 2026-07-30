@@ -6,7 +6,7 @@ import {
   ChevronLeft, ChevronRight, Network,
   Menu as MenuIcon, Shield, Settings, Ban, Receipt, ClipboardList
 } from 'lucide-react';
-import { AppContext } from '../App';
+import { AppContext } from '../context/AppContext';
 import { AuthContext } from '../context/AuthContext';
 import {
   Box, Flex, Text, IconButton, Tooltip, Divider, VStack, Image,

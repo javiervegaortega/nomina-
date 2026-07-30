@@ -8,7 +8,7 @@ import {
 import {
   Download, RefreshCw, Eye, Search, Building2, ChevronDown, ChevronUp, FileText
 } from 'lucide-react';
-import { AppContext } from '../App';
+import { AppContext } from '../context/AppContext';
 import { AuthContext } from '../context/AuthContext';
 import { exportBillingExcel, buildExportFromRun, formatCurrency } from '../utils/billingExport';
 

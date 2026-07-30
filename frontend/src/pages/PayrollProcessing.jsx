@@ -4,7 +4,7 @@ import {
   ChevronRight, ChevronDown, ChevronUp, AlertCircle, DollarSign, Clock,
   Calculator, Building2, Plus, ArrowLeft, Trash2, Calendar, Search, LayoutGrid, List, User, Edit2, Eye, Filter
 } from 'lucide-react';
-import { AppContext } from '../App';
+import { AppContext } from '../context/AppContext';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
 import { formatQ, calculateMonthlyISR } from '../data/mockData';

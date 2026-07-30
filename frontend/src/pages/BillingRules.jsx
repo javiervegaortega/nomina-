@@ -5,7 +5,7 @@ import {
   FormControl, FormLabel, Input, Select, Switch, HStack, VStack, Badge, useColorModeValue
 } from '@chakra-ui/react';
 import { Edit2, Trash2, Plus, ArrowRight } from 'lucide-react';
-import { AppContext } from '../App';
+import { AppContext } from '../context/AppContext';
 import { AuthContext } from '../context/AuthContext';
 import { DataContext } from '../context/DataContext';
 

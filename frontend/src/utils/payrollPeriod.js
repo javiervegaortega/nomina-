@@ -65,8 +65,7 @@ export function inferPeriodTypeFromDate(dateStr) {
 
 /** Bonos operativos solo permitidos en 2ª (día ≥ 16). */
 export function isBonusOperationalDateAllowed(dateStr) {
-  if (!dateStr) return false;
-  return inferPeriodTypeFromDate(dateStr) === '2da';
+  return !!dateStr && !Number.isNaN(parseLocalDate(dateStr).getTime());
 }
 
 /**
@@ -79,7 +78,7 @@ export function countBlockingOperationalBonuses(operationLogs, companyId, draftD
   const month = ref.getMonth();
   const blocking = new Set(['PENDING_MANAGER', 'RETURNED']);
   return (Array.isArray(operationLogs) ? operationLogs : []).filter((log) => {
-    if (log?.type !== 'BONO') return false;
+    if (!['BONO', 'HORA_EXTRA'].includes(log?.type)) return false;
     if (!blocking.has(String(log.status || ''))) return false;
     if (String(log.companyId) !== String(companyId)) return false;
     const d = parseLocalDate(log.date);

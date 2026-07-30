@@ -36,6 +36,7 @@ const MONTH_NUMBER_BY_NAME = {
 };
 
 const getAutomaticBatchMonth = (batch) => {
+  if (/^\d{4}-\d{2}$/.test(String(batch?.periodMonth || ''))) return batch.periodMonth;
   const datedLog = (batch?.logs || []).find((log) => /^\d{4}-\d{2}/.test(String(log?.date || '')));
   if (datedLog) return String(datedLog.date).slice(0, 7);
   if (batch?.purpose !== 'BONOS_2DA') return '';
@@ -178,12 +179,23 @@ export default function OperationLogs() {
   const hasMatchingActivePayroll = (date, companyId) =>
     !!findMatchingActiveDraft(activePayrolls, date, companyId, companies);
 
+  const isOpenMonthlyCapture = batch?.purpose === 'BONOS_2DA' && batch?.captureState === 'OPEN';
+  const isMonthlyCaptureDate = (date) => String(date || '').startsWith(`${getAutomaticBatchMonth(batch)}-`);
+
   const handleEditSave = async () => {
     if (!editFormData.taskDescription || !editFormData.employeeId || !editFormData.date || !editEmployeeCompanyId) {
       toast.warning('Completa la descripción, empleado y fecha');
       return;
     }
-    if (!hasMatchingActivePayroll(editFormData.date, editEmployeeCompanyId)) {
+    if (isBonos2daBatch && !isOpenMonthlyCapture) {
+      toast.error(batch.captureState === 'FROZEN' ? 'La captura está congelada mientras la nómina está en Auditoría.' : 'La captura mensual ya está cerrada.');
+      return;
+    }
+    if (isBonos2daBatch && !isMonthlyCaptureDate(editFormData.date)) {
+      toast.error('La fecha debe pertenecer al mes de captura de este lote.');
+      return;
+    }
+    if (!isBonos2daBatch && !hasMatchingActivePayroll(editFormData.date, editEmployeeCompanyId)) {
       toast.error(getMissingPayrollMessage(editFormData.date, editEmployeeCompanyId));
       return;
     }
@@ -485,7 +497,15 @@ export default function OperationLogs() {
       toast.warning('Selecciona al menos un empleado y completa los campos requeridos');
       return;
     }
-    if (!hasMatchingActivePayroll(formData.date, selectedEmployeeCompanyId)) {
+    if (isBonos2daBatch && !isOpenMonthlyCapture) {
+      toast.error(batch.captureState === 'FROZEN' ? 'La captura está congelada mientras la nómina está en Auditoría.' : 'La captura mensual ya está cerrada.');
+      return;
+    }
+    if (isBonos2daBatch && !isMonthlyCaptureDate(formData.date)) {
+      toast.error('La fecha debe pertenecer al mes de captura de este lote.');
+      return;
+    }
+    if (!isBonos2daBatch && !hasMatchingActivePayroll(formData.date, selectedEmployeeCompanyId)) {
       toast.error(getMissingPayrollMessage(formData.date, selectedEmployeeCompanyId));
       return;
     }
@@ -607,6 +627,7 @@ export default function OperationLogs() {
       case 'MANAGER_APPROVED': return 'Aprobado por gerente';
       case 'MANAGER_RETURNED': return 'Devuelto por gerente';
       case 'PAYROLL_RETURNED': return 'Devuelto por nómina';
+      case 'AUDIT_RETURNED': return 'Devuelto por Auditoría';
       case 'CORRECTED_RESUBMITTED': return 'Corregido y reenviado';
       default: return action || '';
     }
@@ -944,35 +965,15 @@ export default function OperationLogs() {
   if (!batch) return null;
 
   const automaticBatchMonth = getAutomaticBatchMonth(batch);
-  const automaticBatchDate = automaticBatchMonth ? `${automaticBatchMonth}-16` : '';
-  const editableBatchPayroll = isBonos2daBatch && batch.companyId && automaticBatchDate
-    ? findMatchingActiveDraft(
-      activePayrolls,
-      automaticBatchDate,
-      batch.companyId,
-      companies
-    )
-    : null;
-  const approvedBatchPayroll = !editableBatchPayroll
-    && isBonos2daBatch
-    && batch.companyId
-    && automaticBatchDate
-    ? findMatchingPayrollDraft(
-      activePayrolls,
-      automaticBatchDate,
-      batch.companyId,
-      companies
-    )
-    : null;
   const canAddRecords = ['ADMIN', 'SOLICITANTE'].includes(normalizedRole)
-    && (batch.status === 'DRAFT' || isBonos2daBatch)
-    && !approvedBatchPayroll?.isApproved;
+    && (isBonos2daBatch ? isOpenMonthlyCapture : batch.status === 'DRAFT');
 
   const bonusDateBlocked = formData.type === 'BONO' && formData.date && !isBonusOperationalDateAllowed(formData.date);
   const editBonusDateBlocked = editFormData?.type === 'BONO'
     && editFormData?.date
     && !isBonusOperationalDateAllowed(editFormData.date);
-  const saveBlockedByPayroll = formData.date && selectedEmployeeCompanyId && !hasMatchingActivePayroll(formData.date, selectedEmployeeCompanyId);
+  const saveBlockedByPayroll = !isBonos2daBatch
+    && formData.date && selectedEmployeeCompanyId && !hasMatchingActivePayroll(formData.date, selectedEmployeeCompanyId);
   const saveBlocked = saveBlockedByPayroll || bonusDateBlocked;
 
 
@@ -995,7 +996,9 @@ export default function OperationLogs() {
               </Heading>
               {getStatusBadge(batch.status)}
               {isBonos2daBatch && (
-                <Badge colorScheme="purple">Operaciones 2ª</Badge>
+                <Badge colorScheme={batch.captureState === 'OPEN' ? 'green' : batch.captureState === 'FROZEN' ? 'yellow' : 'gray'}>
+                  {batch.captureState === 'OPEN' ? 'Captura abierta · pago en 2ª' : batch.captureState === 'FROZEN' ? 'En Auditoría' : 'Captura cerrada'}
+                </Badge>
               )}
             </Flex>
             <Text color={mutedTextColor} fontSize="md">
@@ -1070,7 +1073,7 @@ export default function OperationLogs() {
               Agrega al menos un registro para poder enviar el lote
             </Text>
           )}
-          {approvedBatchPayroll?.isApproved && (
+          {isBonos2daBatch && batch.captureState === 'CLOSED' && (
             <Text fontSize="sm" color="green.400" alignSelf="center">
               Captura cerrada: Auditoría ya aprobó esta nómina
             </Text>
@@ -1389,6 +1392,7 @@ export default function OperationLogs() {
                     </Tooltip>
                     {!isReadOnly
                       && log.status === 'RETURNED'
+                      && (!isBonos2daBatch || isOpenMonthlyCapture)
                       && (
                         normalizedRole === 'ADMIN'
                         || (
@@ -1416,6 +1420,7 @@ export default function OperationLogs() {
                       </Tooltip>
                     )}
                     {!isReadOnly
+                      && (!isBonos2daBatch || isOpenMonthlyCapture)
                       && (
                         normalizedRole === 'ADMIN'
                         || (canAddRecords && log.status === 'PENDING_MANAGER')
@@ -1608,7 +1613,14 @@ export default function OperationLogs() {
                 </Box>
               </FormControl>
 
-              {formData.date && selectedEmployeeCompanyId && !hasMatchingActivePayroll(formData.date, selectedEmployeeCompanyId) && (
+              {isBonos2daBatch && isOpenMonthlyCapture && (
+                <Box w="100%" p={2} borderRadius="md" bg="green.50" borderWidth="1px" borderColor="green.200">
+                  <Text fontSize="sm" color="green.700">
+                    Captura mensual abierta: este registro se pagará en la 2ª quincena, aunque todavía no exista su nómina.
+                  </Text>
+                </Box>
+              )}
+              {!isBonos2daBatch && formData.date && selectedEmployeeCompanyId && !hasMatchingActivePayroll(formData.date, selectedEmployeeCompanyId) && (
                 <Box w="100%" p={2} borderRadius="md" bg="orange.50" borderWidth="1px" borderColor="orange.200">
                   <Text fontSize="sm" color="orange.700">
                     {getMissingPayrollMessage(formData.date, selectedEmployeeCompanyId)}. No se puede guardar hasta que exista una nómina abierta para esa empresa y quincena.
@@ -1637,13 +1649,13 @@ export default function OperationLogs() {
                 <FormControl isRequired flex={1}>
                   <FormLabel fontSize="sm" mb={1}>
                     Fecha
-                    {formData.date && selectedEmployeeCompanyId && hasMatchingActivePayroll(formData.date, selectedEmployeeCompanyId) && (
+                    {formData.date && selectedEmployeeCompanyId && (isBonos2daBatch || hasMatchingActivePayroll(formData.date, selectedEmployeeCompanyId)) && (
                       <Text as="span" fontWeight="normal" color={mutedTextColor} ml={2}>
                         ({formatQuincenaLabel(formData.date)})
                       </Text>
                     )}
                   </FormLabel>
-                  <Input size="sm" type="date" value={formData.date} onChange={(e) => setFormData({...formData, date: e.target.value})} />
+                  <Input size="sm" type="date" min={automaticBatchMonth ? `${automaticBatchMonth}-01` : undefined} max={automaticBatchMonth ? `${automaticBatchMonth}-${new Date(Number(automaticBatchMonth.slice(0, 4)), Number(automaticBatchMonth.slice(5, 7)), 0).getDate()}` : undefined} value={formData.date} onChange={(e) => setFormData({...formData, date: e.target.value})} />
                 </FormControl>
               </HStack>
 
@@ -2166,7 +2178,7 @@ export default function OperationLogs() {
                   </Box>
                 </FormControl>
 
-                {editFormData.date && editEmployeeCompanyId && !hasMatchingActivePayroll(editFormData.date, editEmployeeCompanyId) && (
+                {!isBonos2daBatch && editFormData.date && editEmployeeCompanyId && !hasMatchingActivePayroll(editFormData.date, editEmployeeCompanyId) && (
                   <Box w="100%" p={2} borderRadius="md" bg="orange.50" borderWidth="1px" borderColor="orange.200">
                     <Text fontSize="sm" color="orange.700">
                       {getMissingPayrollMessage(editFormData.date, editEmployeeCompanyId)}
@@ -2204,6 +2216,8 @@ export default function OperationLogs() {
                     <Input
                       size="sm"
                       type="date"
+                      min={automaticBatchMonth ? `${automaticBatchMonth}-01` : undefined}
+                      max={automaticBatchMonth ? `${automaticBatchMonth}-${new Date(Number(automaticBatchMonth.slice(0, 4)), Number(automaticBatchMonth.slice(5, 7)), 0).getDate()}` : undefined}
                       value={editFormData.date || ''}
                       onChange={(e) => setEditFormData({ ...editFormData, date: e.target.value })}
                     />
@@ -2274,7 +2288,7 @@ export default function OperationLogs() {
               isDisabled={
                 !editFormData ||
                 editBonusDateBlocked ||
-                (editFormData.date &&
+                (!isBonos2daBatch && editFormData.date &&
                   editEmployeeCompanyId &&
                   !hasMatchingActivePayroll(editFormData.date, editEmployeeCompanyId))
               }

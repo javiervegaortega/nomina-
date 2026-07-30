@@ -1,6 +1,6 @@
 import React, { useState, useContext, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { AppContext } from '../App';
+import { AppContext } from '../context/AppContext';
 import { Box, Flex, Heading, Text, Button, VStack, Icon, useColorModeValue } from '@chakra-ui/react';
 import { RotateCcw, CheckCircle, AlertTriangle } from 'lucide-react';
 

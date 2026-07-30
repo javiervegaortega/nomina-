@@ -1,9 +1,9 @@
 import React, { useState, useContext } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Mail, Lock, ArrowRight } from 'lucide-react';
+import { toast } from 'sonner';
 import AuthSidePanel from './AuthSidePanel';
 import { AuthContext } from '../../context/AuthContext';
-import { AppContext } from '../../App';
 import { getHomePathForRole } from '../../utils/roleHome';
 import {
   Box,
@@ -25,7 +25,6 @@ export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const { login } = useContext(AuthContext);
-  const { showToast } = useContext(AppContext);
   const navigate = useNavigate();
 
   const bgPanel = useColorModeValue('white', 'gray.900');
@@ -38,10 +37,10 @@ export default function Login() {
     e.preventDefault();
     const result = await login(email, password);
     if (result.success) {
-      showToast('Sesión iniciada correctamente', 'success');
+      toast.success('Sesión iniciada correctamente');
       navigate(getHomePathForRole(result.user?.role));
     } else {
-      showToast(result.error, 'error');
+      toast.error(result.error);
     }
   };
 

@@ -18,6 +18,7 @@ async function ensurePerformanceIndexes(sequelize) {
     { table: 'operation_log_reviews', name: 'idx_opreviews_log', columns: 'operationLogId' },
     { table: 'operation_batches', name: 'idx_opbatches_user', columns: 'userId' },
     { table: 'operation_batches', name: 'idx_opbatches_status', columns: 'status' },
+    { table: 'operation_batches', name: 'uq_opbatches_monthly_capture', columns: 'purpose, companyId, periodMonth', unique: true },
   ];
 
   for (const idx of indexes) {
@@ -31,7 +32,7 @@ async function ensurePerformanceIndexes(sequelize) {
       if (rows.length > 0) continue;
 
       await sequelize.query(
-        `CREATE INDEX \`${idx.name}\` ON \`${idx.table}\` (${idx.columns})`
+        `CREATE ${idx.unique ? 'UNIQUE ' : ''}INDEX \`${idx.name}\` ON \`${idx.table}\` (${idx.columns})`
       );
     } catch (err) {
       // Columna/tabla ausente o índice ya existente: no bloquear el arranque

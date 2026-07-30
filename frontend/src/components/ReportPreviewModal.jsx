@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Modal, ModalOverlay, ModalContent, ModalHeader, ModalBody, ModalFooter, ModalCloseButton,
   Button, Box, Table, Thead, Tbody, Tr, Th, Td, Heading, Text, Flex, useColorModeValue, Badge, Spinner, Center,
@@ -9,6 +9,8 @@ import { Download, FileText, Printer, Settings, ChevronDown } from 'lucide-react
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { CUOTA_PATRONAL_RATE, IRTRA_INTECAP_RATE } from '../data/mockData';
+import { buildVerificadorPdf } from '../utils/verificadorPdf';
+import { buildSolicitudChequesPdf } from '../utils/solicitudChequesPdf';
 
 // Inline to avoid circular import issues
 const getEmpName = (e) => {
@@ -444,23 +446,38 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
   };
 
   useEffect(() => {
-    if (isOpen && reportType === 'libro' && data && group) {
-      setIsGeneratingPdf(true);
-      setPdfPreviewUrl(null);
-      setTimeout(() => {
-        try {
-          const doc = generateLibroDoc();
-          setPdfPreviewUrl(doc.output('datauristring'));
-        } catch (err) {
-          console.error(err);
-        } finally {
-          setIsGeneratingPdf(false);
-        }
-      }, 50);
-    } else {
-      setPdfPreviewUrl(null);
-    }
-  }, [isOpen, reportType, data, group]);
+    let generateTimer;
+    const prepareTimer = setTimeout(() => {
+      if (isOpen && ['libro', 'verificador', 'cheques'].includes(reportType) && data && group) {
+        setIsGeneratingPdf(true);
+        setPdfPreviewUrl(null);
+        generateTimer = setTimeout(() => {
+          try {
+            const doc = reportType === 'verificador'
+              ? buildVerificadorPdf({ data, group, companies })
+              : reportType === 'cheques'
+                ? buildSolicitudChequesPdf({ data, group, companies })
+                : generateLibroDoc();
+            setPdfPreviewUrl(doc.output('datauristring'));
+          } catch (err) {
+            console.error(err);
+          } finally {
+            setIsGeneratingPdf(false);
+          }
+        }, 50);
+      } else {
+        setIsGeneratingPdf(false);
+        setPdfPreviewUrl(null);
+      }
+    }, 0);
+
+    return () => {
+      clearTimeout(prepareTimer);
+      clearTimeout(generateTimer);
+    };
+    // generateLibroDoc consumes the same data/group dependencies listed below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, reportType, data, group, companies]);
 
   if (!isOpen || !group || !data) return null;
 
@@ -542,7 +559,6 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
     }
   };
 
-    const title  = REPORT_TITLES[reportType] || reportType;
     const safe   = group.title.replace(/[^a-z0-9]/gi, '_');
 
     // Header helper for every doc
@@ -671,37 +687,7 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
 
     // ── Verificador ──────────────────────────────────────────
     if (reportType === 'verificador') {
-      const doc = new jsPDF('landscape', 'pt', 'letter');
-      addHeader(doc, 'Verificador de Pago de Nómina');
-      const comps = buildCompGroups();
-      const body = [];
-      let grandTotal = 0;
-
-      Object.keys(comps).forEach(compName => {
-        const { cheques, transfers } = comps[compName];
-        if (!cheques.length && !transfers.length) return;
-        body.push([{ content: `Empresa: ${compName.toUpperCase()}`, colSpan: 6, styles: { fillColor: [220, 237, 255], fontStyle: 'bold', textColor: [20, 80, 160] } }]);
-        if (transfers.length > 0) {
-          const sum = transfers.reduce((a, e) => a + getNetPayable(e, group?.periodType), 0);
-          grandTotal += sum;
-          body.push(['Varios Plantilla', '', 'Nomina', '', 'Transferencia', { content: fmtQ(sum), styles: { halign: 'right', fontStyle: 'bold' } }]);
-        }
-        let chSub = 0;
-        cheques.forEach(e => {
-          const payable = getNetPayable(e, group?.periodType);
-          grandTotal += payable;
-          chSub += payable;
-          body.push([getEmpName(e), compName.toUpperCase(), e.puesto || 'FIJO', '', 'CHEQUE', { content: fmtQ(payable), styles: { halign: 'right' } }]);
-        });
-        if (cheques.length) body.push(['', '', '', '', { content: 'Subtotal Cheques:', styles: { halign: 'right', fontStyle: 'italic' } }, { content: fmtQ(chSub), styles: { halign: 'right', fontStyle: 'bold', textColor: [0, 120, 0] } }]);
-      });
-      body.push(['', '', '', '', { content: 'TOTAL GENERAL', styles: { halign: 'right', fontStyle: 'bold', fontSize: 10 } }, { content: fmtQ(grandTotal), styles: { halign: 'right', fontStyle: 'bold', fontSize: 10, textColor: [0, 120, 0] } }]);
-      body.push([{ content: '', colSpan: 6 }]);
-      body.push([{ content: 'Hecho por: Alejandra Pérez', colSpan: 3 }, { content: 'Revisado por: Iris de Lemus (Recursos Humanos)', colSpan: 3 }]);
-      body.push([{ content: 'Revisado por: Walter Mendez (Auditoria)', colSpan: 3 }, { content: 'Autorizado por: Gerardo Estrada (Presidencia)', colSpan: 3 }]);
-      body.push([{ content: `Nota: Transferencia programada para ${fechaPago} INMEDIATO`, colSpan: 6, styles: { fontStyle: 'italic', textColor: [100, 100, 100] } }]);
-
-      autoTable(doc, { startY: 100, head: [['Nombre de Colaborador', 'Empresa', 'Soporte', 'Banco de Pago', 'Medio de Pago', 'Monto']], body, theme: 'grid', headStyles: { fillColor: [41, 128, 185], textColor: 255, fontStyle: 'bold' }, styles: { fontSize: 8, cellPadding: 3 }, columnStyles: { 0: { cellWidth: 155 }, 1: { cellWidth: 105 }, 2: { cellWidth: 75 }, 3: { cellWidth: 75 }, 4: { cellWidth: 85 }, 5: { cellWidth: 85, halign: 'right' } } });
+      const doc = buildVerificadorPdf({ data, group, companies });
       if (action === 'print') {
         doc.autoPrint();
         window.open(doc.output('bloburl'), '_blank');
@@ -712,18 +698,7 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
 
     // ── Solicitud de Cheques ─────────────────────────────────
     else if (reportType === 'cheques') {
-      const doc = new jsPDF('portrait', 'pt', 'letter');
-      addHeader(doc, 'Solicitud de Cheques');
-      const chData = data.filter(e => String(e.tipo_de_pago).toLowerCase() === 'cheque');
-      let total = 0;
-      const body = chData.map(e => {
-        const net = getNetPayable(e, group?.periodType);
-        total += net;
-        const comp = companies?.find(c => c.id == e.empresa_principal)?.nombre_comercial || e.company || 'Sin Empresa';
-        return [getEmpName(e), comp, e.puesto || 'N/A', e.banco || 'N/A', 'Cheque', { content: fmtQ(net), styles: { halign: 'right' } }];
-      });
-      body.push(['', '', '', '', { content: 'TOTAL', styles: { fontStyle: 'bold', halign: 'right' } }, { content: fmtQ(total), styles: { halign: 'right', fontStyle: 'bold', textColor: [0, 120, 0] } }]);
-      autoTable(doc, { startY: 100, head: [['Nombre de Colaborador', 'Empresa', 'Tipo Personal', 'Banco de Pago', 'Medio Pago', 'Monto Total']], body, theme: 'grid', headStyles: { fillColor: [41, 128, 185], textColor: 255, fontStyle: 'bold' }, styles: { fontSize: 8, cellPadding: 3 } });
+      const doc = buildSolicitudChequesPdf({ data, group, companies });
       if (action === 'print') {
         doc.autoPrint();
         window.open(doc.output('bloburl'), '_blank');
@@ -1044,44 +1019,16 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
 
     // ── Verificador ──────────────────────────────────────────
     if (reportType === 'verificador') {
-      const comps = buildCompGroups();
-      let grandTotal = 0;
-      const rows = [];
-      Object.keys(comps).forEach((compName, ci) => {
-        const { cheques, transfers } = comps[compName];
-        if (!cheques.length && !transfers.length) return;
-        rows.push(<Tr key={`ch-${ci}`} bg={compHeaderBg}><Td colSpan={5} fontWeight="bold" fontSize="xs" color="blue.700" _dark={{ color: 'blue.200' }} py={2}>Empresa: {compName.toUpperCase()}</Td><Td /></Tr>);
-        if (transfers.length > 0) {
-          const sum = transfers.reduce((a, e) => a + getNetPayable(e, group?.periodType), 0); grandTotal += sum;
-          rows.push(<Tr key={`tr-${ci}`} bg={tdBg}><Td fontSize="xs" fontWeight="semibold">Varios Plantilla</Td><Td fontSize="xs"></Td><Td fontSize="xs">Nomina</Td><Td fontSize="xs"></Td><Td fontSize="xs">Transferencia</Td><Td isNumeric fontFamily="mono" fontSize="xs" fontWeight="bold" color="blue.600">{fmtQ(sum)}</Td></Tr>);
-        }
-        let chSub = 0;
-        cheques.forEach((e, ei) => {
-          const payable = getNetPayable(e, group?.periodType);
-          grandTotal += payable;
-          chSub += payable;
-          rows.push(<Tr key={`eq-${ci}-${ei}`} bg={tdBg}><Td fontSize="xs" fontWeight="semibold">{getEmpName(e)}</Td><Td fontSize="xs">{compName.toUpperCase()}</Td><Td fontSize="xs">{e.puesto || 'FIJO'}</Td><Td fontSize="xs"></Td><Td fontSize="xs">CHEQUE</Td><Td isNumeric fontFamily="mono" fontSize="xs">{fmtQ(payable)}</Td></Tr>);
-        });
-        if (cheques.length > 0) rows.push(<Tr key={`sub-${ci}`} bg={subtotalRowBg}><Td colSpan={5} textAlign="right" fontSize="xs" fontStyle="italic" color="gray.500">Subtotal Cheques:</Td><Td isNumeric fontFamily="mono" fontSize="xs" fontWeight="bold" color="green.600">{fmtQ(chSub)}</Td></Tr>);
-      });
       return (
-        <Box>
-          <Box border="1px solid" borderColor={borderColor} borderRadius="md" overflowX="auto">
-            <Table size="sm" variant="simple"><Thead bg={theadBg} position="sticky" top={0} zIndex={5}><Tr><Th>Nombre de Colaborador</Th><Th>Empresa</Th><Th>Soporte</Th><Th>Banco</Th><Th>Medio Pago</Th><Th isNumeric>Monto</Th></Tr></Thead>
-              <Tbody>{rows}<Tr bg={totalRowBg} borderTop="2px solid" borderColor="brand.400"><Td colSpan={5} textAlign="right" fontWeight="black" fontSize="sm">TOTAL GENERAL</Td><Td isNumeric fontFamily="mono" fontWeight="black" fontSize="sm" color="green.700">{fmtQ(grandTotal)}</Td></Tr></Tbody>
-            </Table>
-          </Box>
-          <Box mt={8} pt={4} borderTop="1px dashed" borderColor={borderColor}>
-            <Flex justify="space-between" mb={6}>
-              <Box><Box borderBottom="1px solid" borderColor="gray.400" w="200px" mb={1} /><Text fontSize="xs" color="gray.500">Hecho por: Alejandra Pérez</Text></Box>
-              <Box><Box borderBottom="1px solid" borderColor="gray.400" w="200px" mb={1} /><Text fontSize="xs" color="gray.500">Revisado por: Iris de Lemus (RR.HH.)</Text></Box>
-            </Flex>
-            <Flex justify="space-between" mb={4}>
-              <Box><Box borderBottom="1px solid" borderColor="gray.400" w="200px" mb={1} /><Text fontSize="xs" color="gray.500">Revisado por: Walter Mendez (Auditoria)</Text></Box>
-              <Box><Box borderBottom="1px solid" borderColor="gray.400" w="200px" mb={1} /><Text fontSize="xs" color="gray.500">Autorizado por: Gerardo Estrada (Presidencia)</Text></Box>
-            </Flex>
-            <Text fontSize="xs" color="gray.400" fontStyle="italic">Nota: Transferencia programada para {fechaPago} INMEDIATO</Text>
-          </Box>
+        <Box border="1px solid" borderColor={borderColor} borderRadius="md" overflow="hidden" h="600px" position="relative">
+          {isGeneratingPdf || !pdfPreviewUrl ? (
+            <Center h="100%" bg={previewBg} flexDirection="column" gap={4}>
+              <Spinner size="xl" color="brand.500" thickness="4px" />
+              <Text color="gray.500" fontWeight="medium">Generando previsualización del verificador...</Text>
+            </Center>
+          ) : (
+            <embed src={`${pdfPreviewUrl}#toolbar=0`} type="application/pdf" width="100%" height="100%" style={{ border: 'none' }} title="Verificador de Pago" />
+          )}
         </Box>
       );
     }
@@ -1090,15 +1037,16 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
     if (reportType === 'cheques') {
       const chData = data.filter(e => String(e.tipo_de_pago).toLowerCase() === 'cheque');
       if (!chData.length) return <Text color="gray.500" textAlign="center" py={10}>No hay empleados para pago en Cheque en esta nómina.</Text>;
-      let total = 0;
       return (
-        <Box border="1px solid" borderColor={borderColor} borderRadius="md" overflow="hidden">
-          <Table size="sm" variant="simple"><Thead bg={theadBg}><Tr><Th>Nombre Colaborador</Th><Th>Empresa</Th><Th>Puesto</Th><Th>Banco</Th><Th isNumeric>Monto</Th></Tr></Thead>
-            <Tbody bg={tdBg}>
-              {chData.map((e, i) => { const net = getNetPayable(e, group?.periodType); total += net; const comp = companies?.find(c => c.id == e.empresa_principal)?.nombre_comercial || e.company || 'Sin Empresa'; return (<Tr key={i}><Td fontSize="xs" fontWeight="semibold">{getEmpName(e)}</Td><Td fontSize="xs">{comp}</Td><Td fontSize="xs">{e.puesto || 'N/A'}</Td><Td fontSize="xs">{e.banco || 'N/A'}</Td><Td isNumeric fontFamily="mono" fontSize="xs" fontWeight="bold">{fmtQ(net)}</Td></Tr>); })}
-              <Tr bg={totalRowBg}><Td colSpan={4} textAlign="right" fontWeight="bold" fontSize="xs">TOTAL</Td><Td isNumeric fontFamily="mono" fontWeight="black" color="green.700">{fmtQ(total)}</Td></Tr>
-            </Tbody>
-          </Table>
+        <Box border="1px solid" borderColor={borderColor} borderRadius="md" overflow="hidden" h="600px" position="relative">
+          {isGeneratingPdf || !pdfPreviewUrl ? (
+            <Center h="100%" bg={previewBg} flexDirection="column" gap={4}>
+              <Spinner size="xl" color="brand.500" thickness="4px" />
+              <Text color="gray.500" fontWeight="medium">Generando previsualización de la solicitud...</Text>
+            </Center>
+          ) : (
+            <embed src={`${pdfPreviewUrl}#toolbar=0`} type="application/pdf" width="100%" height="100%" style={{ border: 'none' }} title="Solicitud de Cheques" />
+          )}
         </Box>
       );
     }
@@ -1272,7 +1220,7 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
         <ModalBody py={6} bg={previewBg}>
           <Box bg={tdBg} p={8} boxShadow="lg" borderRadius="sm" minH="600px" mx="auto" maxW="1100px">
             {/* Document header (omitido en nómina: ya trae encabezado + resumen propio) */}
-            {reportType !== 'nomina' && (
+            {reportType !== 'nomina' && reportType !== 'verificador' && reportType !== 'cheques' && reportType !== 'libro' && (
               <Flex justify="space-between" mb={6} borderBottom="2px solid" borderColor={borderColor} pb={4} align="flex-start">
                 <Box>
                   <Heading size="md" mb={1} textTransform="uppercase">Grupo ECONSA</Heading>

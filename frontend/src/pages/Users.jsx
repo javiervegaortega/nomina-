@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { AuthContext } from '../context/AuthContext';
-import { AppContext } from '../App';
+import { AppContext } from '../context/AppContext';
 import { DataContext } from '../context/DataContext';
 import { Plus, Edit2, Trash2, Shield, Search } from 'lucide-react';
 import {

@@ -1,6 +1,6 @@
 import React, { useContext, useMemo, useState, useEffect, useCallback } from 'react';
 import { DataContext } from '../context/DataContext';
-import { AppContext } from '../App';
+import { AppContext } from '../context/AppContext';
 import usePagination from '../hooks/usePagination';
 import Pagination from '../components/Pagination';
 import { AuthContext } from '../context/AuthContext';
@@ -10,6 +10,8 @@ import { getNetPayable } from '../utils/payrollPeriod';
 import { calculateEmployeePayroll } from '../utils/payrollCalculator';
 import { exportPayrollReportExcel } from '../utils/payrollReports';
 import { exportNominaGeneralExcel } from '../utils/nominaGeneralExport';
+import { exportVerificadorExcel } from '../utils/verificadorExcel';
+import { exportSolicitudChequesExcel } from '../utils/solicitudChequesExcel';
 import { matchesDepartmentFilter, normalizeMultiFilter, resolveEmployeeDepartment } from '../utils/orgFilters';
 import ReportPreviewModal from '../components/ReportPreviewModal';
 import EmployeeSummaryModal from '../components/EmployeeSummaryModal';
@@ -1170,232 +1172,18 @@ function PayrollHistoryDetail({ group, onBack }) {
   };
 
   const exportExcelCheques = async () => {
-    const XLSX = await getXLSX();
     showToast('Generando Solicitud de Cheques...', 'success');
     const chequesData = data.filter(e => String(e.tipo_de_pago).toLowerCase() === 'cheque');
     if (chequesData.length === 0) {
       showToast('No hay empleados configurados para pago en Cheque.', 'warning');
       return;
     }
-
-    // Group by company
-    const comps = {};
-    chequesData.forEach(e => {
-      const compName = companies?.find(c => c.id == e.empresa_principal)?.nombre_comercial || e.company || 'Sin Empresa';
-      if (!comps[compName]) comps[compName] = [];
-      comps[compName].push(e);
-    });
-
-    const fechaPago = group.closedAt ? new Date(group.closedAt).toLocaleDateString('es-GT') : new Date().toLocaleDateString('es-GT');
-
-    // 9 columns: A=Nombre(wide), B=spacer, C=Empresa, D=Tipo Personal, E=Soporte, F=Banco Pago, G=Medio Pago, H=Monto, I=Monto Total
-    const E = ['', '', '', '', '', '', '', '', ''];
-    const aoa = [];
-
-    // Row 1: GRUPO ECONSA
-    aoa.push(['GRUPO ECONSA', ...E.slice(1)]);
-    // Row 2: SOLICITUD DE CHEQUES
-    aoa.push(['SOLICITUD DE CHEQUES', ...E.slice(1)]);
-    // Row 3: FECHA DE PAGO: ... date offset to col E
-    aoa.push(['FECHA DE PAGO:', '', '', '', fechaPago, '', '', '', '']);
-    // Row 4: empty
-    aoa.push([...E]);
-    // Row 5: Column headers
-    aoa.push(['Nombre de\nColaborador', '', 'Empresa', 'Tipo de\nPersonal', 'Soporte', 'Banco\nde Pago', 'Medio de\nPago', 'Monto', 'Monto\nTotal']);
-    // Row 6: empty separator
-    aoa.push([...E]);
-
-    let grandTotal = 0;
-
-    Object.keys(comps).forEach(compName => {
-      // Company header
-      aoa.push([`Empresa:   ${compName.toUpperCase()}`, ...E.slice(1)]);
-
-      let companyTotal = 0;
-      comps[compName].forEach(e => {
-        const netPayable = getNetPayable(e, group.periodType);
-        aoa.push([
-          getEmployeeFullName(e),
-          '',
-          compName.toLowerCase(),
-          e.puesto || 'fijo',
-          '',
-          '',
-          'cheque',
-          netPayable,
-          ''
-        ]);
-        companyTotal += netPayable;
-      });
-
-      // Subtotal row — value in "Monto Total" column (I)
-      aoa.push(['', '', '', '', '', '', '', '', companyTotal]);
-      grandTotal += companyTotal;
-    });
-
-    // Empty row
-    aoa.push([...E]);
-    // TOTAL GENERAL label row (in cols G-H area)
-    aoa.push(['', '', '', '', '', '', 'TOTAL GENERAL', '', '']);
-    // Empty row
-    aoa.push([...E]);
-    // Elaborado + Grand total row: Q in col H, total in col I
-    aoa.push(['Elaborado por: Alejandra Pérez', '', '', '', '', '', '', 'Q', grandTotal]);
-    // Empty rows for spacing
-    aoa.push([...E]);
-    aoa.push([...E]);
-    aoa.push([...E]);
-    // Signature row
-    aoa.push(['Autorizado por: Walter Mendez (Auditoria Interna)', '', '', '', '', 'Autorizado por: Iris de Lemus (Recursos Humanos)', '', '', '']);
-
-    const ws = XLSX.utils.aoa_to_sheet(aoa);
-
-    // Column widths matching image proportions
-    ws['!cols'] = [
-      { wch: 38 }, // A: Nombre de Colaborador
-      { wch: 3 },  // B: spacer
-      { wch: 16 }, // C: Empresa
-      { wch: 14 }, // D: Tipo de Personal
-      { wch: 12 }, // E: Soporte
-      { wch: 14 }, // F: Banco de Pago
-      { wch: 14 }, // G: Medio de Pago
-      { wch: 14 }, // H: Monto
-      { wch: 14 }, // I: Monto Total
-    ];
-
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Sol.Cheques");
-    XLSX.writeFile(wb, `Sol_Cheques_${group.title.replace(/[^a-z0-9]/gi, '_')}.xlsx`);
+    await exportSolicitudChequesExcel({ employees: data, group, companies });
   };
 
   const exportExcelVerificador = async () => {
-    const XLSX = await getXLSX();
     showToast('Generando Verificador de Pago...', 'success');
-    
-    // Group ALL employees by company, separating cheques vs transfers
-    const comps = {};
-    data.forEach(e => {
-      const compName = companies?.find(c => c.id == e.empresa_principal)?.nombre_comercial || e.company || 'Sin Empresa';
-      if (!comps[compName]) comps[compName] = { cheques: [], transfers: [] };
-      if (String(e.tipo_de_pago).toLowerCase() === 'cheque') {
-        comps[compName].cheques.push(e);
-      } else {
-        comps[compName].transfers.push(e);
-      }
-    });
-
-    const fechaPago = group.closedAt ? new Date(group.closedAt).toLocaleDateString('es-GT') : new Date().toLocaleDateString('es-GT');
-
-    // 10 columns: A=Nombre, B=Empresa, C=Tipo Personal, D=LOTE A ELIMINAR, E=LOTE CORRECTO, F=Soporte, G=Banco Pago, H=Medio Pago, I=Monto, J=Monto Total
-    const E = ['', '', '', '', '', '', '', '', '', ''];
-    const aoa = [];
-
-    // Row 1: GRUPO ECONSA
-    aoa.push(['GRUPO ECONSA', ...E.slice(1)]);
-    // Row 2: VERIFICADOR DE PAGO DE NOMINA
-    aoa.push(['VERIFICADOR DE PAGO DE NOMINA', ...E.slice(1)]);
-    // Row 3: FECHA DE PAGO: ... date offset to col D
-    aoa.push(['FECHA DE PAGO:', '', '', fechaPago, '', '', '', '', '', '']);
-    // Row 4: Column headers
-    aoa.push(['Nombre de\nColaborador', 'Empresa', 'Tipo de\nPersonal', 'LOTE A\nELIMINAR', 'LOTE\nCORRECTO', 'Soporte', 'Banco\nde Pago', 'Medio de\nPago', 'Monto', 'Monto\nTotal']);
-
-    let grandTotal = 0;
-
-    Object.keys(comps).forEach(compName => {
-      const compData = comps[compName];
-      if (compData.cheques.length === 0 && compData.transfers.length === 0) return;
-
-      // Company header
-      aoa.push([`Empresa:   ${compName.toUpperCase()}`, ...E.slice(1)]);
-
-      // Consolidated transfer row: "Varios Plantilla"
-      if (compData.transfers.length > 0) {
-        const sumTransfers = compData.transfers.reduce(
-          (acc, e) => acc + getNetPayable(e, group.periodType),
-          0
-        );
-        aoa.push([
-          'Varios Plantilla',
-          '',
-          '',
-          '',
-          '',
-          'Nomina',
-          '',
-          'Transferencia',
-          `Q ${sumTransfers.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-          ''
-        ]);
-        grandTotal += sumTransfers;
-      }
-
-      // Individual cheque rows
-      let chequeSubtotal = 0;
-      compData.cheques.forEach(e => {
-        const netPayable = getNetPayable(e, group.periodType);
-        aoa.push([
-          getEmployeeFullName(e),
-          compName.toUpperCase(),
-          e.puesto || 'FIJO',
-          '',
-          '',
-          '',
-          '',
-          'CHEQUE',
-          `Q ${netPayable.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-          ''
-        ]);
-        chequeSubtotal += netPayable;
-        grandTotal += netPayable;
-      });
-
-      // Cheque subtotal in "Monto Total" column (J) if there are cheques
-      if (compData.cheques.length > 0) {
-        aoa.push(['', '', '', '', '', '', '', '', '', `Q${chequeSubtotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`]);
-      }
-    });
-
-    // Empty rows before TOTAL GENERAL
-    aoa.push([...E]);
-    aoa.push([...E]);
-    // TOTAL GENERAL row
-    aoa.push(['', '', '', '', '', '', 'TOTAL GENERAL', '', '', '']);
-    // Grand total value row
-    aoa.push(['', '', '', '', '', '', '', '', 'Q', grandTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })]);
-    // Empty rows
-    aoa.push([...E]);
-    aoa.push([...E]);
-    // Signature row 1
-    aoa.push(['Hecho por:   Alejandra Pérez', '', '', '', '', '', 'Revisado por: Iris de Lemus (Recursos Humanos)', '', '', '']);
-    // Empty rows
-    aoa.push([...E]);
-    aoa.push([...E]);
-    // Signature row 2
-    aoa.push(['Revisado por: Walter Mendez (Auditoria)', '', '', '', '', '', 'Autorizado por: Gerardo Estrada (Presidencia)', '', '', '']);
-    // Empty row
-    aoa.push([...E]);
-    // Note row
-    aoa.push(['', '', 'Nota: Transferencia programada para', '', `${fechaPago} INMEDIATO`, '', '', '', '', '']);
-
-    const ws = XLSX.utils.aoa_to_sheet(aoa);
-
-    // Column widths matching image proportions
-    ws['!cols'] = [
-      { wch: 36 }, // A: Nombre de Colaborador
-      { wch: 16 }, // B: Empresa
-      { wch: 14 }, // C: Tipo de Personal
-      { wch: 14 }, // D: LOTE A ELIMINAR
-      { wch: 14 }, // E: LOTE CORRECTO
-      { wch: 12 }, // F: Soporte
-      { wch: 14 }, // G: Banco de Pago
-      { wch: 16 }, // H: Medio de Pago
-      { wch: 14 }, // I: Monto
-      { wch: 14 }, // J: Monto Total
-    ];
-
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Verificador de pago");
-    XLSX.writeFile(wb, `Verificador_Pagos_${group.title.replace(/[^a-z0-9]/gi, '_')}.xlsx`);
+    await exportVerificadorExcel({ employees: data, group, companies });
   };
 
   const exportExcelIgss = async () => {

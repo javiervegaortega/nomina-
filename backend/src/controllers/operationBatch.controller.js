@@ -113,21 +113,11 @@ const getAll = async (req, res) => {
       include: batchInclude,
       order: operationReviewOrder
     });
-    const closedPayrolls = await PayrollHistory.findAll({
-      where: { status: 'cerrada' },
-      attributes: ['id']
-    });
-    const closedPayrollIds = new Set(closedPayrolls.map((payroll) => String(payroll.id)));
     const activeBatches = batches.filter((batch) => {
       if (batch.purpose !== 'BONOS_2DA') return true;
-      const logs = Array.isArray(batch.logs) ? batch.logs : [];
-      if (logs.length > 0) {
-        return !logs.every((log) => (
-          log.status === 'PROCESSED_PAYROLL'
-          && closedPayrollIds.has(String(log.periodAssigned || ''))
-        ));
-      }
-      return Boolean(batch.payrollDraftId);
+      // El lote se conserva vacío o tras cerrar 1ª. Solo desaparece al cerrar
+      // definitivamente la 2ª por Auditoría.
+      return batch.captureState !== 'CLOSED';
     });
 
     res.json(

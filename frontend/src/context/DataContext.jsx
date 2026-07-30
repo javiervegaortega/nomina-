@@ -1472,6 +1472,7 @@ export function DataProvider({ children }) {
 
         const empOpLogs = operationLogs.filter(l => {
           if (String(l.employeeId) !== String(e.id) || l.status !== 'APPROVED_MANAGER') return false;
+          if (periodType !== '2da') return false;
           if (!isInPayrollInputWindow(l.date)) return false;
           if (selectedCompanyIds.length > 0 && l.companyId) {
             return selectedCompanyIds.some(id => String(id) === String(l.companyId));
@@ -1880,7 +1881,7 @@ export function DataProvider({ children }) {
         if (pendingBonuses > 0) {
           return {
             success: false,
-            error: `Hay ${pendingBonuses} bono(s) pendientes de aprobación o sin enviar a gerencia. Resuélvelos antes de enviar la nómina a auditoría.`
+            error: `Hay ${pendingBonuses} registro(s) de Operaciones pendientes o en corrección. Resuélvelos antes de enviar la nómina a Auditoría.`
           };
         }
       }

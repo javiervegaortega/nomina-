@@ -8,7 +8,7 @@ import {
 import {
   Calculator, CheckCircle, Download, ArrowRight, ChevronDown, ChevronUp, AlertTriangle
 } from 'lucide-react';
-import { AppContext } from '../App';
+import { AppContext } from '../context/AppContext';
 import { AuthContext } from '../context/AuthContext';
 import { DataContext } from '../context/DataContext';
 import { formatCurrency, exportBillingExcel } from '../utils/billingExport';

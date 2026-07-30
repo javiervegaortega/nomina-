@@ -4,7 +4,7 @@ import {
 } from '@chakra-ui/react';
 import { Trash2 } from 'lucide-react';
 import { formatQ } from '../data/mockData';
-import { AppContext } from '../App';
+import { AppContext } from '../context/AppContext';
 import { useContext } from 'react';
 
 const DEDUCTION_TYPES = [

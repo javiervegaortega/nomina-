@@ -1,6 +1,6 @@
 import React, { useState, useContext, useMemo } from 'react';
 import { DataContext } from '../context/DataContext';
-import { AppContext } from '../App';
+import { AppContext } from '../context/AppContext';
 import { AuthContext } from '../context/AuthContext';
 import usePagination from '../hooks/usePagination';
 import Pagination from '../components/Pagination';

@@ -84,6 +84,15 @@ const run = async () => {
     assert(/nocturna/i.test(byName.hourType?.COLUMN_TYPE || ''), 'hourType conserva NOCTURNA');
     assert(!/doble/i.test(byName.hourType?.COLUMN_TYPE || ''), 'hourType retira DOBLE');
 
+    const [batchColumns] = await sequelize.query(
+      `SELECT COLUMN_NAME FROM information_schema.columns
+       WHERE table_schema = DATABASE() AND table_name = 'operation_batches'
+         AND COLUMN_NAME IN ('periodMonth', 'captureState')`
+    );
+    const batchColumnNames = new Set(batchColumns.map((column) => column.COLUMN_NAME));
+    assert(batchColumnNames.has('periodMonth'), 'operation_batches debe guardar el mes de captura');
+    assert(batchColumnNames.has('captureState'), 'operation_batches debe guardar el estado de captura');
+
     const [reviewTables] = await sequelize.query(
       `SELECT table_name
        FROM information_schema.tables

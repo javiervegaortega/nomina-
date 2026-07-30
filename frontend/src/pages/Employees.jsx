@@ -4,7 +4,7 @@ import {
   UserPlus, Filter, Download, Check, FileText, UserMinus, Cake
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { AppContext } from '../App';
+import { AppContext } from '../context/AppContext';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
 import usePagination from '../hooks/usePagination';

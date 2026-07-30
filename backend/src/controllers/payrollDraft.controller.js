@@ -3,6 +3,7 @@ const {
   PayrollDraftEmployee,
   Bonus,
   Company,
+  OperationLog,
   sequelize
 } = require('../models');
 const { calculatePayrollBatch } = require('../services/payrollCalculator.service');
@@ -11,6 +12,9 @@ const {
   ensureBonos2daBatchForDraft,
   clearBatchDraftLink
 } = require('../services/operationBonusBatch.service');
+const { syncOperationLogTransitions } = require('../services/payrollDraftInputs.service');
+const { Op } = require('sequelize');
+const { getMonthBoundsFromDate } = require('../services/operationPayroll.service');
 
 /** Exige exactamente una empresa concreta (bloquea ALL / vacías / multi-empresa). */
 const requireSingleCompany = (companies) => {
@@ -201,12 +205,31 @@ const create = async (req, res) => {
     }
 
     let bonusBatch = null;
-    if (String(periodType) === '2da' && req.user?.id) {
+    if (['1ra', '2da'].includes(String(periodType))) {
       bonusBatch = await ensureBonos2daBatchForDraft({
         draftId: id,
         companyId,
         draftDate: createdAt || newDraft.createdAt,
-        userId: req.user.id,
+        userId: req.user?.id || null,
+        transaction: t
+      });
+    }
+    // Si la 2ª se abre después de aprobaciones del mes, el backend la hidrata
+    // de forma idempotente y sin tocar la primera quincena.
+    if (String(periodType) === '2da') {
+      const monthBounds = getMonthBoundsFromDate(createdAt || newDraft.createdAt);
+      const approvedOperations = await OperationLog.findAll({
+        where: {
+          companyId,
+          status: 'APPROVED_MANAGER',
+          date: {
+            [Op.between]: [monthBounds.start, monthBounds.end]
+          }
+        },
+        transaction: t
+      });
+      await syncOperationLogTransitions({
+        transitions: approvedOperations.map((operation) => ({ current: operation })),
         transaction: t
       });
     }

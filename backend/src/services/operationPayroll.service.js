@@ -129,6 +129,18 @@ const assertBonusDateInSecondQuincena = (dateStr) => {
 };
 
 const getMonthBoundsFromDate = (dateStr) => {
+  if (dateStr instanceof Date && !Number.isNaN(dateStr.getTime())) {
+    const year = dateStr.getFullYear();
+    const month = dateStr.getMonth() + 1;
+    const lastDay = new Date(year, month, 0).getDate();
+    const mm = String(month).padStart(2, '0');
+    return {
+      start: `${year}-${mm}-01`,
+      end: `${year}-${mm}-${String(lastDay).padStart(2, '0')}`,
+      year,
+      month
+    };
+  }
   const parts = String(dateStr || '').slice(0, 10).split('-');
   if (parts.length < 3) return null;
   const year = Number(parts[0]);

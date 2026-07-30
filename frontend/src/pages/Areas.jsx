@@ -1,6 +1,6 @@
 import React, { useState, useContext } from 'react';
 import { DataContext } from '../context/DataContext';
-import { AppContext } from '../App';
+import { AppContext } from '../context/AppContext';
 import { AuthContext } from '../context/AuthContext';
 import { Plus, Edit2, Trash2, Eye, Search } from 'lucide-react';
 import AreaFormModal from '../components/AreaFormModal';

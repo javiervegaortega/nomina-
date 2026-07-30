@@ -1,4 +1,4 @@
-import React, { useState, useEffect, createContext, useContext, useMemo, useCallback, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useContext, useMemo, useCallback, lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { DataProvider } from './context/DataContext';
 import { AuthProvider, AuthContext } from './context/AuthContext';
@@ -11,6 +11,7 @@ import theme from './theme';
 import { Toaster, toast } from 'sonner';
 import Sidebar from './components/Sidebar';
 import { getHomePathForRole } from './utils/roleHome';
+import { AppContext } from './context/AppContext';
 import './index.css';
 
 const Dashboard = lazy(() => import('./pages/Dashboard'));
@@ -29,8 +30,6 @@ const Users = lazy(() => import('./pages/Users'));
 const Billing = lazy(() => import('./pages/Billing'));
 const Suspensions = lazy(() => import('./pages/Suspensions'));
 const ForgotPassword = lazy(() => import('./pages/auth/ForgotPassword'));
-
-export const AppContext = createContext();
 
 function PageLoader() {
   return (
