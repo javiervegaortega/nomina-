@@ -1,6 +1,19 @@
 export const formatCurrency = (val) =>
   new Intl.NumberFormat('es-GT', { style: 'currency', currency: 'GTQ' }).format(val || 0);
 
+const roundMoney2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+const LEGAL_BONUS_FIELDS = ['bonoDecreto', 'bonoIncentivo', 'bonosExtras'];
+const ASSIGNED_LEGAL_BONUS_FIELDS = ['asgBonoDecreto', 'asgBonoIncentivo', 'asgBonosExtras'];
+
+export const getBillingLegalBonusAmount = (detail = {}, assigned = false) => {
+  const fields = assigned ? ASSIGNED_LEGAL_BONUS_FIELDS : LEGAL_BONUS_FIELDS;
+  return roundMoney2(fields.reduce(
+    (total, field) => total + (Number(detail?.[field]) || 0),
+    0
+  ));
+};
+
 const COLORS = {
   primary: '1B4F72',
   primaryDark: '0E2F44',
@@ -381,9 +394,7 @@ const buildDetalleSheet = (wb, { payrollTitle, billingMonth, details }) => {
     'Días',
     'Período',
     'Sueldo Ordinario',
-    'Bono Decreto',
-    'Bono Incentivo',
-    'Bonos Extras',
+    'Bonificación decreto 37-2001 y 78-89',
     'H. Extras y Otros',
     'Bruto Período',
     'IGSS Laboral',
@@ -394,9 +405,7 @@ const buildDetalleSheet = (wb, { payrollTitle, billingMonth, details }) => {
     'IGSS Patronal',
     'Costo Empleado',
     'Asg. Sueldo',
-    'Asg. Bono Decreto',
-    'Asg. Bono Incentivo',
-    'Asg. Bonos Extras',
+    'Asg. Bonificación decreto 37-2001 y 78-89',
     'Asg. H. Extras',
     'Asg. Bruto',
     'Asg. IGSS Laboral',
@@ -408,9 +417,9 @@ const buildDetalleSheet = (wb, { payrollTitle, billingMonth, details }) => {
   const ws = wb.addWorksheet('Detalle', { views: [{ state: 'frozen', ySplit: 4, xSplit: 2 }] });
   setCols(ws, [
     8, 28, 28, 22, 22, 10, 8, 10,
-    13, 12, 12, 12, 13, 12, 12,
-    10, 13, 13, 11, 12, 13,
-    11, 13, 13, 12, 11, 11, 12, 10, 12, 16
+    13, 30, 13, 12, 12, 10, 13,
+    13, 11, 12, 13, 11, 34,
+    11, 11, 12, 10, 12, 16
   ]);
 
   const title = ws.addRow(['Detalle por Empleado — Distribución de Costos (desglose de nómina)']);
@@ -435,8 +444,9 @@ const buildDetalleSheet = (wb, { payrollTitle, billingMonth, details }) => {
 
   const header = ws.addRow(headers);
   styleHeaderRow(header, cols);
+  header.height = 36;
 
-  const moneyCols = Array.from({ length: 23 }, (_, index) => index + 9);
+  const moneyCols = Array.from({ length: 19 }, (_, index) => index + 9);
   let sumAmount = 0;
   const detailPeriod = resolveBillingMonthYear({ billingMonth, payrollTitle }) || '—';
 
@@ -454,9 +464,7 @@ const buildDetalleSheet = (wb, { payrollTitle, billingMonth, details }) => {
       d.days != null ? Number(d.days) : '',
       detailPeriod,
       Number(d.sueldoOrdinario) || 0,
-      Number(d.bonoDecreto) || 0,
-      Number(d.bonoIncentivo) || 0,
-      Number(d.bonosExtras) || 0,
+      getBillingLegalBonusAmount(d),
       Number(d.horasExtrasOtros) || 0,
       Number(d.bruto) || 0,
       Number(d.igssLaboral) || 0,
@@ -467,9 +475,7 @@ const buildDetalleSheet = (wb, { payrollTitle, billingMonth, details }) => {
       Number(d.igssPatronal) || 0,
       Math.round(employeeCost * 100) / 100,
       Number(d.asgSueldo) || 0,
-      Number(d.asgBonoDecreto) || 0,
-      Number(d.asgBonoIncentivo) || 0,
-      Number(d.asgBonosExtras) || 0,
+      getBillingLegalBonusAmount(d, true),
       Number(d.asgHorasExtrasOtros) || 0,
       Number(d.asgBruto) || 0,
       Number(d.asgIgssLaboral) || 0,
@@ -480,7 +486,7 @@ const buildDetalleSheet = (wb, { payrollTitle, billingMonth, details }) => {
     styleDataRow(row, cols, idx % 2 === 1);
     applyPct(row.getCell(6));
     moneyCols.forEach((c) => applyMoney(row.getCell(c)));
-    row.getCell(31).font = { bold: true, size: 10, name: 'Calibri', color: { argb: '196F3D' } };
+    row.getCell(27).font = { bold: true, size: 10, name: 'Calibri', color: { argb: '196F3D' } };
     sumAmount += amount;
   });
 
@@ -493,7 +499,7 @@ const buildDetalleSheet = (wb, { payrollTitle, billingMonth, details }) => {
   } else {
     const totalValues = Array(cols).fill('');
     totalValues[1] = 'TOTALES';
-    totalValues[30] = sumAmount;
+    totalValues[26] = sumAmount;
     const total = ws.addRow(totalValues);
     styleDataRow(total, cols, false);
     for (let c = 1; c <= cols; c += 1) {
@@ -501,7 +507,7 @@ const buildDetalleSheet = (wb, { payrollTitle, billingMonth, details }) => {
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.totalBg } };
       cell.font = { bold: true, size: 10, name: 'Calibri' };
     }
-    applyMoney(total.getCell(31));
+    applyMoney(total.getCell(27));
   }
 
   return ws;
@@ -595,8 +601,6 @@ const isEconacionalToCleartec = (line) => {
   }
   return isEconacionalName(line?.fromCompany) && isCleartecName(line?.toCompany);
 };
-
-const roundMoney2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
 const splitAmountPair = (amount) => {
   const total = roundMoney2(amount);

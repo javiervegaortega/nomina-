@@ -11,7 +11,11 @@ import {
 import { AppContext } from '../context/AppContext';
 import { AuthContext } from '../context/AuthContext';
 import { DataContext } from '../context/DataContext';
-import { formatCurrency, exportBillingExcel } from '../utils/billingExport';
+import {
+  formatCurrency,
+  exportBillingExcel,
+  getBillingLegalBonusAmount
+} from '../utils/billingExport';
 import { apiFetch } from '../utils/api';
 
 const API = '/api/billing';
@@ -626,10 +630,9 @@ export function BillingExecutePanel({
                             <Th isNumeric whiteSpace="nowrap" bg={bgHeader}>%</Th>
                             <Th isNumeric whiteSpace="nowrap" bg={bgHeader}>Dias</Th>
                             <Th isNumeric whiteSpace="nowrap" bg={bgHeader}>Sueldo</Th>
-                            <Th isNumeric whiteSpace="nowrap" bg={bgHeader}>Bono Dec.</Th>
-                            <Th isNumeric whiteSpace="nowrap" bg={bgHeader}>Bono Inc.</Th>
-                            <Th isNumeric whiteSpace="nowrap" bg={bgHeader}>Bonos Ext.</Th>
-                            <Th isNumeric whiteSpace="nowrap" bg={bgHeader}>Bonos Cat.</Th>
+                            <Th isNumeric whiteSpace="nowrap" bg={bgHeader}>
+                              Bonificación decreto 37-2001 y 78-89
+                            </Th>
                             <Th isNumeric whiteSpace="nowrap" bg={bgHeader}>H. Extra</Th>
                             <Th isNumeric whiteSpace="nowrap" bg={bgHeader}>Bruto</Th>
                             <Th isNumeric whiteSpace="nowrap" bg={bgHeader}>IGSS Lab.</Th>
@@ -638,7 +641,6 @@ export function BillingExecutePanel({
                             <Th isNumeric whiteSpace="nowrap" bg={bgHeader}>IGSS Pat.</Th>
                             <Th isNumeric whiteSpace="nowrap" bg={bgHeader}>Costo Total</Th>
                             <Th isNumeric whiteSpace="nowrap" bg={bgHeader}>Asg. Bruto</Th>
-                            <Th isNumeric whiteSpace="nowrap" bg={bgHeader}>Asg. Bonos Cat.</Th>
                             <Th isNumeric whiteSpace="nowrap" bg={bgHeader}>Asg. IGSS</Th>
                             <Th isNumeric whiteSpace="nowrap" bg={bgHeader}>Asg. ISR</Th>
                             <Th isNumeric whiteSpace="nowrap" bg={bgHeader}>Asg. Costo</Th>
@@ -654,10 +656,9 @@ export function BillingExecutePanel({
                               <Td isNumeric>{d.percentage}%</Td>
                               <Td isNumeric>{d.days ?? '-'}</Td>
                               <Td isNumeric fontSize="xs">{formatCurrency(d.sueldoOrdinario)}</Td>
-                              <Td isNumeric fontSize="xs">{formatCurrency(d.bonoDecreto)}</Td>
-                              <Td isNumeric fontSize="xs">{formatCurrency(d.bonoIncentivo)}</Td>
-                              <Td isNumeric fontSize="xs">{formatCurrency(d.bonosExtras)}</Td>
-                              <Td isNumeric fontSize="xs">{formatCurrency(d.bonosAplicados)}</Td>
+                              <Td isNumeric fontSize="xs">
+                                {formatCurrency(getBillingLegalBonusAmount(d))}
+                              </Td>
                               <Td isNumeric fontSize="xs">{formatCurrency(d.horasExtrasOtros)}</Td>
                               <Td isNumeric fontSize="xs">{formatCurrency(d.bruto)}</Td>
                               <Td isNumeric fontSize="xs">{formatCurrency(d.igssLaboral)}</Td>
@@ -666,7 +667,6 @@ export function BillingExecutePanel({
                               <Td isNumeric fontSize="xs">{formatCurrency(d.igssPatronal)}</Td>
                               <Td isNumeric fontSize="xs" fontWeight="600">{formatCurrency(d.employeeCost)}</Td>
                               <Td isNumeric fontSize="xs">{formatCurrency(d.asgBruto)}</Td>
-                              <Td isNumeric fontSize="xs">{formatCurrency(d.asgBonosAplicados)}</Td>
                               <Td isNumeric fontSize="xs">{formatCurrency(d.asgIgssLaboral)}</Td>
                               <Td isNumeric fontSize="xs">{formatCurrency(d.asgIsr)}</Td>
                               <Td isNumeric fontWeight="700" color="brand.500">{formatCurrency(d.baseAmount)}</Td>
