@@ -1,4 +1,3 @@
-import React from 'react';
 import { Flex, Button, Text, Select, useColorModeValue } from '@chakra-ui/react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 
@@ -9,7 +8,8 @@ export default function Pagination({
   limit,
   goToNextPage,
   goToPreviousPage,
-  changeLimit
+  changeLimit,
+  limitOptions = [5, 10, 25, 50]
 }) {
   const textColor = useColorModeValue('gray.600', 'gray.400');
   const borderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
@@ -38,10 +38,9 @@ export default function Pagination({
           borderRadius="md"
           bg={bgSelect}
         >
-          <option value={5}>5 por página</option>
-          <option value={10}>10 por página</option>
-          <option value={25}>25 por página</option>
-          <option value={50}>50 por página</option>
+          {limitOptions.map((option) => (
+            <option key={option} value={option}>{option} por página</option>
+          ))}
         </Select>
       </Flex>
 

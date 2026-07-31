@@ -8,8 +8,9 @@ import { Edit2, Trash2, Plus, ArrowRight } from 'lucide-react';
 import { AppContext } from '../context/AppContext';
 import { AuthContext } from '../context/AuthContext';
 import { DataContext } from '../context/DataContext';
+import { apiFetch } from '../utils/api';
 
-const API = 'http://localhost:3000/api/billing';
+const API = '/api/billing';
 const BILLING_WRITE_ROLES = new Set(['ADMIN', 'NOMINA', 'GERENTE GENERAL']);
 const BILLING_PAYER_IDS = new Set([1, 2, 3]);
 const BILLING_DESTINATION_IDS = new Set([1, 2, 3, 4]);
@@ -64,7 +65,7 @@ export function BillingRulesPanel() {
   const fetchData = async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${API}/rules`, {
+      const res = await apiFetch(`${API}/rules`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (!res.ok) throw new Error('Error al cargar reglas');
@@ -137,7 +138,7 @@ export function BillingRulesPanel() {
         isActive: formData.isActive
       };
       const url = formData.id ? `${API}/rules/${formData.id}` : `${API}/rules`;
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method: formData.id ? 'PUT' : 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -162,7 +163,7 @@ export function BillingRulesPanel() {
     }
     confirmAction('¿Estás seguro de que deseas desactivar esta regla?', async () => {
       try {
-        const res = await fetch(`${API}/rules/${id}`, {
+        const res = await apiFetch(`${API}/rules/${id}`, {
           method: 'DELETE',
           headers: { Authorization: `Bearer ${token}` }
         });

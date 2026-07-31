@@ -6,7 +6,7 @@ import Pagination from '../components/Pagination';
 import { AuthContext } from '../context/AuthContext';
 import { History, Calendar, Trash2, Eye, Download, FileText, ArrowLeft, Building2, X, Search, ChevronDown, LayoutGrid, RotateCcw } from 'lucide-react';
 import { formatQ, CUOTA_LABORAL_RATE, CUOTA_PATRONAL_RATE, IRTRA_INTECAP_RATE } from '../data/mockData';
-import { getNetPayable } from '../utils/payrollPeriod';
+import { getNetPayable, getNetTotal } from '../utils/payrollPeriod';
 import { calculateEmployeePayroll } from '../utils/payrollCalculator';
 import { exportPayrollReportExcel } from '../utils/payrollReports';
 import { exportNominaGeneralExcel } from '../utils/nominaGeneralExport';
@@ -15,6 +15,7 @@ import { exportSolicitudChequesExcel } from '../utils/solicitudChequesExcel';
 import { matchesDepartmentFilter, normalizeMultiFilter, resolveEmployeeDepartment } from '../utils/orgFilters';
 import ReportPreviewModal from '../components/ReportPreviewModal';
 import EmployeeSummaryModal from '../components/EmployeeSummaryModal';
+import { apiFetch } from '../utils/api';
 import {
   Box, Flex, Heading, Text, Button, Input, Select, Textarea, FormControl, FormLabel,
   Table, Thead, Tbody, Tr, Th, Td, TableContainer,
@@ -28,7 +29,10 @@ import {
 
 const getHtml2Canvas = () => import('html2canvas').then(m => m.default);
 const getJsPDF = () => import('jspdf').then(m => m.default);
-const getXLSX = () => import('xlsx');
+const downloadWorkbookReport = async (sheets, filename) => {
+  const { generateAndDownloadExcel } = await import('../utils/excelWorkerClient');
+  return generateAndDownloadExcel('workbook-report', { sheets }, filename);
+};
 
 const canAuditPayroll = (role) =>
   role === 'AUDITOR' || role === 'ADMIN' || role === 'GERENTE GENERAL';
@@ -410,7 +414,7 @@ export default function PayrollHistory() {
       const headers = { 'Content-Type': 'application/json' };
       if (token) headers['Authorization'] = `Bearer ${token}`;
       
-      const response = await fetch('http://localhost:3000/api/payrolls/request-reactivation', {
+      const response = await apiFetch('/api/payrolls/request-reactivation', {
         method: 'POST',
         headers,
         body: JSON.stringify({ 
@@ -889,7 +893,7 @@ function calculateGroupTotals(groupData, periodType) {
     const anticipo = Number(e.anticipo1ra) || 0;
     
     const totalEgresos = Number(calculated.ded) || 0;
-    const liquido = Number(calculated.net) || 0;
+    const liquido = getNetTotal(e);
     const q1 = periodType === '2da' ? anticipo : liquido;
     const liquidoPagar = getNetPayable(e, periodType);
     const q2 = periodType === '2da' ? liquidoPagar : 0;
@@ -923,7 +927,7 @@ function calculateGroupTotals(groupData, periodType) {
     totBoleta += boleto_de_ornato;
     totOtrosEgresos += otros_egresos;
     totTotalEgresos += totalEgresos;
-    totLiquido += liquidoPagar;
+    totLiquido += liquido;
     totQuincena1 += q1;
     totQuincena2 += q2;
   });
@@ -966,7 +970,7 @@ function PayrollHistoryDetail({ group, onBack }) {
 
     Promise.all(
       group.records.map((r) =>
-        fetch(`http://localhost:3000/api/payrolls/${r.id}`, { headers })
+        apiFetch(`/api/payrolls/${r.id}`, { headers })
           .then((res) => (res.ok ? res.json() : r))
           .catch(() => r)
       )
@@ -1187,7 +1191,6 @@ function PayrollHistoryDetail({ group, onBack }) {
   };
 
   const exportExcelIgss = async () => {
-    const XLSX = await getXLSX();
     showToast('Generando Recibo e IGSS...', 'success');
     
     const comps = {};
@@ -1197,12 +1200,12 @@ function PayrollHistoryDetail({ group, onBack }) {
       comps[compName].push(e);
     });
 
-    const wb = XLSX.utils.book_new();
+    const sheets = [];
     
     Object.keys(comps).forEach(compName => {
       const rows = comps[compName].map((e, idx) => {
         const anticipo = e.anticipo1ra || 0;
-        const net = Number(e.calculated.net) || 0;
+        const net = getNetTotal(e);
         const netPayable = getNetPayable(e, group.periodType);
         const q1 = group.periodType === '2da' ? anticipo : net;
         const q2 = group.periodType === '2da' ? netPayable : 0;
@@ -1246,17 +1249,18 @@ function PayrollHistoryDetail({ group, onBack }) {
         };
       });
       
-      const ws = XLSX.utils.json_to_sheet(rows);
       let sheetName = compName.substring(0, 31).replace(/[\\/*?:[\]]/g, '');
       if (!sheetName) sheetName = "Empresa";
-      XLSX.utils.book_append_sheet(wb, ws, sheetName);
+      sheets.push({ name: sheetName, rows, mode: 'json' });
     });
 
-    XLSX.writeFile(wb, `Recibo_IGSS_${group.title.replace(/[^a-z0-9]/gi, '_')}.xlsx`);
+    await downloadWorkbookReport(
+      sheets,
+      `Recibo_IGSS_${group.title.replace(/[^a-z0-9]/gi, '_')}.xlsx`
+    );
   };
 
   const exportExcelLibroSalarios = async () => {
-    const XLSX = await getXLSX();
     showToast('Generando Libro de Salarios...', 'success');
     
     // Agrupar por empresa para hojas separadas (opcional, o todo junto)
@@ -1267,7 +1271,7 @@ function PayrollHistoryDetail({ group, onBack }) {
       comps[compName].push(e);
     });
 
-    const wb = XLSX.utils.book_new();
+    const sheets = [];
 
     Object.keys(comps).forEach(compName => {
       let counter = 1;
@@ -1282,10 +1286,9 @@ function PayrollHistoryDetail({ group, onBack }) {
           + (Number(calculated.bonusDec) || 0)
           + (Number(calculated.bonos) || 0)
           + getCatalogBonuses(e);
-        const anticipo = group.periodType === '2da' ? (Number(e.anticipo1ra) || 0) : 0;
         const payrollDeductions = Number(calculated.ded) || 0;
         const otherDed = Math.max(0, payrollDeductions - igss - isr);
-        const totalDed = payrollDeductions + anticipo;
+        const totalDed = payrollDeductions;
         const totalDev = Number(calculated.gross) || 0;
         const horasExtra = (Number(e.extras?.simplesVal) || 0) + (Number(e.extras?.doblesVal) || 0);
         const days = e.days ?? 30;
@@ -1302,47 +1305,33 @@ function PayrollHistoryDetail({ group, onBack }) {
           'Total Devengado': totalDev,
           'Descuento IGSS': igss,
           'Descuento ISR': isr,
-          'Otros Descuentos': anticipo + otherDed,
+          'Otros Descuentos': otherDed,
           'Total Descuentos': totalDed,
-          'Sueldo Líquido a Recibir': getNetPayable(e, group.periodType),
+          'Sueldo Líquido a Recibir': getNetTotal(e),
           'Firma del Empleado': '_______________________'
         };
       });
 
-      const ws = XLSX.utils.json_to_sheet(rows);
-
-      // Widths
-      ws['!cols'] = [
-        { wch: 5 },  // No.
-        { wch: 35 }, // Nombre
-        { wch: 20 }, // Puesto
-        { wch: 15 }, // Base
-        { wch: 12 }, // Dias
-        { wch: 15 }, // Sueldo dev.
-        { wch: 15 }, // Horas
-        { wch: 15 }, // Bono
-        { wch: 15 }, // Total dev
-        { wch: 15 }, // IGSS
-        { wch: 15 }, // ISR
-        { wch: 15 }, // Otros Desc
-        { wch: 15 }, // Total Desc
-        { wch: 18 }, // Liquido
-        { wch: 30 }, // Firma
-      ];
-
       let sheetName = compName.substring(0, 31).replace(/[\\/*?:[\]]/g, '');
       if (!sheetName) sheetName = "Empresa";
-      XLSX.utils.book_append_sheet(wb, ws, sheetName);
+      sheets.push({
+        name: sheetName,
+        rows,
+        mode: 'json',
+        columnWidths: [5, 35, 20, 15, 12, 15, 15, 15, 15, 15, 15, 15, 15, 18, 30]
+      });
     });
 
-    XLSX.writeFile(wb, `Libro_Salarios_${group.title.replace(/[^a-z0-9]/gi, '_')}.xlsx`);
+    await downloadWorkbookReport(
+      sheets,
+      `Libro_Salarios_${group.title.replace(/[^a-z0-9]/gi, '_')}.xlsx`
+    );
   };
 
   const cleanName = (name) => name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/,/g, "").toUpperCase();
   const getConcept = () => `pago salario de ${group.periodType === '2da' ? '2DA' : '1RA'} quincena ${group.title.replace(/[^a-zA-Z0-9 ]/g, '')}`;
 
   const exportPlantillaPromerica = async () => {
-    const XLSX = await getXLSX();
     showToast('Generando Plantilla Promerica...', 'success');
     const comps = {};
     data.forEach(e => {
@@ -1351,7 +1340,7 @@ function PayrollHistoryDetail({ group, onBack }) {
       comps[compName].push(e);
     });
 
-    const wb = XLSX.utils.book_new();
+    const sheets = [];
 
     Object.keys(comps).forEach(compName => {
       const aoa = [];
@@ -1395,19 +1384,23 @@ function PayrollHistoryDetail({ group, onBack }) {
       aoa.push(['', '', '']);
       aoa.push(['', 'Total Nómina', (totalPlantilla + totalCheques).toFixed(2), '']);
 
-      const ws = XLSX.utils.aoa_to_sheet(aoa);
-      ws['!cols'] = [{ wch: 20 }, { wch: 40 }, { wch: 15 }, { wch: 50 }];
-      
       let sheetName = compName.substring(0, 31).replace(/[\\/*?:[\]]/g, '');
       if (!sheetName) sheetName = "Empresa";
-      XLSX.utils.book_append_sheet(wb, ws, sheetName);
+      sheets.push({
+        name: sheetName,
+        rows: aoa,
+        mode: 'aoa',
+        columnWidths: [20, 40, 15, 50]
+      });
     });
 
-    XLSX.writeFile(wb, `Plantilla_Promerica_${group.title.replace(/[^a-z0-9]/gi, '_')}.xlsx`);
+    await downloadWorkbookReport(
+      sheets,
+      `Plantilla_Promerica_${group.title.replace(/[^a-z0-9]/gi, '_')}.xlsx`
+    );
   };
 
   const exportPlantillaIndustrial = async () => {
-    const XLSX = await getXLSX();
     showToast('Generando Plantilla Industrial...', 'success');
     const comps = {};
     data.forEach(e => {
@@ -1416,7 +1409,7 @@ function PayrollHistoryDetail({ group, onBack }) {
       comps[compName].push(e);
     });
 
-    const wb = XLSX.utils.book_new();
+    const sheets = [];
 
     Object.keys(comps).forEach(compName => {
       const aoa = [];
@@ -1466,15 +1459,20 @@ function PayrollHistoryDetail({ group, onBack }) {
       aoa.push(['', '', '', '', '']);
       aoa.push(['', '', 'Total Nómina', (totalPlantilla + totalCheques).toFixed(2), '']);
 
-      const ws = XLSX.utils.aoa_to_sheet(aoa);
-      ws['!cols'] = [{ wch: 5 }, { wch: 20 }, { wch: 10 }, { wch: 40 }, { wch: 15 }, { wch: 50 }];
-      
       let sheetName = compName.substring(0, 31).replace(/[\\/*?:[\]]/g, '');
       if (!sheetName) sheetName = "Empresa";
-      XLSX.utils.book_append_sheet(wb, ws, sheetName);
+      sheets.push({
+        name: sheetName,
+        rows: aoa,
+        mode: 'aoa',
+        columnWidths: [5, 20, 10, 40, 15, 50]
+      });
     });
 
-    XLSX.writeFile(wb, `Plantilla_Industrial_${group.title.replace(/[^a-z0-9]/gi, '_')}.xlsx`);
+    await downloadWorkbookReport(
+      sheets,
+      `Plantilla_Industrial_${group.title.replace(/[^a-z0-9]/gi, '_')}.xlsx`
+    );
   };
 
   const exportPDF = async () => {
@@ -1847,13 +1845,14 @@ function PayrollHistoryDetail({ group, onBack }) {
           </Thead>
           <Tbody>
             {displayRows.map((e, idx) => {
-              const { baseSalary, bonusLey, bonusDec, bonos, gross, ded, net } = e.calculated || {};
+              const { baseSalary, bonusLey, bonusDec, bonos, gross, ded } = e.calculated || {};
               const bonosTotal = (bonos || 0) + getCatalogBonuses(e);
               const tDevengado = (baseSalary || 0) + (bonusLey || 0) + (bonusDec || 0) + bonosTotal;
               const proDed = e.calculated?.proratedDeductions || e.deductions || {};
               const anticipo = e.anticipo1ra || 0;
               const is2da = payrollGroup.periodType === '2da';
-              const q1 = is2da ? anticipo : net;
+              const liquido = getNetTotal(e);
+              const q1 = is2da ? anticipo : liquido;
               const liquidoPagar = getNetPayable(e, payrollGroup.periodType);
               const q2 = is2da ? liquidoPagar : 0;
               const otrosIngresosShow = (Number(e.extras?.otrosIngresos) || 0)
@@ -1915,7 +1914,7 @@ function PayrollHistoryDetail({ group, onBack }) {
                   )}
                   <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="red.500">{formatQ(ded)}</Td>
                   
-                  <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500">{formatQ(liquidoPagar)}</Td>
+                  <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500">{formatQ(liquido)}</Td>
                   {is2da && (
                     <>
                       <Td fontFamily="mono" fontSize="xs" color="gray.500">{formatQ(q1)}</Td>
@@ -2203,7 +2202,8 @@ function BoletaTemplate({ emp, group, isPrint, companies }) {
     (Number(proDedBoleta.judiciales) || 0) + (Number(proDedBoleta.seguro) || 0) +
     (Number(proDedBoleta.parqueo) || 0) + (Number(proDedBoleta.boleto_de_ornato) || 0) +
     prestamoBoleta;
-  const net = getNetPayable(emp, group?.periodType);
+  const net = getNetTotal(emp);
+  const pagoQuincena = getNetPayable(emp, group?.periodType);
 
   const fmt = (n) => (typeof n === 'number' ? n.toLocaleString('es-GT', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00');
 
@@ -2275,8 +2275,8 @@ function BoletaTemplate({ emp, group, isPrint, companies }) {
           </Box>
         </SimpleGrid>
         <Box textAlign="right" whiteSpace="nowrap">
-          <Text fontSize="7px" color="gray.500">El valor:</Text>
-          <Text fontSize="11px" fontWeight="900" fontFamily="mono">Q &nbsp;{fmt(net)}</Text>
+          <Text fontSize="7px" color="gray.500">Pago de esta quincena:</Text>
+          <Text fontSize="11px" fontWeight="900" fontFamily="mono">Q &nbsp;{fmt(pagoQuincena)}</Text>
         </Box>
       </Flex>
 

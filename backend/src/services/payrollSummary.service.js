@@ -15,9 +15,12 @@ const parsePayrollSummary = (raw) => {
   if (!parsed || typeof parsed !== 'object') return null;
   return {
     ...parsed,
+    version: Number(parsed.version) || 1,
     employeesCount: Number(parsed.employeesCount) || 0,
     grossTotal: Number(parsed.grossTotal) || 0,
+    deductionsTotal: Number(parsed.deductionsTotal) || 0,
     netTotal: Number(parsed.netTotal) || 0,
+    patronalTotal: Number(parsed.patronalTotal) || 0,
     companies: Array.isArray(parsed.companies) ? parsed.companies : []
   };
 };
@@ -94,20 +97,86 @@ const inferCompanies = (payrollObj, emps) => {
 
 const buildPayrollSummary = (emps, periodType, companies) => {
   let grossTotal = 0;
+  let deductionsTotal = 0;
   let netTotal = 0;
+  let patronalTotal = 0;
   const companySet = new Set(companies || []);
+  const companyTotals = new Map();
+  const departmentTotals = new Map();
+
+  const parseDistribution = (value) => {
+    const parsed = parseJsonField(value);
+    return parsed && !Array.isArray(parsed) ? parsed : {};
+  };
+  const distributionWithFallback = (employee, component) => {
+    const primaryId = employee?.empresa_principal ?? employee?.companyId ?? employee?.company;
+    const general = parseDistribution(employee?.dist);
+    const hasGeneral = Object.values(general).some((value) => (Number(value) || 0) > 0);
+    const fallback = hasGeneral ? general : (primaryId != null ? { [primaryId]: 100 } : {});
+    const override = parseDistribution(parseDistribution(employee?.component_dist)?.[component]);
+    return Object.values(override).some((value) => (Number(value) || 0) > 0)
+      ? override
+      : fallback;
+  };
 
   emps.forEach((e) => {
     const employeeWithSnapshot = calculateMissingEmployeeSnapshot(e, periodType);
-    grossTotal += Number(employeeWithSnapshot.calculated?.gross) || 0;
+    const calc = employeeWithSnapshot.calculated || {};
+    const gross = Number(calc.gross) || 0;
+    const deductions = Number(calc.ded) || 0;
+    const patronal = (Number(calc.patronal) || 0) + (Number(calc.irtraIntecap) || 0);
+    grossTotal += gross;
+    deductionsTotal += deductions;
     netTotal += getNetPayableServer(employeeWithSnapshot, periodType);
+    patronalTotal += patronal;
+
+    const generalGross = (Number(calc.baseSalary) || 0)
+      + (Number(calc.bonusLey) || 0)
+      + (Number(calc.bonusDec) || 0);
+    const bonusesGross = (Number(calc.bonos) || 0) + (Number(calc.bonusesSum) || 0);
+    const extrasGross = Number(calc.extrasTotal) || 0;
+    const generalDist = distributionWithFallback(employeeWithSnapshot, 'general');
+    const bonusesDist = distributionWithFallback(employeeWithSnapshot, 'bonuses');
+    const extrasDist = distributionWithFallback(employeeWithSnapshot, 'extras');
+    const ids = new Set([
+      ...Object.keys(generalDist),
+      ...Object.keys(bonusesDist),
+      ...Object.keys(extrasDist)
+    ]);
+    ids.forEach((id) => {
+      const total = (generalGross * ((Number(generalDist[id]) || 0) / 100))
+        + (bonusesGross * ((Number(bonusesDist[id]) || 0) / 100))
+        + (extrasGross * ((Number(extrasDist[id]) || 0) / 100));
+      companyTotals.set(String(id), (companyTotals.get(String(id)) || 0) + total);
+      companySet.add(String(id));
+    });
+
+    const departmentId = employeeWithSnapshot.departmentId
+      ?? employeeWithSnapshot.departamento_laboral
+      ?? 'sin-departamento';
+    const department = departmentTotals.get(String(departmentId)) || { count: 0, cost: 0 };
+    department.count += 1;
+    department.cost += gross;
+    departmentTotals.set(String(departmentId), department);
   });
 
   return {
+    version: 2,
     employeesCount: emps.length,
     grossTotal: Math.round(grossTotal * 100) / 100,
+    deductionsTotal: Math.round(deductionsTotal * 100) / 100,
     netTotal: Math.round(netTotal * 100) / 100,
-    companies: Array.from(companySet)
+    patronalTotal: Math.round(patronalTotal * 100) / 100,
+    companies: Array.from(companySet),
+    companyDistribution: [...companyTotals.entries()].map(([companyId, total]) => ({
+      companyId,
+      total: Math.round(total * 100) / 100
+    })),
+    departmentDistribution: [...departmentTotals.entries()].map(([departmentId, data]) => ({
+      departmentId,
+      count: data.count,
+      cost: Math.round(data.cost * 100) / 100
+    }))
   };
 };
 
@@ -128,7 +197,7 @@ async function backfillPayrollSummaries(PayrollHistory) {
   for (const row of rows) {
     const obj = row.toJSON();
     const existing = parsePayrollSummary(obj.summary);
-    if (existing && existing.employeesCount > 0) continue;
+    if (existing && existing.version >= 2 && existing.employeesCount > 0) continue;
 
     const summary = computePayrollSummary(obj);
     if (!summary.employeesCount) continue;

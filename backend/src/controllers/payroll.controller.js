@@ -34,6 +34,8 @@ const {
   ensureBonos2daBatchForDraft
 } = require('../services/operationBonusBatch.service');
 const { recalculateBatchStatus } = require('../services/operationWorkflow.service');
+const { Op } = require('sequelize');
+const { getPagination, toPagedResponse, wantsPagination } = require('../utils/pagination');
 
 const AUDIT_ROLES = ['AUDITOR', 'ADMIN', 'GERENTE GENERAL'];
 const PAYROLL_WORKFLOW_ROLES = ['NOMINA', 'ADMIN', 'GERENTE GENERAL'];
@@ -49,21 +51,30 @@ const syncEmployeeIsrFromClosed2da = async (
   transaction = null
 ) => {
   if (periodType !== '2da' || status !== 'cerrada') return;
-  const emps = Array.isArray(employees) ? employees : [];
-  for (const emp of emps) {
-    if (emp == null || emp.id == null) continue;
-    if (emp.totalIsr === undefined || emp.totalIsr === null || emp.totalIsr === '') continue;
+  const desired = new Map();
+  (Array.isArray(employees) ? employees : []).forEach((emp) => {
+    if (emp == null || emp.id == null) return;
+    if (emp.totalIsr === undefined || emp.totalIsr === null || emp.totalIsr === '') return;
     const totalIsr = Number(emp.totalIsr);
-    if (Number.isNaN(totalIsr)) continue;
-    const current = await Employee.findByPk(emp.id, {
-      attributes: ['id', 'isr'],
-      transaction
-    });
-    if (!current) continue;
-    const currentIsr = Number(current.isr) || 0;
-    if (currentIsr === totalIsr) continue;
-    await current.update({ isr: totalIsr }, { transaction });
-  }
+    if (!Number.isFinite(totalIsr)) return;
+    desired.set(Number(emp.id), totalIsr);
+  });
+  if (desired.size === 0) return;
+
+  const currentRows = await Employee.findAll({
+    where: { id: { [Op.in]: [...desired.keys()] } },
+    attributes: ['id', 'isr'],
+    transaction
+  });
+  const updates = currentRows
+    .filter((row) => (Number(row.isr) || 0) !== desired.get(Number(row.id)))
+    .map((row) => ({ id: row.id, isr: desired.get(Number(row.id)) }));
+  if (updates.length === 0) return;
+  await Employee.bulkCreate(updates, {
+    updateOnDuplicate: ['isr'],
+    transaction,
+    validate: false
+  });
 };
 
 const resolveCompanyNames = async (companyIds = []) => {
@@ -101,14 +112,23 @@ const notifyAuditorsOfSubmission = async ({ historyRecord, companyNames, submitt
     employeesCount: summary.employeesCount || null
   };
 
-  for (const auditor of auditors) {
-    if (!auditor.email) continue;
-    try {
-      await sendPayrollSubmittedToAuditEmail(auditor.email, auditor.name, details);
-    } catch (err) {
-      console.error(`Fallo correo envío a auditoría (${auditor.email}):`, err.message);
+  const auditorList = auditors.filter((auditor) => auditor.email);
+  const deliveries = await Promise.allSettled(
+    auditorList
+      .map((auditor) => sendPayrollSubmittedToAuditEmail(
+        auditor.email,
+        auditor.name,
+        details
+      ))
+  );
+  deliveries.forEach((delivery, index) => {
+    if (delivery.status === 'rejected') {
+      console.error(
+        `Fallo correo envío a auditoría (${auditorList[index]?.email || 'desconocido'}):`,
+        delivery.reason?.message || delivery.reason
+      );
     }
-  }
+  });
 };
 
 const getCompaniesFromHistory = (historyRecord) => {
@@ -155,22 +175,28 @@ const notifyAuditDecisionRecipients = async ({ historyRecord, action, note, audi
     auditorName: auditorName || 'Auditoría'
   };
 
-  const errors = [];
-  for (const recipient of recipients.values()) {
-    try {
-      await sendPayrollAuditDecisionEmail(recipient.email, recipient.name, details);
-    } catch (err) {
-      console.error(`Fallo correo auditoría a ${recipient.email}:`, err.message);
-      errors.push(err.message);
-    }
-  }
+  const recipientList = [...recipients.values()];
+  const deliveries = await Promise.allSettled(recipientList.map((recipient) => (
+    sendPayrollAuditDecisionEmail(recipient.email, recipient.name, details)
+  )));
+  const errors = deliveries.flatMap((delivery, index) => {
+    if (delivery.status === 'fulfilled') return [];
+    console.error(
+      `Fallo correo auditoría a ${recipientList[index]?.email || 'desconocido'}:`,
+      delivery.reason?.message || delivery.reason
+    );
+    return [delivery.reason?.message || String(delivery.reason)];
+  });
   if (recipients.size === 0) {
     console.warn('Sin destinatarios para notificación de auditoría de nómina');
   }
   return errors;
 };
 
-const formatPayrollRecord = async (payrollObj, { includeData = true } = {}) => {
+const formatPayrollRecord = async (
+  payrollObj,
+  { includeData = true, companyNameMap = null } = {}
+) => {
   const result = { ...payrollObj };
   result.summary = parsePayrollSummary(result.summary);
 
@@ -184,7 +210,9 @@ const formatPayrollRecord = async (payrollObj, { includeData = true } = {}) => {
   // Exponer nombres de empresa (summary suele guardar solo IDs)
   const companyIds = getCompaniesFromHistory(result);
   if (companyIds.length > 0) {
-    const names = await resolveCompanyNames(companyIds);
+    const names = companyNameMap
+      ? companyIds.map((id) => companyNameMap.get(String(id)) || id)
+      : await resolveCompanyNames(companyIds);
     result.companies = names;
     if (result.summary && typeof result.summary === 'object') {
       result.summary = { ...result.summary, companies: names, companyIds };
@@ -205,31 +233,54 @@ const formatPayrollRecord = async (payrollObj, { includeData = true } = {}) => {
 const getPayrolls = async (req, res) => {
   try {
     const summaryOnly = req.query.summary === '1' || req.query.summary === 'true';
-    const payrolls = await PayrollHistory.findAll({
+    const paged = wantsPagination(req.query);
+    const where = {};
+    if (req.query.status) where.status = req.query.status;
+    if (req.query.periodType) where.periodType = req.query.periodType;
+    if (/^\d{4}-\d{2}$/.test(String(req.query.month || ''))) {
+      const [year, month] = String(req.query.month).split('-').map(Number);
+      where.createdAt = {
+        [Op.gte]: new Date(year, month - 1, 1),
+        [Op.lt]: new Date(year, month, 1)
+      };
+    }
+    const pagination = paged ? getPagination(req.query) : null;
+    const query = {
+      where,
       order: [['closedAt', 'DESC'], ['createdAt', 'DESC']],
-      ...(summaryOnly ? { attributes: { exclude: ['data'] } } : {})
+      ...(summaryOnly ? { attributes: { exclude: ['data'] } } : {}),
+      ...(pagination ? { limit: pagination.limit, offset: pagination.offset } : {})
+    };
+    const result = paged
+      ? await PayrollHistory.findAndCountAll(query)
+      : { rows: await PayrollHistory.findAll(query), count: null };
+    const companies = await Company.findAll({
+      attributes: ['id', 'nombre_comercial', 'razon_social', 'nit']
     });
+    const companyNameMap = new Map(companies.map((company) => [
+      String(company.id),
+      company.nombre_comercial || company.razon_social || company.nit || String(company.id)
+    ]));
 
     const formattedPayrolls = await Promise.all(
-      payrolls.map(async (p) => {
-        let obj = p.toJSON();
-        if (summaryOnly && (!obj.summary || !parsePayrollSummary(obj.summary)?.employeesCount)) {
-          const full = await PayrollHistory.findByPk(p.id);
-          if (full) {
-            const fullObj = full.toJSON();
-            fullObj.summary = parsePayrollSummary(fullObj.summary);
-            const summary = computePayrollSummary(fullObj);
-            if (summary.employeesCount > 0) {
-              obj.summary = summary;
-              await PayrollHistory.update({ summary }, { where: { id: obj.id } });
-            }
-          }
-        }
-        return await formatPayrollRecord(obj, { includeData: !summaryOnly });
+      result.rows.map(async (p) => {
+        const obj = p.toJSON();
+        return formatPayrollRecord(obj, {
+          includeData: !summaryOnly,
+          companyNameMap
+        });
       })
     );
 
-    res.json(formattedPayrolls);
+    res.set('Cache-Control', 'no-store');
+    return res.json(paged
+      ? toPagedResponse(
+          formattedPayrolls,
+          result.count,
+          pagination.page,
+          pagination.pageSize
+        )
+      : formattedPayrolls);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -321,9 +372,19 @@ const assertClosedFirstQuincenaExists = async (
   const targetDate = parseLocalPayrollDate(
     payload.createdAt || payload.closedAt || Date.now()
   );
+  const monthStart = new Date(targetDate.getFullYear(), targetDate.getMonth(), 1);
+  const monthEnd = new Date(
+    targetDate.getFullYear(),
+    targetDate.getMonth() + 1,
+    1
+  );
   const targetCompanies = new Set((companyIds || []).map(String));
   const firstPayrolls = await PayrollHistory.findAll({
-    where: { periodType: '1ra', status: 'cerrada' },
+    where: {
+      periodType: '1ra',
+      status: 'cerrada',
+      createdAt: { [Op.gte]: monthStart, [Op.lt]: monthEnd }
+    },
     attributes: ['id', 'closedAt', 'createdAt', 'summary'],
     transaction
   });
@@ -538,15 +599,15 @@ const createPayroll = async (req, res) => {
       t
     );
     await setPayrollCommissionsStatus(emps, 'Aplicado', t);
-    if (String(draft.periodType) === '2da') {
-      await setMonthlyOperationCaptureState({
-        companyId: canonicalCompanyId,
-        draftDate: draft.createdAt,
-        captureState: targetStatus === 'auditoria' ? 'FROZEN' : 'CLOSED',
-        payrollDraftId: null,
-        transaction: t
-      });
-    }
+    await setMonthlyOperationCaptureState({
+      companyId: canonicalCompanyId,
+      draftDate: draft.createdAt,
+      captureState: targetStatus === 'auditoria'
+        ? 'FROZEN'
+        : (String(draft.periodType) === '2da' ? 'CLOSED' : 'OPEN'),
+      payrollDraftId: null,
+      transaction: t
+    });
 
     await PayrollDraftEmployee.destroy({
       where: { draftId: draft.id },
@@ -943,12 +1004,12 @@ const auditorApprove = async (req, res) => {
       await PayrollDraftEmployee.bulkCreate(employeeRecords, { transaction: t });
     }
 
-    if (String(historyRecord.periodType) === '2da' && companies.length === 1) {
+    if (companies.length === 1) {
       await setMonthlyOperationCaptureState({
         companyId: companies[0],
         draftDate: historyRecord.createdAt || historyRecord.closedAt,
-        captureState: 'CLOSED',
-        payrollDraftId: null,
+        captureState: String(historyRecord.periodType) === '2da' ? 'CLOSED' : 'OPEN',
+        payrollDraftId: String(historyRecord.periodType) === '2da' ? null : draftId,
         transaction: t
       });
     }
@@ -1051,7 +1112,7 @@ const auditorReject = async (req, res) => {
       await PayrollDraftEmployee.bulkCreate(employeeRecords, { transaction: t });
     }
 
-    if (String(historyRecord.periodType) === '2da' && companies.length === 1) {
+    if (companies.length === 1) {
       await ensureBonos2daBatchForDraft({
         draftId,
         companyId: companies[0],
@@ -1131,6 +1192,15 @@ const updateStatus = async (req, res) => {
       } catch (isrSyncErr) {
         console.error('Error sincronizando ISR al cambiar status a cerrada:', isrSyncErr);
       }
+    }
+
+    if (companyIds.length === 1) {
+      await setMonthlyOperationCaptureState({
+        companyId: companyIds[0],
+        draftDate: payroll.createdAt || payroll.closedAt,
+        captureState: String(payroll.periodType) === '2da' ? 'CLOSED' : 'OPEN',
+        payrollDraftId: null
+      });
     }
 
     res.json(payroll);

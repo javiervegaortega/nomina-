@@ -1,7 +1,14 @@
 const { Op } = require('sequelize');
 const Decimal = require('decimal.js');
-const { Employee, EmployeeRecord, EmployeeIncidence, Department } = require('../models');
+const {
+  Employee,
+  EmployeeRecord,
+  EmployeeIncidence,
+  Department,
+  sequelize
+} = require('../models');
 const { calculateMonthlyISR } = require('../services/isr.service');
+const { getPagination, toPagedResponse, wantsPagination } = require('../utils/pagination');
 
 const CUOTA_LABORAL = 0.0483;
 const CUOTA_LABORAL_JUBILADO = 0.03;
@@ -152,6 +159,63 @@ const normalizeAndValidateComponentDist = (componentDist) => {
 
 const getEmployees = async (req, res) => {
   try {
+    const listView = req.query.view === 'list';
+    const paged = listView || wantsPagination(req.query);
+    if (paged) {
+      const { page, pageSize, limit, offset } = getPagination(req.query);
+      const where = {};
+      if (req.query.status) where.estado = req.query.status;
+      if (req.query.companyId) where.empresa_principal = req.query.companyId;
+      if (req.query.departmentId) where.departmentId = req.query.departmentId;
+      if (req.query.areaId) where.areaId = req.query.areaId;
+      if (req.query.divisionId) where.divisionId = req.query.divisionId;
+      if (req.query.subdivisionId) where.subdivisionId = req.query.subdivisionId;
+      const q = String(req.query.q || '').trim();
+      if (q) {
+        const like = `%${q}%`;
+        where[Op.or] = [
+          sequelize.where(
+            sequelize.fn(
+              'CONCAT_WS',
+              ' ',
+              sequelize.col('Employee.primer_nombre'),
+              sequelize.col('Employee.segundo_nombre'),
+              sequelize.col('Employee.otro_nombre'),
+              sequelize.col('Employee.primer_apellido'),
+              sequelize.col('Employee.segundo_apellido')
+            ),
+            { [Op.like]: like }
+          ),
+          { primer_nombre: { [Op.like]: like } },
+          { segundo_nombre: { [Op.like]: like } },
+          { primer_apellido: { [Op.like]: like } },
+          { segundo_apellido: { [Op.like]: like } },
+          { puesto: { [Op.like]: like } },
+          { dpi: { [Op.like]: like } },
+          { no_igss: { [Op.like]: like } },
+          { nit: { [Op.like]: like } }
+        ];
+      }
+      const listAttributes = [
+        'id', 'empresa_principal', 'estado',
+        'primer_nombre', 'segundo_nombre', 'otro_nombre',
+        'primer_apellido', 'segundo_apellido', 'apellido_casada',
+        'puesto', 'dpi', 'no_igss', 'nit', 'sueldo_ordinario',
+        'departmentId', 'areaId', 'divisionId', 'subdivisionId',
+        'nivel_5', 'dimension_5', 'dist', 'fecha_inicio', 'fecha_baja'
+      ];
+      const { rows, count } = await Employee.findAndCountAll({
+        where,
+        attributes: listView ? listAttributes : { exclude: ['foto'] },
+        include: [{ model: Department, as: 'departmentData' }],
+        order: [['primer_apellido', 'ASC'], ['primer_nombre', 'ASC'], ['id', 'ASC']],
+        limit,
+        offset,
+        distinct: true
+      });
+      return res.json(toPagedResponse(rows, count, page, pageSize));
+    }
+
     const employees = await Employee.findAll({
       // foto (BLOB) no se usa en el frontend y infla masivamente el JSON de arranque
       attributes: { exclude: ['foto'] },
@@ -165,6 +229,23 @@ const getEmployees = async (req, res) => {
     res.json(employees);
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+};
+
+const getEmployeeById = async (req, res) => {
+  try {
+    const employee = await Employee.findByPk(req.params.id, {
+      attributes: { exclude: ['foto'] },
+      include: [
+        { model: Department, as: 'departmentData' },
+        { model: EmployeeRecord, as: 'records', separate: true },
+        { model: EmployeeIncidence, as: 'incidences', separate: true }
+      ]
+    });
+    if (!employee) return res.status(404).json({ error: 'Empleado no encontrado' });
+    return res.json(employee);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
   }
 };
 
@@ -231,6 +312,7 @@ const deleteEmployee = async (req, res) => {
 
 module.exports = {
   getEmployees,
+  getEmployeeById,
   createEmployee,
   updateEmployee,
   deleteEmployee

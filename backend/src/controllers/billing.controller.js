@@ -1,5 +1,13 @@
-const { BillingRule, BillingDistribution, Company } = require('../models');
+const {
+  BillingRule,
+  BillingDistribution,
+  BillingRun,
+  BillingRunLine,
+  Company,
+  sequelize
+} = require('../models');
 const BillingService = require('../services/billing.service');
+const { getPagination, toPagedResponse, wantsPagination } = require('../utils/pagination');
 
 const EXCEL_ROUTE_FORMULAS = {
   '1->2': { marginPercentage: 0, applyIva: true, ivaRate: 0.12, baseAdjustment: 0 },
@@ -145,6 +153,45 @@ class BillingController {
 
   static async getRuns(req, res) {
     try {
+      const summaryOnly = req.query.summary === '1' || req.query.summary === 'true';
+      if (summaryOnly) {
+        const paged = wantsPagination(req.query);
+        const pagination = paged ? getPagination(req.query) : null;
+        const query = {
+          attributes: { exclude: ['costMatrixJson'] },
+          order: [['createdAt', 'DESC']],
+          ...(pagination ? { limit: pagination.limit, offset: pagination.offset } : {})
+        };
+        const result = paged
+          ? await BillingRun.findAndCountAll(query)
+          : { rows: await BillingRun.findAll(query), count: null };
+        const ids = result.rows.map((run) => run.id);
+        const totals = ids.length
+          ? await BillingRunLine.findAll({
+              where: { runId: ids },
+              attributes: [
+                'runId',
+                [sequelize.fn('COUNT', sequelize.col('id')), 'linesCount'],
+                [sequelize.fn('SUM', sequelize.col('totalAmount')), 'totalAmount']
+              ],
+              group: ['runId'],
+              raw: true
+            })
+          : [];
+        const totalsById = new Map(totals.map((row) => [String(row.runId), row]));
+        const rows = result.rows.map((run) => {
+          const value = run.toJSON();
+          const aggregate = totalsById.get(String(run.id)) || {};
+          return {
+            ...value,
+            linesCount: Number(aggregate.linesCount) || 0,
+            totalAmount: Number(aggregate.totalAmount) || 0
+          };
+        });
+        return res.json(paged
+          ? toPagedResponse(rows, result.count, pagination.page, pagination.pageSize)
+          : rows);
+      }
       const runs = await BillingService.getRuns();
       res.json(runs);
     } catch (err) {

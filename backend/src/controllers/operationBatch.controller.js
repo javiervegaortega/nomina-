@@ -28,7 +28,9 @@ const {
   recalculateBatchStatus,
   recordOperationReview
 } = require('../services/operationWorkflow.service');
+const { getEffectiveMonthlyCaptureState } = require('../services/operationBonusBatch.service');
 const { Op } = require('sequelize');
+const { getPagination, toPagedResponse, wantsPagination } = require('../utils/pagination');
 
 const batchInclude = [
   { model: User, as: 'user', attributes: ['id', 'name', 'email', 'role', 'idDepartamento'] },
@@ -109,6 +111,120 @@ const isVisibleBatch = (batch, user) => {
 
 const getAll = async (req, res) => {
   try {
+    const query = req.query || {};
+    const summaryOnly = query.summary === '1' || query.summary === 'true';
+    if (summaryOnly) {
+      const role = getRole(req.user);
+      const visibilityIncludes = [];
+      const batchWhere = {
+        [Op.or]: [
+          { purpose: { [Op.ne]: 'BONOS_2DA' } },
+          { captureState: null },
+          { captureState: { [Op.ne]: 'CLOSED' } }
+        ]
+      };
+      if (role === 'SOLICITANTE') {
+        batchWhere[Op.and] = [{
+          [Op.or]: [
+            { userId: req.user.id },
+            { purpose: 'BONOS_2DA' },
+            { '$logs.requesterId$': req.user.id }
+          ]
+        }];
+        visibilityIncludes.push({
+          model: OperationLog,
+          as: 'logs',
+          attributes: [],
+          required: false
+        });
+      } else if (role === 'GERENTE') {
+        batchWhere.status = { [Op.ne]: 'DRAFT' };
+        visibilityIncludes.push({
+          model: OperationLog,
+          as: 'logs',
+          attributes: [],
+          required: true,
+          include: [{
+            model: Employee,
+            attributes: [],
+            required: true,
+            where: { departmentId: req.user.idDepartamento }
+          }]
+        });
+      } else if (role === 'NOMINA') {
+        visibilityIncludes.push({
+          model: OperationLog,
+          as: 'logs',
+          attributes: [],
+          required: true,
+          where: {
+            status: { [Op.in]: ['APPROVED_MANAGER', 'RETURNED', 'PROCESSED_PAYROLL'] }
+          }
+        });
+      } else if (!['ADMIN', 'GERENTE GENERAL', 'AUDITOR'].includes(role)) {
+        return res.json(wantsPagination(query)
+          ? toPagedResponse([], 0, 1, getPagination(query).pageSize)
+          : []);
+      }
+
+      const paged = wantsPagination(query);
+      const pagination = paged ? getPagination(query) : null;
+      const total = paged
+        ? await OperationBatch.count({
+            where: batchWhere,
+            include: visibilityIncludes,
+            distinct: true,
+            col: 'id'
+          })
+        : null;
+      const visibleIdRows = await OperationBatch.findAll({
+        where: batchWhere,
+        attributes: ['id', 'createdAt'],
+        include: visibilityIncludes,
+        order: [['createdAt', 'DESC']],
+        group: ['OperationBatch.id', 'OperationBatch.createdAt'],
+        subQuery: false,
+        ...(pagination ? { limit: pagination.limit, offset: pagination.offset } : {}),
+        raw: true
+      });
+      const visibleIds = [...new Set(visibleIdRows.map((row) => Number(row.id)))];
+      const selectedIds = visibleIds;
+      const batches = selectedIds.length
+        ? await OperationBatch.findAll({
+            where: { id: { [Op.in]: selectedIds } },
+            include: [
+              { model: User, as: 'user', attributes: ['id', 'name', 'role'] },
+              { model: Company, as: 'companyData', attributes: ['id', 'nombre_comercial', 'nit'] }
+            ]
+          })
+        : [];
+      const logCounts = selectedIds.length
+        ? await OperationLog.findAll({
+            where: { batchId: { [Op.in]: selectedIds } },
+            attributes: [
+              'batchId',
+              [sequelize.fn('COUNT', sequelize.col('id')), 'count']
+            ],
+            group: ['batchId'],
+            raw: true
+          })
+        : [];
+      const countByBatch = new Map(
+        logCounts.map((row) => [String(row.batchId), Number(row.count) || 0])
+      );
+      const byId = new Map(batches.map((batch) => [Number(batch.id), batch]));
+      const rows = selectedIds
+        .map((id) => byId.get(id))
+        .filter(Boolean)
+        .map((batch) => ({
+          ...batch.toJSON(),
+          logsCount: countByBatch.get(String(batch.id)) || 0
+        }));
+      return res.json(paged
+        ? toPagedResponse(rows, total, pagination.page, pagination.pageSize)
+        : rows);
+    }
+
     const batches = await OperationBatch.findAll({
       include: batchInclude,
       order: operationReviewOrder
@@ -141,6 +257,18 @@ const getById = async (req, res) => {
     const visible = serializeVisibleBatch(batch, req.user);
     if (!isVisibleBatch(batch, req.user) && visible.logs.length === 0) {
       return res.status(403).json({ error: 'No tienes acceso a este lote.' });
+    }
+    if (visible.purpose === 'BONOS_2DA') {
+      const effectiveCapture = await getEffectiveMonthlyCaptureState({ batch });
+      visible.captureState = effectiveCapture.captureState;
+      visible.captureBlockedByPayroll = effectiveCapture.auditedPayroll
+        ? {
+            id: effectiveCapture.auditedPayroll.id,
+            title: effectiveCapture.auditedPayroll.title,
+            periodType: effectiveCapture.auditedPayroll.periodType,
+            status: effectiveCapture.auditedPayroll.status
+          }
+        : null;
     }
     res.json(visible);
   } catch (err) {

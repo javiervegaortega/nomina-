@@ -19,12 +19,14 @@ async function ensurePayrollHistorySchema(sequelize) {
     }
   }
 
-  try {
-    const { PayrollHistory } = require('../models');
-    const { backfillPayrollSummaries } = require('../services/payrollSummary.service');
-    await backfillPayrollSummaries(PayrollHistory);
-  } catch (err) {
-    console.warn('[payroll] backfill summary:', err.message);
+  if (process.env.RUN_PAYROLL_SUMMARY_BACKFILL === '1') {
+    try {
+      const { PayrollHistory } = require('../models');
+      const { backfillPayrollSummaries } = require('../services/payrollSummary.service');
+      await backfillPayrollSummaries(PayrollHistory);
+    } catch (err) {
+      console.warn('[payroll] backfill summary:', err.message);
+    }
   }
 }
 

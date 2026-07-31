@@ -2,6 +2,7 @@ import React, { useState, useEffect, useContext } from 'react';
 import { AuthContext } from '../context/AuthContext';
 import { AppContext } from '../context/AppContext';
 import { DataContext } from '../context/DataContext';
+import { apiFetch } from '../utils/api';
 import { Plus, Edit2, Trash2, Shield, Search } from 'lucide-react';
 import {
   Box, Flex, Heading, Text, Button, Table, Thead, Tbody, Tr, Th, Td,
@@ -44,7 +45,7 @@ export default function Users() {
   const fetchUsers = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch('http://localhost:3000/api/users', {
+      const res = await apiFetch('/api/users', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
@@ -104,8 +105,8 @@ export default function Users() {
     setIsSaving(true);
     try {
       const url = editingUser 
-        ? `http://localhost:3000/api/users/${editingUser.id}` 
-        : `http://localhost:3000/api/users`;
+        ? `/api/users/${editingUser.id}`
+        : `/api/users`;
       
       const method = editingUser ? 'PUT' : 'POST';
 
@@ -114,7 +115,7 @@ export default function Users() {
         delete payload.password; // Don't update password if blank
       }
 
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method,
         headers: {
           'Content-Type': 'application/json',
@@ -147,7 +148,7 @@ export default function Users() {
     
     confirmAction('¿Estás seguro de eliminar a este usuario? Esta acción no se puede deshacer.', async () => {
       try {
-        const res = await fetch(`http://localhost:3000/api/users/${id}`, {
+        const res = await apiFetch(`/api/users/${id}`, {
           method: 'DELETE',
           headers: { 'Authorization': `Bearer ${token}` }
         });

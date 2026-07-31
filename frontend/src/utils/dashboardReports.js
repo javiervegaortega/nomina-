@@ -362,57 +362,13 @@ export const buildDashboardMetrics = ({
 };
 
 export const exportDashboardExcel = async (metrics, periodLabel) => {
-  const XLSX = await import('xlsx');
-  const wb = XLSX.utils.book_new();
-
-  const resumen = [
-    { Concepto: 'Período', Valor: periodLabel },
-    { Concepto: 'Nóminas incluidas', Valor: metrics.payrollCount || (metrics.hasPayrollData ? metrics.filteredRecords?.length : 0) },
-    { Concepto: 'Total empleados (sistema)', Valor: metrics.totalEmployees },
-    { Concepto: 'Empleados activos', Valor: metrics.activeCount },
-    { Concepto: 'Empleados inactivos', Valor: metrics.inactiveCount },
-    { Concepto: 'Costo bruto nómina', Valor: metrics.totalGrossPayroll },
-    { Concepto: 'Total deducciones', Valor: metrics.totalDeductions },
-    { Concepto: 'Neto a pagar', Valor: metrics.totalNetPay },
-    { Concepto: 'Salario promedio', Valor: metrics.avgSalary },
-    { Concepto: 'Costo patronal estimado', Valor: metrics.patronalCost },
-  ];
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(resumen), 'Resumen');
-
-  const empresas = metrics.companyDistribution.map(c => ({
-    Empresa: c.nombre_comercial || c.nit || `Empresa ${c.id}`,
-    NIT: c.nit || '',
-    Monto: c.total,
-  }));
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(empresas.length ? empresas : [{ Empresa: 'Sin datos', NIT: '', Monto: 0 }]), 'Por Empresa');
-
-  const deptos = metrics.deptList.map(([dept, data]) => ({
-    Departamento: dept,
-    Empleados: data.count,
-    Costo: data.cost,
-  }));
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(deptos.length ? deptos : [{ Departamento: 'Sin datos', Empleados: 0, Costo: 0 }]), 'Por Departamento');
-
-  if (metrics.hasPayrollData && metrics.sourceEmployees?.length) {
-    const detalle = metrics.sourceEmployees.map((e, idx) => {
-      const calc = computeEmployeePayroll(e);
-      return {
-        'No.': idx + 1,
-        Nombre: getEmployeeName(e),
-        Puesto: e.puesto || '',
-        Días: e.days ?? 30,
-        'Salario Ordinario': calc.baseSalary,
-        'Bono Incentivo': calc.bonusLey,
-        'Total Devengado': calc.gross,
-        Deducciones: calc.ded,
-        'Líquido a Recibir': calc.netPayable,
-      };
-    });
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detalle), 'Detalle Nómina');
-  }
-
+  const { generateAndDownloadExcel } = await import('./excelWorkerClient');
   const safeName = periodLabel.replace(/[^a-z0-9]/gi, '_').slice(0, 40);
-  XLSX.writeFile(wb, `Reporte_Dashboard_${safeName}.xlsx`);
+  await generateAndDownloadExcel(
+    'dashboard',
+    { metrics, periodLabel },
+    `Reporte_Dashboard_${safeName}.xlsx`
+  );
 };
 
 export const buildReportHtml = (metrics, periodLabel) => {

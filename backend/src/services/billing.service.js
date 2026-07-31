@@ -1,4 +1,5 @@
 const Decimal = require('decimal.js');
+const { Op } = require('sequelize');
 const {
   sequelize, PayrollHistory, BillingRule, BillingRun, BillingRunLine, Company, Area
 } = require('../models');
@@ -695,8 +696,16 @@ const resolveBillingPayrollGroup = async (primaryPayroll) => {
     };
   }
 
+  const [year, month] = monthKey.split('-').map(Number);
   const candidates = await PayrollHistory.findAll({
-    where: { periodType: '2da', status: 'cerrada' }
+    where: {
+      periodType: '2da',
+      status: 'cerrada',
+      createdAt: {
+        [Op.gte]: new Date(year, month - 1, 1),
+        [Op.lt]: new Date(year, month, 1)
+      }
+    }
   });
   const byCompany = new Map([[1, []], [2, []]]);
   candidates.forEach((candidate) => {

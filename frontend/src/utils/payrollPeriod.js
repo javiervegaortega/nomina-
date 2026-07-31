@@ -193,9 +193,14 @@ export function isDateInQuincena(dateStr, draftDateStr, periodType) {
   return dt >= start && dt <= end;
 }
 
-/** Líquido a pagar: neto del periodo menos anticipo de 1ra (si aplica). */
+/** Neto total acumulado del período, antes del anticipo de la primera quincena. */
+export function getNetTotal(emp) {
+  return Number(emp?.calculated?.net ?? emp?.netTotal ?? 0) || 0;
+}
+
+/** Líquido a pagar: neto del período menos anticipo de 1ra (si aplica). */
 export function getNetPayable(emp, periodType) {
-  const net = Number(emp?.calculated?.net ?? emp?.netTotal ?? 0);
+  const net = getNetTotal(emp);
   const anticipo = periodType === '2da' ? (Number(emp?.anticipo1ra) || Number(emp?.calculated?.anticipo1ra) || 0) : 0;
   if (emp?.calculated?.netPayable != null && periodType === '2da') {
     return Number(emp.calculated.netPayable);

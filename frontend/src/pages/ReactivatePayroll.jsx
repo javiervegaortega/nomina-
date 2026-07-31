@@ -3,6 +3,7 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import { AppContext } from '../context/AppContext';
 import { Box, Flex, Heading, Text, Button, VStack, Icon, useColorModeValue } from '@chakra-ui/react';
 import { RotateCcw, CheckCircle, AlertTriangle } from 'lucide-react';
+import { apiFetch } from '../utils/api';
 
 export default function ReactivatePayroll() {
   const [searchParams] = useSearchParams();
@@ -26,7 +27,7 @@ export default function ReactivatePayroll() {
       const headers = { 'Content-Type': 'application/json' };
       if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
 
-      const response = await fetch('http://localhost:3000/api/payrolls/reactivate', {
+      const response = await apiFetch('/api/payrolls/reactivate', {
         method: 'POST',
         headers,
         body: JSON.stringify({ token })

@@ -4,7 +4,7 @@ import {
   Button, SimpleGrid, Box, Text, Flex, Divider, Badge, VStack, HStack, useColorModeValue
 } from '@chakra-ui/react';
 import { formatQ } from '../data/mockData';
-import { getNetPayable } from '../utils/payrollPeriod';
+import { getNetPayable, getNetTotal } from '../utils/payrollPeriod';
 
 export default function EmployeeSummaryModal({ isOpen, onClose, employee, companies, periodType }) {
   const bgBox = useColorModeValue('gray.50', 'whiteAlpha.50');
@@ -33,11 +33,11 @@ export default function EmployeeSummaryModal({ isOpen, onClose, employee, compan
   const salarioTotal = devengado;
   const totalEgresos = employee.calculated?.ded || 0;
 
-  const liquido = getNetPayable(employee, periodType || '1ra');
+  const liquido = getNetTotal(employee);
 
   const anticipo = Number(employee.anticipo1ra) || 0;
   const q1 = periodType === '2da' ? anticipo : liquido;
-  const q2 = periodType === '2da' ? liquido : 0;
+  const q2 = periodType === '2da' ? getNetPayable(employee, periodType) : 0;
 
   const companyName = companies?.find(c => c.id == employee.empresa_principal)?.nombre_comercial || employee.company || 'Sin Empresa';
 
@@ -202,7 +202,7 @@ export default function EmployeeSummaryModal({ isOpen, onClose, employee, compan
                     <Text fontSize="lg" fontWeight="bold" fontFamily="mono">{formatQ(q1)}</Text>
                   </Box>
                   <Box textAlign={{ base: 'left', md: 'right' }}>
-                    <Text fontSize="xs" opacity={0.8}>Pago 2da Quincena</Text>
+                    <Text fontSize="xs" opacity={0.8}>Pago de esta quincena</Text>
                     <Text fontSize="lg" fontWeight="bold" fontFamily="mono">{formatQ(q2)}</Text>
                   </Box>
                 </HStack>

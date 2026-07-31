@@ -1,4 +1,3 @@
-import * as XLSX from 'xlsx';
 import { getNetPayable } from './payrollPeriod';
 import { calculateEmployeePayroll } from './payrollCalculator';
 
@@ -112,35 +111,16 @@ export function buildLibroSalariosRows(employees, periodType) {
  * Exporta Excel preliminar (desde borrador o historial).
  * @param {'verificador'|'libro'} type
  */
-export function exportPayrollReportExcel({ type, employees, periodType, title, companies, isDraft = false }) {
-  let rows;
-  let sheetName;
-  if (type === 'verificador') {
-    rows = buildVerificadorRows(employees, periodType, companies);
-    sheetName = 'Verificador';
-  } else {
-    rows = buildLibroSalariosRows(employees, periodType);
-    sheetName = 'Libro Salarios';
-  }
-
-  const ws = XLSX.utils.json_to_sheet(rows);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, sheetName);
-
-  if (isDraft) {
-    const meta = XLSX.utils.aoa_to_sheet([
-      ['PRELIMINAR / BORRADOR'],
-      ['Nómina', title || ''],
-      ['Periodo', periodType || ''],
-      ['Generado', new Date().toLocaleString('es-GT')],
-      ['Aviso', 'Este reporte no proviene de una nómina cerrada.']
-    ]);
-    XLSX.utils.book_append_sheet(wb, meta, 'Aviso');
-  }
-
+export async function exportPayrollReportExcel({ type, employees, periodType, title, companies, isDraft = false }) {
+  const { generateAndDownloadExcel } = await import('./excelWorkerClient');
+  const sheetName = type === 'verificador' ? 'Verificador' : 'Libro Salarios';
   const prefix = isDraft ? 'BORRADOR_' : '';
-  const safeTitle = String(title || 'nomina').replace(/[^\w\-]+/g, '_').slice(0, 40);
-  XLSX.writeFile(wb, `${prefix}${sheetName}_${safeTitle}.xlsx`);
+  const safeTitle = String(title || 'nomina').replace(/[^\w-]+/g, '_').slice(0, 40);
+  await generateAndDownloadExcel(
+    'payroll-report',
+    { type, employees, periodType, title, companies, isDraft },
+    `${prefix}${sheetName}_${safeTitle}.xlsx`
+  );
 
   return validateEmployeesForReports(employees);
 }

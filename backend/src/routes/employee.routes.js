@@ -4,6 +4,7 @@ const employeeController = require('../controllers/employee.controller');
 const authenticateToken = require('../middlewares/auth.middleware');
 
 router.get('/', authenticateToken, employeeController.getEmployees);
+router.get('/:id', authenticateToken, employeeController.getEmployeeById);
 router.post('/', authenticateToken, employeeController.createEmployee);
 router.put('/:id', authenticateToken, employeeController.updateEmployee);
 router.delete('/:id', authenticateToken, employeeController.deleteEmployee);

@@ -1,6 +1,7 @@
 const assert = require('assert');
 const path = require('path');
 const { pathToFileURL } = require('url');
+const { createRequire } = require('module');
 
 const run = async () => {
   const moduleUrl = pathToFileURL(
@@ -10,6 +11,10 @@ const run = async () => {
     buildBillingWorkbook,
     resolveBillingMonthYear
   } = await import(moduleUrl);
+  const frontendRequire = createRequire(
+    path.resolve(__dirname, '../../../frontend/package.json')
+  );
+  const ExcelJS = frontendRequire('exceljs');
 
   assert.strictEqual(
     resolveBillingMonthYear({ billingMonth: '2026-07', payrollTitle: '2da Quincena' }),
@@ -62,7 +67,7 @@ const run = async () => {
         percentage: 30
       }
     ]
-  });
+  }, ExcelJS);
   const detail = workbook.getWorksheet('Detalle');
   assert(detail, 'debe existir la hoja Detalle');
   assert.strictEqual(detail.getRow(5).getCell(8).value, 'JULIO 2026');

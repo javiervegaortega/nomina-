@@ -6,11 +6,28 @@ import {
   SimpleGrid
 } from '@chakra-ui/react';
 import { Download, FileText, Printer, Settings, ChevronDown } from 'lucide-react';
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
 import { CUOTA_PATRONAL_RATE, IRTRA_INTECAP_RATE } from '../data/mockData';
+import { getNetTotal } from '../utils/payrollPeriod';
 import { buildVerificadorPdf } from '../utils/verificadorPdf';
 import { buildSolicitudChequesPdf } from '../utils/solicitudChequesPdf';
+
+let JsPdfCtor = null;
+let autoTableFn = null;
+let pdfToolsPromise = null;
+
+const loadPdfTools = () => {
+  if (!pdfToolsPromise) {
+    pdfToolsPromise = Promise.all([
+      import('jspdf'),
+      import('jspdf-autotable')
+    ]).then(([pdfModule, tableModule]) => {
+      JsPdfCtor = pdfModule.default;
+      autoTableFn = tableModule.default;
+      return { JsPdfCtor, autoTableFn };
+    });
+  }
+  return pdfToolsPromise;
+};
 
 // Inline to avoid circular import issues
 const getEmpName = (e) => {
@@ -297,7 +314,7 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
 
   // Helper to generate Libro Doc
   const generateLibroDoc = () => {
-    const doc = new jsPDF('landscape', 'pt', 'legal');
+    const doc = new JsPdfCtor('landscape', 'pt', 'legal');
     data.forEach((e, index) => {
       if (index > 0) doc.addPage();
       
@@ -364,9 +381,9 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
 
       const dec4292 = fmtN((Number(calculated.bonusDec) || 0) + bonuses);
       const bonInc = fmtN(calculated.bonusLey);
-      const liq = fmtN(getNetPayable(e, group?.periodType));
+      const liq = fmtN(getNetTotal(e));
 
-      autoTable(doc, {
+      autoTableFn(doc, {
         startY: r2y + 30,
         head: [
           [
@@ -451,12 +468,13 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
       if (isOpen && ['libro', 'verificador', 'cheques'].includes(reportType) && data && group) {
         setIsGeneratingPdf(true);
         setPdfPreviewUrl(null);
-        generateTimer = setTimeout(() => {
+        generateTimer = setTimeout(async () => {
           try {
+            await loadPdfTools();
             const doc = reportType === 'verificador'
-              ? buildVerificadorPdf({ data, group, companies })
+              ? buildVerificadorPdf({ data, group, companies }, JsPdfCtor)
               : reportType === 'cheques'
-                ? buildSolicitudChequesPdf({ data, group, companies })
+                ? buildSolicitudChequesPdf({ data, group, companies }, JsPdfCtor)
                 : generateLibroDoc();
             setPdfPreviewUrl(doc.output('datauristring'));
           } catch (err) {
@@ -509,7 +527,8 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
   };
 
   // ── PDF exports ──────────────────────────────────────────────
-  const handleDownloadPDF = (action = 'download') => {
+  const handleDownloadPDF = async (action = 'download') => {
+    await loadPdfTools();
 
   const processPdfTable = (doc, reportType, headRow, dataMapFn, colStyles) => {
     let currentY = 100;
@@ -530,7 +549,7 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
         currentY += 10;
         
         const body = grouped[area].map(dataMapFn);
-        autoTable(doc, { 
+        autoTableFn(doc, {
           startY: currentY, 
           head: [headRow], 
           body, 
@@ -545,7 +564,7 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
       });
     } else {
       const body = data.map(dataMapFn);
-      autoTable(doc, { 
+      autoTableFn(doc, {
         startY: currentY, 
         head: [headRow], 
         body, 
@@ -687,7 +706,7 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
 
     // ── Verificador ──────────────────────────────────────────
     if (reportType === 'verificador') {
-      const doc = buildVerificadorPdf({ data, group, companies });
+      const doc = buildVerificadorPdf({ data, group, companies }, JsPdfCtor);
       if (action === 'print') {
         doc.autoPrint();
         window.open(doc.output('bloburl'), '_blank');
@@ -698,7 +717,7 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
 
     // ── Solicitud de Cheques ─────────────────────────────────
     else if (reportType === 'cheques') {
-      const doc = buildSolicitudChequesPdf({ data, group, companies });
+      const doc = buildSolicitudChequesPdf({ data, group, companies }, JsPdfCtor);
       if (action === 'print') {
         doc.autoPrint();
         window.open(doc.output('bloburl'), '_blank');
@@ -711,7 +730,7 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
 
     // ── Nómina General / Recibo e IGSS ──────────────────────
     else if (reportType === 'nomina' || reportType === 'igss') {
-      const doc = new jsPDF('landscape', 'pt', 'letter');
+      const doc = new JsPdfCtor('landscape', 'pt', 'letter');
       const isIgssReport = reportType === 'igss';
       const subtitle = isIgssReport ? 'Recibo e IGSS' : 'Nómina General';
       const selectedColumns = isIgssReport ? colsIgss : colsNomina;
@@ -785,7 +804,7 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
             currentY += 8;
             const body = grouped[area].map((e, i) => dataMapFn(e, i));
             const isLast = areaIdx === areaNames.length - 1;
-            autoTable(doc, {
+            autoTableFn(doc, {
               ...tableOpts,
               startY: currentY,
               body,
@@ -795,7 +814,7 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
             currentY = doc.lastAutoTable.finalY + 18;
           });
         } else {
-          autoTable(doc, {
+          autoTableFn(doc, {
             ...tableOpts,
             startY,
             body: data.map(dataMapFn),
@@ -826,7 +845,7 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
 
     // ── Plantilla Promerica ──────────────────────────────────
     else if (reportType === 'promerica') {
-      const doc = new jsPDF('portrait', 'pt', 'letter');
+      const doc = new JsPdfCtor('portrait', 'pt', 'letter');
       addHeader(doc, 'Plantilla Banco Promerica');
       const comps = buildCompGroups();
       const body = [];
@@ -854,7 +873,7 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
         body.push([{ content: '', colSpan: 4 }]);
       });
 
-      autoTable(doc, { startY: 100, head: [['No. Cuenta', 'Nombre de Colaborador', 'Monto', 'Concepto']], body, theme: 'grid', headStyles: { fillColor: [41, 128, 185], textColor: 255, fontStyle: 'bold' }, styles: { fontSize: 8, cellPadding: 3 }, columnStyles: { 0: { cellWidth: 90 }, 1: { cellWidth: 200 }, 2: { cellWidth: 80, halign: 'right' }, 3: { cellWidth: 150 } } });
+      autoTableFn(doc, { startY: 100, head: [['No. Cuenta', 'Nombre de Colaborador', 'Monto', 'Concepto']], body, theme: 'grid', headStyles: { fillColor: [41, 128, 185], textColor: 255, fontStyle: 'bold' }, styles: { fontSize: 8, cellPadding: 3 }, columnStyles: { 0: { cellWidth: 90 }, 1: { cellWidth: 200 }, 2: { cellWidth: 80, halign: 'right' }, 3: { cellWidth: 150 } } });
       if (action === 'print') {
         doc.autoPrint();
         window.open(doc.output('bloburl'), '_blank');
@@ -865,7 +884,7 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
 
     // ── Plantilla Industrial ─────────────────────────────────
     else if (reportType === 'industrial') {
-      const doc = new jsPDF('portrait', 'pt', 'letter');
+      const doc = new JsPdfCtor('portrait', 'pt', 'letter');
       addHeader(doc, 'Plantilla Banco Industrial');
       const comps = buildCompGroups();
       const body = [];
@@ -893,7 +912,7 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
         body.push([{ content: '', colSpan: 6 }]);
       });
 
-      autoTable(doc, { startY: 100, head: [['Tipo', 'No. Cuenta', 'Corr.', 'Nombre', 'Monto', 'Concepto']], body, theme: 'grid', headStyles: { fillColor: [41, 128, 185], textColor: 255, fontStyle: 'bold' }, styles: { fontSize: 8, cellPadding: 3 }, columnStyles: { 0: { cellWidth: 35 }, 1: { cellWidth: 90 }, 2: { cellWidth: 35 }, 3: { cellWidth: 185 }, 4: { cellWidth: 75, halign: 'right' }, 5: { cellWidth: 100 } } });
+      autoTableFn(doc, { startY: 100, head: [['Tipo', 'No. Cuenta', 'Corr.', 'Nombre', 'Monto', 'Concepto']], body, theme: 'grid', headStyles: { fillColor: [41, 128, 185], textColor: 255, fontStyle: 'bold' }, styles: { fontSize: 8, cellPadding: 3 }, columnStyles: { 0: { cellWidth: 35 }, 1: { cellWidth: 90 }, 2: { cellWidth: 35 }, 3: { cellWidth: 185 }, 4: { cellWidth: 75, halign: 'right' }, 5: { cellWidth: 100 } } });
       if (action === 'print') {
         doc.autoPrint();
         window.open(doc.output('bloburl'), '_blank');
@@ -907,7 +926,8 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
   const getColValue = (e, i, colId, format = false) => {
     let val = '';
     let isMoney = false;
-    const net = getNetPayable(e, group?.periodType);
+    const net = getNetTotal(e);
+    const pagoQuincena = getNetPayable(e, group?.periodType);
     const extras = getPayrollExtras(e);
     const deductions = getPayrollDeductions(e);
     
@@ -955,7 +975,7 @@ export default function ReportPreviewModal({ isOpen, onClose, reportType, group,
       case 'total_egr': val = getTotalDeductions(e); isMoney = true; break;
       case 'liquido': val = net; isMoney = true; break;
       case 'quinc1': val = group?.periodType === '2da' ? getAnticipo1ra(e) : net; isMoney = true; break;
-      case 'quinc2': val = group?.periodType === '2da' ? net : 0; isMoney = true; break;
+      case 'quinc2': val = group?.periodType === '2da' ? pagoQuincena : 0; isMoney = true; break;
       case 'no_igss': val = e.no_igss || ''; break;
     }
     

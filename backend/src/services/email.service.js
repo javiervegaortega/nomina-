@@ -5,6 +5,9 @@ const BACKEND_URL = (process.env.BACKEND_URL || 'http://localhost:3000').replace
 
 const transporter = nodemailer.createTransport({
   service: 'gmail',
+  pool: true,
+  maxConnections: 3,
+  maxMessages: 100,
   auth: {
     user: process.env.GMAIL_USER || 'notificacioneseconsa@gmail.com',
     pass: process.env.GMAIL_APP_PASSWORD

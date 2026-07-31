@@ -1,5 +1,7 @@
-import React, { createContext, useState, useEffect, useRef, useContext, useMemo } from 'react';
+import { createContext, useState, useEffect, useRef, useContext, useMemo } from 'react';
+import { useLocation } from 'react-router-dom';
 import { AuthContext } from './AuthContext';
+import { apiFetch, apiJson } from '../utils/api';
 import {
   isDateInQuincena,
   parseLocalDate,
@@ -10,6 +12,8 @@ import {
 import { getCuotaLaboralRate, getRecurringDeductionFactor } from '../utils/payrollCalculator';
 import { calculateMonthlyISR } from '../data/mockData';
 
+// El contexto y su proveedor conviven por compatibilidad con las importaciones actuales.
+// eslint-disable-next-line react-refresh/only-export-components
 export const DataContext = createContext();
 
 const CACHE_KEYS = {
@@ -34,7 +38,8 @@ const readCache = (key, fallback = []) => {
 
 const parseDrafts = (apiDrafts) => apiDrafts.map(d => {
   let comps = d.companies || [];
-  let emps = d.employees || [];
+  const hasEmployees = Object.prototype.hasOwnProperty.call(d, 'employees');
+  let emps = hasEmployees ? d.employees : undefined;
   if (typeof comps === 'string') {
     try { comps = JSON.parse(comps); } catch { comps = []; }
   }
@@ -47,16 +52,24 @@ const parseDrafts = (apiDrafts) => apiDrafts.map(d => {
   }
   if (Array.isArray(emps)) {
     emps = emps.map(emp => (typeof emp === 'string' ? JSON.parse(emp) : emp));
-  } else {
+  } else if (hasEmployees) {
     emps = [];
   }
-  return { ...d, companies: comps, employees: emps };
+  return {
+    ...d,
+    companies: comps,
+    ...(hasEmployees ? { employees: emps } : {})
+  };
 });
 
 export function DataProvider({ children }) {
   // --- STATE ---
   const { token } = useContext(AuthContext);
+  const { pathname } = useLocation();
+  const loadedResources = useRef(new Set());
   const saveTimeouts = useRef({});
+  const employeeSaveTimeouts = useRef(new Map());
+  const pendingEmployeeSaves = useRef(new Map());
   const draftSyncChains = useRef(new Map());
   const draftSyncRevisions = useRef(new Map());
   const draftServerRevisions = useRef(new Map());
@@ -123,99 +136,104 @@ export function DataProvider({ children }) {
 
   // --- FETCH FROM BACKEND ON MOUNT ---
   useEffect(() => {
-    let cancelled = false;
+    if (!token) {
+      loadedResources.current.clear();
+      const timer = setTimeout(() => setIsLoading(false), 0);
+      return () => clearTimeout(timer);
+    }
+    let active = true;
 
-    const safeJson = async (res) => {
-      if (!res?.ok) return null;
-      try {
-        return await res.json();
-      } catch {
-        return null;
-      }
+    const isDashboard = pathname === '/dashboard' || pathname === '/';
+    const needsCatalogs = !isDashboard && pathname !== '/login';
+    const needsEmployees = [
+      '/operations', '/suspensions', '/reactivate'
+    ].some((prefix) => pathname.startsWith(prefix));
+    const needsFullDrafts = [
+      '/operations', '/suspensions', '/reactivate'
+    ].some((prefix) => pathname.startsWith(prefix));
+    const needsDraftSummaries = pathname.startsWith('/payroll')
+      || pathname.startsWith('/history');
+    const needsFullHistory = pathname.startsWith('/suspensions');
+    const needsHistorySummaries = [
+      '/history', '/billing', '/reactivate'
+    ].some((prefix) => pathname.startsWith(prefix));
+    const needsOperationLogs = pathname.startsWith('/operations');
+
+    const loadOnce = async (key, url, apply) => {
+      if (loadedResources.current.has(key)) return;
+      const payload = await apiJson(url);
+      apply(payload);
+      loadedResources.current.add(key);
     };
 
-    const fetchBackendData = async () => {
-      try {
-        const authToken = localStorage.getItem('nomina-token');
-        const headers = authToken ? { 'Authorization': `Bearer ${authToken}` } : {};
-        const fetchOpts = { headers };
-
-        // Carga crítica primero (sin historial/logs pesados ni SAP no usado)
-        const [
-          compRes, empRes, deptRes, areaRes, divRes, subdivRes, dim5Res,
-          draftsRes, bonusesRes, commissionsRes, opLogsRes
-        ] = await Promise.all([
-          fetch('http://localhost:3000/api/companies', fetchOpts),
-          fetch('http://localhost:3000/api/employees', fetchOpts),
-          fetch('http://localhost:3000/api/departments', fetchOpts),
-          fetch('http://localhost:3000/api/areas', fetchOpts),
-          fetch('http://localhost:3000/api/divisions', fetchOpts),
-          fetch('http://localhost:3000/api/subdivisions', fetchOpts),
-          fetch('http://localhost:3000/api/dimension5', fetchOpts),
-          fetch('http://localhost:3000/api/payroll-drafts', fetchOpts),
-          fetch('http://localhost:3000/api/bonuses', fetchOpts),
-          fetch('http://localhost:3000/api/commissions', fetchOpts),
-          fetch('http://localhost:3000/api/operation-logs', fetchOpts),
-        ]);
-
-        const [
-          apiCompanies, apiEmployees, apiDepts, apiAreas, apiDivs, apiSubdivs,
-          apiDim5s, apiDrafts, apiBonuses, apiCommissions, apiOperationLogs
-        ] = await Promise.all([
-          safeJson(compRes), safeJson(empRes), safeJson(deptRes), safeJson(areaRes),
-          safeJson(divRes), safeJson(subdivRes), safeJson(dim5Res), safeJson(draftsRes),
-          safeJson(bonusesRes), safeJson(commissionsRes), safeJson(opLogsRes)
-        ]);
-
-        if (cancelled) return;
-
-        // Un solo batch de updates críticos → menos re-renders en cascada
-        if (Array.isArray(apiCompanies)) setCompanies(apiCompanies);
-        if (Array.isArray(apiEmployees)) setEmployees(apiEmployees);
-        if (Array.isArray(apiDepts)) setDepartments(apiDepts);
-        if (Array.isArray(apiAreas)) setAreas(apiAreas);
-        if (Array.isArray(apiDivs)) setDivisions(apiDivs);
-        if (Array.isArray(apiSubdivs)) setSubdivisions(apiSubdivs);
-        if (Array.isArray(apiDim5s)) setDimension5s(apiDim5s);
-        if (Array.isArray(apiDrafts)) {
-          rememberDraftServerRevisions(apiDrafts);
-          setActivePayrolls(parseDrafts(apiDrafts));
+    const tasks = [];
+    if (needsCatalogs) {
+      tasks.push(loadOnce('catalogs', '/api/catalogs', (catalogs) => {
+        if (Array.isArray(catalogs.companies)) setCompanies(catalogs.companies);
+        if (Array.isArray(catalogs.departments)) setDepartments(catalogs.departments);
+        if (Array.isArray(catalogs.areas)) setAreas(catalogs.areas);
+        if (Array.isArray(catalogs.divisions)) setDivisions(catalogs.divisions);
+        if (Array.isArray(catalogs.subdivisions)) setSubdivisions(catalogs.subdivisions);
+        if (Array.isArray(catalogs.dimension5s)) setDimension5s(catalogs.dimension5s);
+        if (Array.isArray(catalogs.bonuses)) setBonuses(catalogs.bonuses);
+      }));
+    }
+    if (needsEmployees) {
+      tasks.push(loadOnce('employees-full', '/api/employees', (rows) => {
+        if (Array.isArray(rows)) setEmployees(rows);
+      }));
+    }
+    if (needsFullDrafts) {
+      tasks.push(loadOnce('drafts-full', '/api/payroll-drafts', (rows) => {
+        if (!Array.isArray(rows)) return;
+        rememberDraftServerRevisions(rows);
+        setActivePayrolls(parseDrafts(rows));
+      }));
+    } else if (needsDraftSummaries) {
+      tasks.push(loadOnce(
+        'drafts-summary',
+        '/api/payroll-drafts?summary=1&page=1&pageSize=100',
+        (payload) => {
+          const rows = Array.isArray(payload) ? payload : payload.items || [];
+          rememberDraftServerRevisions(rows);
+          setActivePayrolls(parseDrafts(rows));
         }
-        if (Array.isArray(apiBonuses)) setBonuses(apiBonuses);
-        if (Array.isArray(apiCommissions)) setCommissions(apiCommissions);
-        if (Array.isArray(apiOperationLogs)) setOperationLogs(apiOperationLogs);
-        setIsLoading(false);
-
-        // Historial en segundo plano (payload grande)
-        const deferHeavy = async () => {
-          try {
-            const histRes = await fetch('http://localhost:3000/api/payrolls', fetchOpts);
-            const apiHistory = await safeJson(histRes);
-            if (cancelled) return;
-            if (Array.isArray(apiHistory)) setPayrollHistory(apiHistory);
-          } catch {
-            // no-op
-          }
-        };
-
-        if (typeof requestIdleCallback === 'function') {
-          requestIdleCallback(() => { deferHeavy(); }, { timeout: 2000 });
-        } else {
-          setTimeout(deferHeavy, 0);
-        }
-      } catch {
-        if (!cancelled) setIsLoading(false);
-      }
-    };
-
-    if (token) {
-      fetchBackendData();
-    } else {
-      setIsLoading(false);
+      ));
+    }
+    if (needsFullHistory) {
+      tasks.push(loadOnce('history-full', '/api/payrolls', (rows) => {
+        if (Array.isArray(rows)) setPayrollHistory(rows);
+      }));
+    } else if (needsHistorySummaries) {
+      tasks.push(loadOnce(
+        'history-summary',
+        '/api/payrolls?summary=1&page=1&pageSize=100',
+        (payload) => setPayrollHistory(
+          Array.isArray(payload) ? payload : payload.items || []
+        )
+      ));
+    }
+    if (needsOperationLogs) {
+      tasks.push(loadOnce('operation-logs', '/api/operation-logs', (rows) => {
+        if (Array.isArray(rows)) setOperationLogs(rows);
+      }));
     }
 
-    return () => { cancelled = true; };
-  }, [token]);
+    let loadingSettled = false;
+    const loadingTimer = setTimeout(() => {
+      // Una carga satisfecha inmediatamente desde caché puede finalizar antes
+      // de este temporizador. En ese caso no debemos reactivar el skeleton.
+      if (active && !loadingSettled) setIsLoading(tasks.length > 0);
+    }, 0);
+    Promise.allSettled(tasks).finally(() => {
+      loadingSettled = true;
+      if (active) setIsLoading(false);
+    });
+    return () => {
+      active = false;
+      clearTimeout(loadingTimer);
+    };
+  }, [pathname, token]);
 
   // --- ACTIONS ---
 
@@ -227,7 +245,7 @@ export function DataProvider({ children }) {
 
   const fetchPayrollHistory = async () => {
     try {
-      const res = await fetch('http://localhost:3000/api/payrolls', { headers: getAuthHeader() });
+      const res = await apiFetch('/api/payrolls', { headers: getAuthHeader() });
       if (res.ok) {
         const apiHistory = await res.json();
         if (Array.isArray(apiHistory)) setPayrollHistory(apiHistory);
@@ -239,7 +257,7 @@ export function DataProvider({ children }) {
 
   const fetchActivePayrolls = async () => {
     try {
-      const res = await fetch('http://localhost:3000/api/payroll-drafts', { headers: getAuthHeader() });
+      const res = await apiFetch('/api/payroll-drafts', { headers: getAuthHeader() });
       if (res.ok) {
         const apiDrafts = await res.json();
         if (Array.isArray(apiDrafts)) {
@@ -250,6 +268,22 @@ export function DataProvider({ children }) {
     } catch (err) {
       console.error('fetchActivePayrolls:', err);
     }
+  };
+
+  const loadActivePayroll = async (id) => {
+    const existing = activePayrolls.find((draft) => (
+      String(draft.id) === String(id) && Array.isArray(draft.employees)
+    ));
+    if (existing) return existing;
+
+    const detail = parseDrafts([await apiJson(`/api/payroll-drafts/${id}`)])[0];
+    rememberDraftServerRevisions([detail]);
+    setActivePayrolls((current) => {
+      const found = current.some((draft) => String(draft.id) === String(id));
+      if (!found) return [detail, ...current];
+      return current.map((draft) => String(draft.id) === String(id) ? detail : draft);
+    });
+    return detail;
   };
 
   // Agrupa refrescos solicitados por altas/aprobaciones masivas en el mismo tick.
@@ -266,7 +300,7 @@ export function DataProvider({ children }) {
   // Companies
   const addCompany = async (company) => {
     try {
-      const res = await fetch('http://localhost:3000/api/companies', {
+      const res = await apiFetch('/api/companies', {
         method: 'POST',
         headers: getAuthHeader(),
         body: JSON.stringify(company)
@@ -282,7 +316,7 @@ export function DataProvider({ children }) {
 
   const updateCompany = async (id, data) => {
     try {
-      const res = await fetch(`http://localhost:3000/api/companies/${id}`, {
+      const res = await apiFetch(`/api/companies/${id}`, {
         method: 'PUT',
         headers: getAuthHeader(),
         body: JSON.stringify(data)
@@ -297,7 +331,7 @@ export function DataProvider({ children }) {
 
   const deleteCompany = async (id) => {
     try {
-      const res = await fetch(`http://localhost:3000/api/companies/${id}`, {
+      const res = await apiFetch(`/api/companies/${id}`, {
         method: 'DELETE',
         headers: getAuthHeader()
       });
@@ -312,7 +346,7 @@ export function DataProvider({ children }) {
   // Departments
   const addDepartment = async (dept) => {
     try {
-      const res = await fetch('http://localhost:3000/api/departments', {
+      const res = await apiFetch('/api/departments', {
         method: 'POST',
         headers: getAuthHeader(),
         body: JSON.stringify(dept)
@@ -328,7 +362,7 @@ export function DataProvider({ children }) {
 
   const updateDepartment = async (id, data) => {
     try {
-      const res = await fetch(`http://localhost:3000/api/departments/${id}`, {
+      const res = await apiFetch(`/api/departments/${id}`, {
         method: 'PUT',
         headers: getAuthHeader(),
         body: JSON.stringify(data)
@@ -343,7 +377,7 @@ export function DataProvider({ children }) {
 
   const deleteDepartment = async (id) => {
     try {
-      const res = await fetch(`http://localhost:3000/api/departments/${id}`, {
+      const res = await apiFetch(`/api/departments/${id}`, {
         method: 'DELETE',
         headers: getAuthHeader()
       });
@@ -358,7 +392,7 @@ export function DataProvider({ children }) {
   // Areas
   const addArea = async (area) => {
     try {
-      const res = await fetch('http://localhost:3000/api/areas', {
+      const res = await apiFetch('/api/areas', {
         method: 'POST',
         headers: getAuthHeader(),
         body: JSON.stringify(area)
@@ -374,7 +408,7 @@ export function DataProvider({ children }) {
 
   const updateArea = async (id, data) => {
     try {
-      const res = await fetch(`http://localhost:3000/api/areas/${id}`, {
+      const res = await apiFetch(`/api/areas/${id}`, {
         method: 'PUT',
         headers: getAuthHeader(),
         body: JSON.stringify(data)
@@ -389,7 +423,7 @@ export function DataProvider({ children }) {
 
   const deleteArea = async (id) => {
     try {
-      const res = await fetch(`http://localhost:3000/api/areas/${id}`, {
+      const res = await apiFetch(`/api/areas/${id}`, {
         method: 'DELETE',
         headers: getAuthHeader()
       });
@@ -404,7 +438,7 @@ export function DataProvider({ children }) {
   // Divisions
   const addDivision = async (div) => {
     try {
-      const res = await fetch('http://localhost:3000/api/divisions', {
+      const res = await apiFetch('/api/divisions', {
         method: 'POST',
         headers: getAuthHeader(),
         body: JSON.stringify(div)
@@ -420,7 +454,7 @@ export function DataProvider({ children }) {
 
   const updateDivision = async (id, data) => {
     try {
-      const res = await fetch(`http://localhost:3000/api/divisions/${id}`, {
+      const res = await apiFetch(`/api/divisions/${id}`, {
         method: 'PUT',
         headers: getAuthHeader(),
         body: JSON.stringify(data)
@@ -435,7 +469,7 @@ export function DataProvider({ children }) {
 
   const deleteDivision = async (id) => {
     try {
-      const res = await fetch(`http://localhost:3000/api/divisions/${id}`, {
+      const res = await apiFetch(`/api/divisions/${id}`, {
         method: 'DELETE',
         headers: getAuthHeader()
       });
@@ -450,7 +484,7 @@ export function DataProvider({ children }) {
   // Subdivisions
   const addSubdivision = async (subdiv) => {
     try {
-      const res = await fetch('http://localhost:3000/api/subdivisions', {
+      const res = await apiFetch('/api/subdivisions', {
         method: 'POST',
         headers: getAuthHeader(),
         body: JSON.stringify(subdiv)
@@ -466,7 +500,7 @@ export function DataProvider({ children }) {
 
   const updateSubdivision = async (id, data) => {
     try {
-      const res = await fetch(`http://localhost:3000/api/subdivisions/${id}`, {
+      const res = await apiFetch(`/api/subdivisions/${id}`, {
         method: 'PUT',
         headers: getAuthHeader(),
         body: JSON.stringify(data)
@@ -481,7 +515,7 @@ export function DataProvider({ children }) {
 
   const deleteSubdivision = async (id) => {
     try {
-      const res = await fetch(`http://localhost:3000/api/subdivisions/${id}`, {
+      const res = await apiFetch(`/api/subdivisions/${id}`, {
         method: 'DELETE',
         headers: getAuthHeader()
       });
@@ -496,7 +530,7 @@ export function DataProvider({ children }) {
   // Dimension 5
   const addDimension5 = async (dim5) => {
     try {
-      const res = await fetch('http://localhost:3000/api/dimension5', {
+      const res = await apiFetch('/api/dimension5', {
         method: 'POST',
         headers: getAuthHeader(),
         body: JSON.stringify(dim5)
@@ -512,7 +546,7 @@ export function DataProvider({ children }) {
 
   const updateDimension5 = async (id, data) => {
     try {
-      const res = await fetch(`http://localhost:3000/api/dimension5/${id}`, {
+      const res = await apiFetch(`/api/dimension5/${id}`, {
         method: 'PUT',
         headers: getAuthHeader(),
         body: JSON.stringify(data)
@@ -527,7 +561,7 @@ export function DataProvider({ children }) {
 
   const deleteDimension5 = async (id) => {
     try {
-      const res = await fetch(`http://localhost:3000/api/dimension5/${id}`, {
+      const res = await apiFetch(`/api/dimension5/${id}`, {
         method: 'DELETE',
         headers: getAuthHeader()
       });
@@ -542,7 +576,7 @@ export function DataProvider({ children }) {
   // Commissions
   const addCommission = async (comm) => {
     await flushPendingDraftSaves();
-    const res = await fetch('http://localhost:3000/api/commissions', {
+    const res = await apiFetch('/api/commissions', {
       method: 'POST',
       headers: getAuthHeader(),
       body: JSON.stringify(comm)
@@ -559,7 +593,7 @@ export function DataProvider({ children }) {
 
   const updateCommission = async (id, data) => {
     await flushPendingDraftSaves();
-    const res = await fetch(`http://localhost:3000/api/commissions/${id}`, {
+    const res = await apiFetch(`/api/commissions/${id}`, {
       method: 'PUT',
       headers: getAuthHeader(),
       body: JSON.stringify(data)
@@ -578,7 +612,7 @@ export function DataProvider({ children }) {
 
   const deleteCommission = async (id) => {
     await flushPendingDraftSaves();
-    const res = await fetch(`http://localhost:3000/api/commissions/${id}`, {
+    const res = await apiFetch(`/api/commissions/${id}`, {
       method: 'DELETE',
       headers: getAuthHeader()
     });
@@ -648,7 +682,7 @@ export function DataProvider({ children }) {
             baseExpected,
             Number.isInteger(mapNow) ? mapNow : 0
           );
-          const response = await fetch(`http://localhost:3000/api/payroll-drafts/${key}`, {
+          const response = await apiFetch(`/api/payroll-drafts/${key}`, {
             method: 'PUT',
             headers: getAuthHeader(),
             body: JSON.stringify({
@@ -723,8 +757,89 @@ export function DataProvider({ children }) {
     return trackedTask;
   };
 
+  const persistEmployeePatch = (draftId, employee) => {
+    const key = String(draftId ?? '');
+    const employeeId = String(employee?.id ?? '');
+    if (!key || !employeeId) return Promise.resolve(null);
+    if (deletingDraftIds.current.has(key) || draftConflictIds.current.has(key)) {
+      return Promise.resolve(null);
+    }
+
+    const snapshot = JSON.parse(JSON.stringify(employee));
+    const previousTask = draftSyncChains.current.get(key) || Promise.resolve();
+    const task = previousTask
+      .catch(() => null)
+      .then(async () => {
+        if (deletingDraftIds.current.has(key) || draftConflictIds.current.has(key)) return null;
+        const expectedRevision = Number(draftServerRevisions.current.get(key)) || 0;
+        const response = await apiFetch(
+          `/api/payroll-drafts/${key}/employees/${employeeId}`,
+          {
+            method: 'PATCH',
+            headers: getAuthHeader(),
+            body: JSON.stringify({ revision: expectedRevision, employee: snapshot })
+          }
+        );
+        if (response.status === 409) {
+          const body = await response.json().catch(() => ({}));
+          const currentRevision = Number(body.currentRevision);
+          if (Number.isInteger(currentRevision) && currentRevision >= 0) {
+            draftServerRevisions.current.set(key, currentRevision);
+          }
+          draftConflictIds.current.add(key);
+          return null;
+        }
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          throw new Error(body.error || `HTTP ${response.status}`);
+        }
+        const saved = await response.json();
+        const savedRevision = Number(saved.revision);
+        if (Number.isInteger(savedRevision) && savedRevision >= 0) {
+          draftServerRevisions.current.set(key, savedRevision);
+        }
+        draftConflictIds.current.delete(key);
+        setActivePayrolls((current) => current.map((draft) => (
+          String(draft.id) !== key
+            ? draft
+            : {
+                ...draft,
+                revision: savedRevision,
+                employees: (draft.employees || []).map((row) => (
+                  String(row.id) === employeeId ? saved.employee : row
+                ))
+              }
+        )));
+        return saved;
+      })
+      .catch((error) => {
+        console.error('No se pudo guardar la fila de nómina:', error);
+        return null;
+      });
+
+    let trackedTask;
+    trackedTask = task.finally(() => {
+      if (draftSyncChains.current.get(key) === trackedTask) {
+        draftSyncChains.current.delete(key);
+      }
+    });
+    draftSyncChains.current.set(key, trackedTask);
+    return trackedTask;
+  };
+
   const flushPendingDraftSaves = async () => {
     let failed = false;
+
+    const pendingEmployees = [...pendingEmployeeSaves.current.entries()];
+    pendingEmployeeSaves.current.clear();
+    const employeeTasks = pendingEmployees.map(([pendingKey, item]) => {
+      const timer = employeeSaveTimeouts.current.get(pendingKey);
+      if (timer) clearTimeout(timer);
+      employeeSaveTimeouts.current.delete(pendingKey);
+      return persistEmployeePatch(item.draftId, item.employee);
+    });
+    const employeeResults = await Promise.all(employeeTasks);
+    if (employeeResults.some((result) => result === null)) failed = true;
 
     // Normalmente basta una vuelta. La segunda cubre una edición que haya
     // entrado mientras se esperaba una escritura ya iniciada.
@@ -749,53 +864,23 @@ export function DataProvider({ children }) {
       if (pendingDraftSaves.current.size === 0) break;
     }
 
+    if (pendingEmployeeSaves.current.size > 0) {
+      const trailing = [...pendingEmployeeSaves.current.entries()];
+      pendingEmployeeSaves.current.clear();
+      const results = await Promise.all(trailing.map(([pendingKey, item]) => {
+        const timer = employeeSaveTimeouts.current.get(pendingKey);
+        if (timer) clearTimeout(timer);
+        employeeSaveTimeouts.current.delete(pendingKey);
+        return persistEmployeePatch(item.draftId, item.employee);
+      }));
+      if (results.some((result) => result === null)) failed = true;
+    }
+
     if (failed || draftConflictIds.current.size > 0) {
       throw new Error(
         'Una nómina cambió en otra pestaña o sesión. Recárguela y revise los datos antes de continuar.'
       );
     }
-  };
-
-  /**
-   * Persiste el borrador antes de enviar a auditoría.
-   * Si hay 409 por revisión stale (típico tras editar un bono), reintenta una vez
-   * con currentRevision del servidor manteniendo el payload local (empleados).
-   */
-  const persistDraftBeforeClose = async (draftPayload, localRevision = null, serverRevision = null) => {
-    const key = String(draftPayload?.id ?? '');
-    if (!key) return null;
-
-    // Permitir el intento aunque un autosave previo haya marcado conflicto.
-    draftConflictIds.current.delete(key);
-
-    const known = Number(draftServerRevisions.current.get(key));
-    const hinted = Number(serverRevision);
-    const fromDraft = Number(draftPayload?.revision);
-    const expected = Math.max(
-      Number.isInteger(hinted) ? hinted : 0,
-      Number.isInteger(known) ? known : 0,
-      Number.isInteger(fromDraft) ? fromDraft : 0
-    );
-
-    let saved = await persistDraftPatch(
-      draftPayload,
-      localRevision ?? bumpDraftSyncRevision(key),
-      expected
-    );
-    if (saved) return saved;
-
-    const currentRevision = Number(draftServerRevisions.current.get(key));
-    if (!draftConflictIds.current.has(key) || !Number.isInteger(currentRevision)) {
-      return null;
-    }
-
-    draftConflictIds.current.delete(key);
-    saved = await persistDraftPatch(
-      { ...draftPayload, revision: currentRevision },
-      bumpDraftSyncRevision(key),
-      currentRevision
-    );
-    return saved;
   };
 
   // Las APIs de novedades actualizan el borrador dentro de su propia
@@ -805,7 +890,7 @@ export function DataProvider({ children }) {
 
   const addOperationLog = async (data) => {
     await flushPendingDraftSaves();
-    const res = await fetch('http://localhost:3000/api/operation-logs', {
+    const res = await apiFetch('/api/operation-logs', {
       method: 'POST',
       headers: getAuthHeader(),
       body: JSON.stringify(data),
@@ -833,7 +918,7 @@ export function DataProvider({ children }) {
 
   const updateOperationLogStatus = async (id, status, periodAssigned = null, justification = null, rejectionFromNomina = false, logSnapshot = null) => {
     await flushPendingDraftSaves();
-    const res = await fetch(`http://localhost:3000/api/operation-logs/${id}/status`, {
+    const res = await apiFetch(`/api/operation-logs/${id}/status`, {
       method: 'PUT',
       headers: getAuthHeader(),
       body: JSON.stringify({ status, periodAssigned, justification, rejectionFromNomina }),
@@ -868,7 +953,7 @@ export function DataProvider({ children }) {
   const deleteOperationLog = async (id) => {
     await flushPendingDraftSaves();
     const prevLog = operationLogs.find((l) => String(l.id) === String(id));
-    const res = await fetch(`http://localhost:3000/api/operation-logs/${id}`, {
+    const res = await apiFetch(`/api/operation-logs/${id}`, {
       method: 'DELETE',
       headers: getAuthHeader(),
     });
@@ -885,7 +970,7 @@ export function DataProvider({ children }) {
   const updateOperationLog = async (id, data) => {
     await flushPendingDraftSaves();
     const prevLog = operationLogs.find((l) => String(l.id) === String(id));
-    const res = await fetch(`http://localhost:3000/api/operation-logs/${id}/correct-and-resubmit`, {
+    const res = await apiFetch(`/api/operation-logs/${id}/correct-and-resubmit`, {
       method: 'PUT',
       headers: getAuthHeader(),
       body: JSON.stringify(data),
@@ -913,7 +998,7 @@ export function DataProvider({ children }) {
         if (cleanedData[key] === '') cleanedData[key] = null;
       });
 
-      const res = await fetch('http://localhost:3000/api/employees', {
+      const res = await apiFetch('/api/employees', {
         method: 'POST',
         headers: getAuthHeader(),
         body: JSON.stringify(cleanedData)
@@ -938,7 +1023,7 @@ export function DataProvider({ children }) {
         }
       });
 
-      const res = await fetch(`http://localhost:3000/api/employees/${id}`, {
+      const res = await apiFetch(`/api/employees/${id}`, {
         method: 'PUT',
         headers: getAuthHeader(),
         body: JSON.stringify(cleanedData)
@@ -957,7 +1042,7 @@ export function DataProvider({ children }) {
 
   const deleteEmployee = async (id) => {
     try {
-      const res = await fetch(`http://localhost:3000/api/employees/${id}`, {
+      const res = await apiFetch(`/api/employees/${id}`, {
         method: 'DELETE',
         headers: getAuthHeader()
       });
@@ -975,7 +1060,7 @@ export function DataProvider({ children }) {
   // Employee Records (estudios, cursos, puestos, eventos, record, hijos, empresa_anterior, vehiculo)
   const addEmployeeRecord = async (employeeId, type, data) => {
     try {
-      const res = await fetch(`http://localhost:3000/api/employees/${employeeId}/records`, {
+      const res = await apiFetch(`/api/employees/${employeeId}/records`, {
         method: 'POST',
         headers: getAuthHeader(),
         body: JSON.stringify({ type, data })
@@ -1000,7 +1085,7 @@ export function DataProvider({ children }) {
 
   const updateEmployeeRecord = async (recordId, data) => {
     try {
-      const res = await fetch(`http://localhost:3000/api/employee-records/${recordId}`, {
+      const res = await apiFetch(`/api/employee-records/${recordId}`, {
         method: 'PUT',
         headers: getAuthHeader(),
         body: JSON.stringify({ data })
@@ -1021,7 +1106,7 @@ export function DataProvider({ children }) {
 
   const deleteEmployeeRecord = async (employeeId, recordId) => {
     try {
-      await fetch(`http://localhost:3000/api/employee-records/${recordId}`, {
+      await apiFetch(`/api/employee-records/${recordId}`, {
         method: 'DELETE',
         headers: getAuthHeader()
       });
@@ -1039,7 +1124,7 @@ export function DataProvider({ children }) {
 
   // Bonuses (API)
   const addBonus = async (bonus) => {
-    const res = await fetch('http://localhost:3000/api/bonuses', {
+    const res = await apiFetch('/api/bonuses', {
       method: 'POST',
       headers: getAuthHeader(),
       body: JSON.stringify(bonus)
@@ -1051,7 +1136,7 @@ export function DataProvider({ children }) {
   };
 
   const updateBonus = async (id, data) => {
-    const res = await fetch(`http://localhost:3000/api/bonuses/${id}`, {
+    const res = await apiFetch(`/api/bonuses/${id}`, {
       method: 'PUT',
       headers: getAuthHeader(),
       body: JSON.stringify(data)
@@ -1063,7 +1148,7 @@ export function DataProvider({ children }) {
   };
 
   const deleteBonus = async (id) => {
-    const res = await fetch(`http://localhost:3000/api/bonuses/${id}`, {
+    const res = await apiFetch(`/api/bonuses/${id}`, {
       method: 'DELETE',
       headers: getAuthHeader()
     });
@@ -1101,6 +1186,21 @@ export function DataProvider({ children }) {
     }
 
     const draftRefDate = draftDateStr || new Date().toISOString();
+    const payrollInputs = await apiJson(
+      `/api/payroll-inputs?companyId=${encodeURIComponent(selectedCompanyIds[0])}`
+      + `&date=${encodeURIComponent(draftRefDate)}`
+      + `&periodType=${encodeURIComponent(periodType)}`
+    );
+    const inputEmployees = Array.isArray(payrollInputs.employees) ? payrollInputs.employees : [];
+    const inputCommissions = Array.isArray(payrollInputs.commissions) ? payrollInputs.commissions : [];
+    const inputOperationLogs = Array.isArray(payrollInputs.operationLogs) ? payrollInputs.operationLogs : [];
+    const inputBonuses = Array.isArray(payrollInputs.bonuses) ? payrollInputs.bonuses : [];
+
+    // Conservar sólo el contexto de la empresa abierta, sin precargarlo al entrar.
+    setEmployees(inputEmployees);
+    setCommissions(inputCommissions);
+    setOperationLogs(inputOperationLogs);
+    setBonuses(inputBonuses);
     const isInPayrollInputWindow = (dateValue) => {
       if (!dateValue) return false;
       if (periodType !== '2da') {
@@ -1127,78 +1227,13 @@ export function DataProvider({ children }) {
     let missingAnticipoWarning = false;
     if (periodType === '2da') {
       // Refrescar historial para no perder 1ras recién cerradas
-      let historySource = payrollHistory;
-      try {
-        const histRes = await fetch('http://localhost:3000/api/payrolls', { headers: getAuthHeader() });
-        if (histRes.ok) {
-          const apiHistory = await histRes.json();
-          if (Array.isArray(apiHistory)) {
-            historySource = apiHistory;
-            setPayrollHistory(apiHistory);
-          }
-        }
-      } catch (e) {
-        console.warn('No se pudo refrescar historial para anticipo 1ra:', e);
-      }
+      const historySource = payrollInputs.firstQuincena
+        ? [payrollInputs.firstQuincena]
+        : [];
 
       const targetDate = parseLocalDate(draftRefDate);
       const month = targetDate.getMonth();
       const year = targetDate.getFullYear();
-
-      const parseCompanies = (h) => {
-        const set = new Set();
-        const addAll = (raw) => {
-          let comps = raw;
-          if (typeof comps === 'string') {
-            try { comps = JSON.parse(comps); } catch { comps = []; }
-          }
-          if (!Array.isArray(comps)) return;
-          comps.forEach((c) => {
-            if (c != null && String(c).trim()) set.add(String(c).trim());
-          });
-        };
-        addAll(h.companies);
-        let summary = h.summary;
-        if (typeof summary === 'string') {
-          try { summary = JSON.parse(summary); } catch { summary = null; }
-        }
-        if (summary && typeof summary === 'object') addAll(summary.companies);
-        return Array.from(set);
-      };
-
-      const matchesCompanies = (h) => {
-        const hComps = parseCompanies(h);
-        if (selectedCompanyIds.length === 0) return false;
-        if (hComps.length === 0 || hComps.includes('ALL')) return false;
-
-        // IDs originales si el API ya resolvió nombres en summary.companies
-        let summary = h.summary;
-        if (typeof summary === 'string') {
-          try { summary = JSON.parse(summary); } catch { summary = null; }
-        }
-        const companyIds = Array.isArray(summary?.companyIds) ? summary.companyIds.map(String) : [];
-
-        const selectedNames = selectedCompanyIds.map((id) => {
-          const c = companies.find((x) => String(x.id) === String(id));
-          return c ? (c.nombre_comercial || c.razon_social || String(id)) : String(id);
-        });
-        const selectedNits = selectedCompanyIds.map((id) => {
-          const c = companies.find((x) => String(x.id) === String(id));
-          return c?.nit ? String(c.nit).trim() : null;
-        }).filter(Boolean);
-
-        const idMatch = selectedCompanyIds.some((id) =>
-          hComps.some((hc) => String(hc) === String(id))
-          || companyIds.some((cid) => String(cid) === String(id))
-        );
-        const nameMatch = selectedNames.some((name) =>
-          hComps.some((hc) => String(hc).trim().toLowerCase() === String(name).trim().toLowerCase())
-        );
-        const nitMatch = selectedNits.some((nit) =>
-          hComps.some((hc) => String(hc).trim() === nit)
-        );
-        return idMatch || nameMatch || nitMatch;
-      };
 
       const matchesMonth = (h) => {
         const hDate = parseLocalDate(h.createdAt || h.closedAt || Date.now());
@@ -1214,7 +1249,6 @@ export function DataProvider({ children }) {
       let histories1ra = historySource.filter(h =>
         isFirstQuincena(h)
         && matchesMonth(h)
-        && matchesCompanies(h)
         && h.status === 'cerrada'
       );
 
@@ -1228,11 +1262,11 @@ export function DataProvider({ children }) {
       if (best) {
         let emps = [];
         if (typeof best.data === 'string') {
-          try { emps = JSON.parse(best.data); } catch (e) { emps = []; }
+          try { emps = JSON.parse(best.data); } catch { emps = []; }
         } else if (Array.isArray(best.data)) {
           emps = best.data;
         } else if (typeof best.employees === 'string') {
-          try { emps = JSON.parse(best.employees); } catch (e) { emps = []; }
+          try { emps = JSON.parse(best.employees); } catch { emps = []; }
         } else if (Array.isArray(best.employees)) {
           emps = best.employees;
         }
@@ -1240,7 +1274,7 @@ export function DataProvider({ children }) {
         // El listado del historial suele venir sin data (summary=1); cargar detalle
         if (!Array.isArray(emps) || emps.length === 0) {
           try {
-            const detailRes = await fetch(`http://localhost:3000/api/payrolls/${best.id}`, {
+            const detailRes = await apiFetch(`/api/payrolls/${best.id}`, {
               headers: getAuthHeader()
             });
             if (detailRes.ok) {
@@ -1332,7 +1366,7 @@ export function DataProvider({ children }) {
     const employeeSources = periodType === '2da'
       ? (() => {
           const merged = new Map();
-          employees.forEach((current) => {
+          inputEmployees.forEach((current) => {
             if (!belongsToSelectedCompany(current)) return;
             const first = firstQuincenaEmployees[String(current.id)];
             if (!isActiveEmployee(current) && !first) return;
@@ -1348,7 +1382,7 @@ export function DataProvider({ children }) {
           });
           return [...merged.values()];
         })()
-      : employees
+      : inputEmployees
           .filter(e => isActiveEmployee(e) && belongsToSelectedCompany(e))
           .map(e => ({ ...e, _hasCurrentMaster: true }));
 
@@ -1446,7 +1480,7 @@ export function DataProvider({ children }) {
           'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
         ];
         const draftMonthName = draftMonthNames[parseLocalDate(draftRefDate).getMonth()];
-        const empCommissions = commissions.filter((commission) => {
+        const empCommissions = inputCommissions.filter((commission) => {
           if (String(commission.employee_id) !== String(e.id)) return false;
           if (String(commission.estado || '').trim().toLowerCase() === 'aplicado') return false;
           if (
@@ -1470,7 +1504,7 @@ export function DataProvider({ children }) {
           }
         });
 
-        const empOpLogs = operationLogs.filter(l => {
+        const empOpLogs = inputOperationLogs.filter(l => {
           if (String(l.employeeId) !== String(e.id) || l.status !== 'APPROVED_MANAGER') return false;
           if (periodType !== '2da') return false;
           if (!isInPayrollInputWindow(l.date)) return false;
@@ -1514,7 +1548,7 @@ export function DataProvider({ children }) {
 
         // Bonos del catálogo: se autoaplican por fecha/asignación. La segunda
         // quincena es acumulada y conserva también los aplicados en la primera.
-        const periodAppliedBonuses = bonuses.reduce((assigned, bonus) => {
+        const periodAppliedBonuses = inputBonuses.reduce((assigned, bonus) => {
           if (!isDateInQuincena(bonus.date, draftRefDate, periodType)) return assigned;
           const assignments = bonus.assignments || {};
           const rawAmount = assignments[String(e.id)] ?? assignments[e.id];
@@ -1576,7 +1610,8 @@ export function DataProvider({ children }) {
         const totalIsr = periodType === '2da' ? monthlyIsr : undefined;
         const periodIsr = Number((monthlyIsr * recurringDeductionFactor).toFixed(2));
 
-        const { _hasCurrentMaster, ...employeeSnapshot } = e;
+        const employeeSnapshot = { ...e };
+        delete employeeSnapshot._hasCurrentMaster;
         return {
           ...employeeSnapshot,
           days,
@@ -1642,24 +1677,13 @@ export function DataProvider({ children }) {
       missingAnticipoWarning: periodType === '2da' && missingAnticipoWarning
     };
 
-    try {
-      const res = await fetch('http://localhost:3000/api/payroll-drafts', {
-        method: 'POST',
-        headers: getAuthHeader(),
-        body: JSON.stringify(newDraftData)
-      });
-      if (res.ok) {
-        const savedDraft = await res.json();
-        rememberDraftServerRevisions([savedDraft]);
-        setActivePayrolls([savedDraft, ...activePayrolls]);
-        return savedDraft.id;
-      } else {
-        const errBody = await res.json().catch(() => null);
-        throw new Error(errBody?.error || 'No se pudo crear el borrador de nómina');
-      }
-    } catch(e) {
-      throw e;
-    }
+    const savedDraft = await apiJson('/api/payroll-drafts', {
+      method: 'POST',
+      body: JSON.stringify(newDraftData)
+    });
+    rememberDraftServerRevisions([savedDraft]);
+    setActivePayrolls([savedDraft, ...activePayrolls]);
+    return savedDraft.id;
   };
 
   const updateActivePayroll = async (id, newEmployeesData) => {
@@ -1670,76 +1694,34 @@ export function DataProvider({ children }) {
       }
       const draftToUpdate = activePayrolls.find(p => p.id === id);
       if (draftToUpdate?.isApproved) return;
-      const periodType = draftToUpdate ? draftToUpdate.periodType : 'mensual';
       const oldEmployees = draftToUpdate ? draftToUpdate.employees : [];
 
-      // Find exactly which employees changed by comparing object references
       const changedEmployees = newEmployeesData.filter(newEmp => {
         const oldEmp = oldEmployees.find(e => e.id === newEmp.id);
-        return newEmp !== oldEmp; 
+        return newEmp !== oldEmp;
       });
+      if (changedEmployees.length === 0) return { success: true };
 
-      // If we couldn't find any (e.g. initial load) or there are changes, we send those.
-      // Otherwise we fallback to sending everything (shouldn't happen on edits).
-      const employeesToCalculate = changedEmployees.length > 0 ? changedEmployees : newEmployeesData;
+      setActivePayrolls((current) => current.map((draft) => (
+        String(draft.id) === draftKey
+          ? { ...draft, employees: newEmployeesData }
+          : draft
+      )));
 
-      // 1. Fetch exact calculations from the backend engine only for changed employees
-      const previewRes = await fetch('http://localhost:3000/api/calculator/preview', {
-        method: 'POST',
-        headers: getAuthHeader(),
-        body: JSON.stringify({ employees: employeesToCalculate, periodType })
+      changedEmployees.forEach((employee) => {
+        const pendingKey = `${draftKey}:${employee.id}`;
+        pendingEmployeeSaves.current.set(pendingKey, { draftId: draftKey, employee });
+        const existingTimer = employeeSaveTimeouts.current.get(pendingKey);
+        if (existingTimer) clearTimeout(existingTimer);
+        const timer = setTimeout(async () => {
+          employeeSaveTimeouts.current.delete(pendingKey);
+          const pending = pendingEmployeeSaves.current.get(pendingKey);
+          if (!pending) return;
+          pendingEmployeeSaves.current.delete(pendingKey);
+          await persistEmployeePatch(pending.draftId, pending.employee);
+        }, 500);
+        employeeSaveTimeouts.current.set(pendingKey, timer);
       });
-
-      if (!previewRes.ok) {
-        const errBody = await previewRes.json().catch(() => null);
-        throw new Error(errBody?.error || 'El servidor no pudo validar los cálculos de nómina.');
-      }
-      const calculatedResults = await previewRes.json();
-
-      // Merge the newly calculated rows back into the full list
-      const calculatedEmployees = newEmployeesData.map(emp => {
-        const calcEmp = calculatedResults.find(c => String(c.id) === String(emp.id));
-        return calcEmp ? calcEmp : emp;
-      });
-
-      // 2. Update React state immediately for UI response
-      const updatedDrafts = activePayrolls.map(p => p.id === id ? { ...p, employees: calculatedEmployees } : p);
-      setActivePayrolls(updatedDrafts);
-
-      const draft = updatedDrafts.find(p => p.id === id);
-      if (draft) {
-        // Invalida cualquier respuesta anterior desde el momento de la edición,
-        // aunque este guardado permanezca diferido por 1.5 segundos.
-        const revision = bumpDraftSyncRevision(id);
-        const draftServerRevision = Number(draft.revision);
-        const knownServerRevision = Number(draftServerRevisions.current.get(draftKey));
-        const fromDraft = Number.isInteger(draftServerRevision) ? draftServerRevision : 0;
-        const fromMap = Number.isInteger(knownServerRevision) ? knownServerRevision : 0;
-        const serverRevision = Math.max(fromDraft, fromMap);
-        pendingDraftSaves.current.set(draftKey, {
-          draft,
-          localRevision: revision,
-          serverRevision
-        });
-
-        // 3. Clear existing timeout for this draft
-        if (saveTimeouts.current[id]) {
-          clearTimeout(saveTimeouts.current[id]);
-        }
-        
-        // 4. Set a new timeout to persist to the database after 1.5 seconds of inactivity
-        saveTimeouts.current[id] = setTimeout(async () => {
-          delete saveTimeouts.current[id];
-          const pending = pendingDraftSaves.current.get(draftKey);
-          if (!pending || pending.localRevision !== revision) return;
-          pendingDraftSaves.current.delete(draftKey);
-          await persistDraftPatch(
-            pending.draft,
-            pending.localRevision,
-            pending.serverRevision
-          );
-        }, 1500);
-      }
       return { success: true };
     } catch(err) {
       console.error("Error in updateActivePayroll:", err);
@@ -1794,19 +1776,49 @@ export function DataProvider({ children }) {
       );
     }
 
-    const draft = {
-      ...original,
-      title,
-      notes: notes !== undefined ? notes : original.notes
-    };
-    const saved = await persistDraftPatch(draft);
-    if (!saved) throw new Error('No se pudo actualizar el borrador');
+    await flushPendingDraftSaves();
+    const key = String(id);
+    const revision = Number(draftServerRevisions.current.get(key))
+      || Number(original.revision)
+      || 0;
+    const response = await apiFetch(`/api/payroll-drafts/${key}`, {
+      method: 'PATCH',
+      headers: getAuthHeader(),
+      body: JSON.stringify({
+        revision,
+        title,
+        notes: notes !== undefined ? notes : original.notes
+      })
+    });
+    const saved = await response.json().catch(() => ({}));
+    if (response.status === 409) {
+      if (Number.isInteger(Number(saved.currentRevision))) {
+        draftServerRevisions.current.set(key, Number(saved.currentRevision));
+      }
+      draftConflictIds.current.add(key);
+      throw new Error(saved.error || 'El borrador cambió en otra pestaña.');
+    }
+    if (!response.ok) throw new Error(saved.error || 'No se pudo actualizar el borrador');
+    if (Number.isInteger(Number(saved.revision))) {
+      draftServerRevisions.current.set(key, Number(saved.revision));
+    }
+    setActivePayrolls((current) => current.map((draft) => (
+      String(draft.id) === key ? { ...draft, ...saved } : draft
+    )));
   };
 
   const deleteActivePayroll = async (id) => {
     const key = String(id);
     deletingDraftIds.current.add(key);
     pendingDraftSaves.current.delete(key);
+    [...pendingEmployeeSaves.current.keys()]
+      .filter((pendingKey) => pendingKey.startsWith(`${key}:`))
+      .forEach((pendingKey) => {
+        pendingEmployeeSaves.current.delete(pendingKey);
+        const timer = employeeSaveTimeouts.current.get(pendingKey);
+        if (timer) clearTimeout(timer);
+        employeeSaveTimeouts.current.delete(pendingKey);
+      });
     if (saveTimeouts.current[id]) {
       clearTimeout(saveTimeouts.current[id]);
       delete saveTimeouts.current[id];
@@ -1823,7 +1835,7 @@ export function DataProvider({ children }) {
     }
 
     try {
-      const response = await fetch(`http://localhost:3000/api/payroll-drafts/${key}`, {
+      const response = await apiFetch(`/api/payroll-drafts/${key}`, {
         method: 'DELETE',
         headers: getAuthHeader()
       });
@@ -1900,41 +1912,11 @@ export function DataProvider({ children }) {
       });
 
       try {
-        // Vaciar cualquier guardado diferido y persistir el borrador editable.
-        // Un aprobado no se toca: el servidor usará exactamente el snapshot
-        // que recibió el visto bueno de Auditoría.
-        if (saveTimeouts.current[id]) {
-          clearTimeout(saveTimeouts.current[id]);
-          delete saveTimeouts.current[id];
-        }
-        let persistedPendingDraft = null;
-        const pendingSave = pendingDraftSaves.current.get(String(id));
-        if (pendingSave) {
-          pendingDraftSaves.current.delete(String(id));
-          persistedPendingDraft = await persistDraftBeforeClose(
-            pendingSave.draft,
-            pendingSave.localRevision,
-            pendingSave.serverRevision
-          );
-          if (!persistedPendingDraft) {
-            throw new Error(
-              draftConflictIds.current.has(String(id))
-                ? 'La nómina cambió en otra pestaña o sesión. Recargue la aplicación, revise los valores actualizados y vuelva a enviarla.'
-                : 'No se pudo guardar el último cambio de la nómina antes de enviarla.'
-            );
-          }
-        }
-        if (!draft.isApproved && !persistedPendingDraft) {
-          const persistedDraft = await persistDraftBeforeClose(draft);
-          if (!persistedDraft) {
-            const conflictMessage = draftConflictIds.current.has(String(id))
-              ? 'La nómina cambió en otra pestaña o sesión. Recargue la aplicación, revise los valores actualizados y vuelva a enviarla.'
-              : 'No se pudo guardar el borrador antes de enviarlo.';
-            throw new Error(conflictMessage);
-          }
-        }
+        // Las filas se guardan individualmente. Antes de cerrar se vacía la
+        // cola y el servidor crea el historial desde el snapshot ya persistido.
+        if (!draft.isApproved) await flushPendingDraftSaves();
 
-        const res = await fetch('http://localhost:3000/api/payrolls', {
+        const res = await apiFetch('/api/payrolls', {
           method: 'POST',
           headers: getAuthHeader(),
           body: JSON.stringify({ draftId: id })
@@ -1963,7 +1945,7 @@ export function DataProvider({ children }) {
         // Tras cerrar 2ª, refrescar fichas (Total ISR pudo actualizar employees.isr)
         if (draft.periodType === '2da' && saved.status === 'cerrada') {
           try {
-            const empRes = await fetch('http://localhost:3000/api/employees', { headers: getAuthHeader() });
+            const empRes = await apiFetch('/api/employees', { headers: getAuthHeader() });
             if (empRes.ok) {
               const apiEmployees = await empRes.json();
               if (Array.isArray(apiEmployees)) setEmployees(apiEmployees);
@@ -2010,7 +1992,7 @@ export function DataProvider({ children }) {
   const deletePayroll = async (id) => {
     try {
       const token = localStorage.getItem('nomina-token');
-      await fetch(`http://localhost:3000/api/payrolls/${id}`, {
+      await apiFetch(`/api/payrolls/${id}`, {
         method: 'DELETE',
         headers: token ? { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' },
       });
@@ -2022,7 +2004,7 @@ export function DataProvider({ children }) {
 
   const auditorApprovePayroll = async (id) => {
     try {
-      const response = await fetch(`http://localhost:3000/api/payrolls/${id}/auditor-approve`, {
+      const response = await apiFetch(`/api/payrolls/${id}/auditor-approve`, {
         method: 'POST',
         headers: getAuthHeader()
       });
@@ -2037,7 +2019,7 @@ export function DataProvider({ children }) {
 
   const auditorRejectPayroll = async (id, note) => {
     try {
-      const response = await fetch(`http://localhost:3000/api/payrolls/${id}/auditor-reject`, {
+      const response = await apiFetch(`/api/payrolls/${id}/auditor-reject`, {
         method: 'POST',
         headers: getAuthHeader(),
         body: JSON.stringify({ note })
@@ -2045,14 +2027,14 @@ export function DataProvider({ children }) {
       if (!response.ok) throw new Error('Error al rechazar nómina');
       await fetchActivePayrolls();
       await fetchPayrollHistory();
-      const logsResponse = await fetch('http://localhost:3000/api/operation-logs', {
+      const logsResponse = await apiFetch('/api/operation-logs', {
         headers: getAuthHeader()
       });
       if (logsResponse.ok) {
         const refreshedLogs = await logsResponse.json();
         if (Array.isArray(refreshedLogs)) setOperationLogs(refreshedLogs);
       }
-      const commissionsResponse = await fetch('http://localhost:3000/api/commissions', {
+      const commissionsResponse = await apiFetch('/api/commissions', {
         headers: getAuthHeader()
       });
       if (commissionsResponse.ok) {
@@ -2107,7 +2089,7 @@ export function DataProvider({ children }) {
       operationLogs, addOperationLog, updateOperationLogStatus, deleteOperationLog, updateOperationLog,
       injectApprovedLogIntoActiveDrafts, revertLogFromActiveDrafts,
       flushPendingDraftSaves,
-      activePayrolls, createActivePayroll, updateActivePayroll, updateDraftMetadata, deleteActivePayroll, closePayroll,
+      activePayrolls, loadActivePayroll, createActivePayroll, updateActivePayroll, updateDraftMetadata, deleteActivePayroll, closePayroll,
       savePayroll, deletePayroll, auditorApprovePayroll, auditorRejectPayroll, fetchPayrollHistory, fetchActivePayrolls
   }), [
     companies, departments, employees, bonuses, commissions, payrollHistory,

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useContext, useMemo, useCallback, lazy, Suspense } from 'react';
+import { useState, useEffect, useContext, useMemo, useCallback, lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { DataProvider } from './context/DataContext';
 import { AuthProvider, AuthContext } from './context/AuthContext';
@@ -134,8 +134,8 @@ function AppContent() {
   return (
     <AppContext.Provider value={appValue}>
       <AuthProvider>
-        <DataProvider>
-          <BrowserRouter>
+        <BrowserRouter>
+          <DataProvider>
             <Routes>
               {/* Auth Routes */}
               <Route element={<AuthLayout />}>
@@ -203,8 +203,6 @@ function AppContent() {
                 </Route>
               </Route>
             </Routes>
-          </BrowserRouter>
-
           {/* Global Toast */}
           <Toaster position="bottom-center" richColors expand={true} />
 
@@ -242,7 +240,8 @@ function AppContent() {
               </ModalFooter>
             </ModalContent>
           </Modal>
-        </DataProvider>
+          </DataProvider>
+        </BrowserRouter>
       </AuthProvider>
     </AppContext.Provider>
   );

@@ -12,8 +12,9 @@ import { AppContext } from '../context/AppContext';
 import { AuthContext } from '../context/AuthContext';
 import { DataContext } from '../context/DataContext';
 import { formatCurrency, exportBillingExcel } from '../utils/billingExport';
+import { apiFetch } from '../utils/api';
 
-const API = 'http://localhost:3000/api/billing';
+const API = '/api/billing';
 const BILLING_WRITE_ROLES = new Set(['ADMIN', 'NOMINA', 'GERENTE GENERAL']);
 
 const isSecondPeriod = (p) => String(p?.periodType || '').toLowerCase() === '2da';
@@ -126,7 +127,7 @@ export function BillingExecutePanel({
     }
     try {
       setLoading(true);
-      const res = await fetch(`${API}/preview`, {
+      const res = await apiFetch(`${API}/preview`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -171,7 +172,7 @@ export function BillingExecutePanel({
     confirmAction('Confirmar esta ejecucion de facturacion? Se guardara en el historial.', async () => {
       try {
         setConfirming(true);
-        const res = await fetch(`${API}/runs`, {
+        const res = await apiFetch(`${API}/runs`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

@@ -1,4 +1,3 @@
-import { jsPDF } from 'jspdf';
 import { getNetPayable } from './payrollPeriod.js';
 
 const PAGE = {
@@ -233,8 +232,12 @@ const drawTotalsAndSignatures = (doc, total) => {
  * Genera la Solicitud de Cheques con la distribución del formato
  * institucional usado en Excel.
  */
-export function buildSolicitudChequesPdf({ data = [], group = {}, companies = [] } = {}) {
-  const doc = new jsPDF({
+export function buildSolicitudChequesPdf(
+  { data = [], group = {}, companies = [] } = {},
+  JsPdf
+) {
+  if (!JsPdf) throw new Error('jsPDF no fue cargado');
+  const doc = new JsPdf({
     orientation: 'landscape',
     unit: 'pt',
     format: 'legal',

@@ -1,4 +1,3 @@
-import ExcelJS from 'exceljs';
 import { getNetPayable } from './payrollPeriod.js';
 
 const COLORS = {
@@ -116,22 +115,11 @@ const applyDefaultFont = (worksheet, firstRow, lastRow) => {
   }
 };
 
-const downloadWorkbook = async (workbook, filename) => {
-  const buffer = await workbook.xlsx.writeBuffer();
-  const blob = new Blob([buffer], {
-    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  document.body.removeChild(anchor);
-  URL.revokeObjectURL(url);
-};
-
-export function buildSolicitudChequesWorkbook({ employees = [], group = {}, companies = [] } = {}) {
+export function buildSolicitudChequesWorkbook(
+  { employees = [], group = {}, companies = [] } = {},
+  ExcelJS
+) {
+  if (!ExcelJS) throw new Error('ExcelJS no fue cargado');
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'Sistema de Nómina';
   workbook.created = new Date();
@@ -301,9 +289,13 @@ export function buildSolicitudChequesWorkbook({ employees = [], group = {}, comp
 }
 
 export async function exportSolicitudChequesExcel(params = {}) {
-  const workbook = buildSolicitudChequesWorkbook(params);
+  const { generateAndDownloadExcel } = await import('./excelWorkerClient');
   const safeTitle = String(params.group?.title || 'Nomina')
     .replace(/[^\w-]+/g, '_')
     .slice(0, 50);
-  await downloadWorkbook(workbook, `Sol_Cheques_${safeTitle}.xlsx`);
+  await generateAndDownloadExcel(
+    'solicitud-cheques',
+    params,
+    `Sol_Cheques_${safeTitle}.xlsx`
+  );
 }

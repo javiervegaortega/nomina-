@@ -1,7 +1,9 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const compression = require('compression');
 const path = require('path');
+const { performance } = require('perf_hooks');
 const { sequelize } = require('./src/models');
 
 // Importar rutas
@@ -20,15 +22,45 @@ const bonusRoutes = require('./src/routes/bonus.routes');
 const incidenceRoutes = require('./src/routes/incidence.routes');
 const operationLogRoutes = require('./src/routes/operationLog.routes');
 const operationBatchRoutes = require('./src/routes/operationBatch.routes');
+const catalogRoutes = require('./src/routes/catalog.routes');
+const payrollInputRoutes = require('./src/routes/payrollInput.routes');
+const dashboardRoutes = require('./src/routes/dashboard.routes');
 const { nestedRouter: empRecordsNested, flatRouter: empRecordsFlat } = require('./src/routes/employeeRecord.routes');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middlewares
+app.disable('x-powered-by');
+app.use((req, res, next) => {
+  const startedAt = performance.now();
+  const originalEnd = res.end;
+  res.end = function measuredEnd(...args) {
+    const duration = performance.now() - startedAt;
+    if (!res.headersSent) {
+      res.setHeader('Server-Timing', `app;dur=${duration.toFixed(1)}`);
+    }
+    if (duration >= 250) {
+      console.warn(JSON.stringify({
+        event: 'slow_request',
+        method: req.method,
+        path: req.path,
+        status: res.statusCode,
+        durationMs: Math.round(duration)
+      }));
+    }
+    return originalEnd.apply(this, args);
+  };
+  next();
+});
+app.use(compression());
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
+app.use('/api', (_req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  next();
+});
 
 // Montar rutas de la API
 app.use('/api/auth', authRoutes);
@@ -48,6 +80,9 @@ app.use('/api/bonuses', bonusRoutes);
 app.use('/api/incidences', incidenceRoutes);
 app.use('/api/operation-logs', operationLogRoutes);
 app.use('/api/operation-batches', operationBatchRoutes);
+app.use('/api/catalogs', catalogRoutes);
+app.use('/api/payroll-inputs', payrollInputRoutes);
+app.use('/api/dashboard', dashboardRoutes);
 
 const userRoutes = require('./src/routes/user.routes');
 const sapRoutes = require('./src/routes/sap.routes');
@@ -62,11 +97,21 @@ app.use('/api/billing', billingRoutes);
 
 // ======================= INTEGRACION FRONTEND =======================
 // Servir la carpeta estática del Build de React
-app.use(express.static(path.join(__dirname, '../frontend/dist')));
+const frontendDist = path.join(__dirname, '../frontend/dist');
+app.use(express.static(frontendDist, {
+  setHeaders: (res, filePath) => {
+    if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    } else if (path.basename(filePath) === 'index.html') {
+      res.setHeader('Cache-Control', 'no-cache');
+    }
+  }
+}));
 
 // Cualquier otra ruta no capturada por la API devolverá el index.html de React
 app.use((req, res) => {
-  res.sendFile(path.join(__dirname, '../frontend/dist/index.html'));
+  res.set('Cache-Control', 'no-cache');
+  res.sendFile(path.join(frontendDist, 'index.html'));
 });
 
 // ======================= INICIO DEL SERVIDOR =======================
@@ -88,8 +133,10 @@ const startServer = async () => {
     const { ensureOperationBatchSchema } = require('./src/config/ensureOperationBatchSchema');
     await ensureOperationBatchSchema(sequelize);
 
-    const { ensurePerformanceIndexes } = require('./src/config/ensureIndexes');
-    await ensurePerformanceIndexes(sequelize);
+    if (process.env.RUN_PERFORMANCE_MIGRATIONS === '1') {
+      const { ensurePerformanceIndexes } = require('./src/config/ensureIndexes');
+      await ensurePerformanceIndexes(sequelize);
+    }
     
     app.listen(PORT, () => {
       console.log(`Servidor Node.js corriendo en http://localhost:${PORT}`);

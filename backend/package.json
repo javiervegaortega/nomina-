@@ -12,6 +12,7 @@
     "test:billing": "node src/scripts/test_billing_snapshot.js && node src/scripts/test_billing_export_period.js",
     "test:operations-policy": "node src/scripts/test_operation_log_policy.js",
     "test:operations-schema": "node src/scripts/test_operation_schema.js",
+    "test:performance-contracts": "node src/scripts/test_performance_contracts.js",
     "test:email": "node src/scripts/test_email.js",
     "test:emails-op": "node src/scripts/test_operation_emails.js",
     "test:integration": "node src/scripts/test_integration_bonos.js",
@@ -23,7 +24,11 @@
     "cleanup:payroll": "node src/scripts/cleanup_payroll_data.js --confirm",
     "preflight": "node src/scripts/preflight_nomina.js",
     "test:e2e:all": "node src/scripts/test_e2e_all_companies.js",
-    "test:full": "node src/scripts/cleanup_payroll_data.js --confirm && node src/scripts/test_e2e_all_companies.js && node src/scripts/test_isr.js && node src/scripts/test_overtime_bonuses.js && node src/scripts/test_operation_emails.js && node src/scripts/test_integration_bonos.js && node src/scripts/test_api_bonos.js && node src/scripts/test_billing_snapshot.js && node src/scripts/test_e2e_roles.js"
+    "test:full": "node src/scripts/cleanup_payroll_data.js --confirm && node src/scripts/test_e2e_all_companies.js && node src/scripts/test_isr.js && node src/scripts/test_overtime_bonuses.js && node src/scripts/test_operation_emails.js && node src/scripts/test_integration_bonos.js && node src/scripts/test_api_bonos.js && node src/scripts/test_billing_snapshot.js && node src/scripts/test_e2e_roles.js",
+    "migrate:payroll-summary-v2:check": "node src/scripts/backfill_payroll_summary_v2.js",
+    "migrate:payroll-summary-v2": "node src/scripts/backfill_payroll_summary_v2.js --apply",
+    "migrate:performance:check": "node src/scripts/migrate_performance_indexes.js",
+    "migrate:performance": "node src/scripts/migrate_performance_indexes.js --apply"
   },
   "keywords": [],
   "author": "",
@@ -31,6 +36,7 @@
   "type": "commonjs",
   "dependencies": {
     "bcryptjs": "^3.0.3",
+    "compression": "^1.8.1",
     "cors": "^2.8.6",
     "decimal.js": "^10.6.0",
     "dotenv": "^17.4.2",

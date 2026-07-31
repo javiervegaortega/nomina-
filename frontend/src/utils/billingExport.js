@@ -1,5 +1,3 @@
-import ExcelJS from 'exceljs';
-
 export const formatCurrency = (val) =>
   new Intl.NumberFormat('es-GT', { style: 'currency', currency: 'GTQ' }).format(val || 0);
 
@@ -877,7 +875,8 @@ const buildResumenSheet = (wb, data) => {
   return ws;
 };
 
-export const buildBillingWorkbook = (data) => {
+export const buildBillingWorkbook = (data, ExcelJS) => {
+  if (!ExcelJS) throw new Error('ExcelJS no fue cargado');
   const payload = {
     payrollTitle: data?.payrollTitle,
     billingMonth: data?.billingMonth,
@@ -904,19 +903,12 @@ export const buildBillingWorkbook = (data) => {
 };
 
 export const exportBillingExcel = async (data, filename) => {
-  const wb = buildBillingWorkbook(data);
-  const buffer = await wb.xlsx.writeBuffer();
-  const blob = new Blob([buffer], {
-    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-  });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename || 'Vista_Previa_2_Facturacion.xlsx';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  const { generateAndDownloadExcel } = await import('./excelWorkerClient');
+  await generateAndDownloadExcel(
+    'billing',
+    data,
+    filename || 'Vista_Previa_2_Facturacion.xlsx'
+  );
 };
 
 export const buildExportFromRun = (run) => {

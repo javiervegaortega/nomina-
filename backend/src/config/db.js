@@ -11,7 +11,20 @@ const sequelize = new Sequelize(
     host: process.env.DB_HOST,
     port: dbPort,
     dialect: 'mysql',
-    logging: false, // Cambiar a true si quieres ver las consultas SQL en la consola
+    benchmark: true,
+    logging: (sql, durationMs) => {
+      if (!Number.isFinite(durationMs) || durationMs < 250) return;
+      const operation = String(sql).match(/\b(SELECT|INSERT|UPDATE|DELETE)\b/i)?.[1]?.toUpperCase()
+        || 'QUERY';
+      const table = String(sql).match(/\b(?:FROM|INTO|UPDATE)\s+`?([a-zA-Z0-9_]+)/i)?.[1]
+        || 'unknown';
+      console.warn(JSON.stringify({
+        event: 'slow_query',
+        operation,
+        table,
+        durationMs: Math.round(durationMs)
+      }));
+    },
     pool: {
       max: 10,
       min: 2,

@@ -1,8 +1,8 @@
 import React, { useState, useMemo, useContext, useEffect } from 'react';
 import {
-  FileText, Check, X, Edit3, CheckCircle2,
-  ChevronRight, ChevronDown, ChevronUp, AlertCircle, DollarSign, Clock,
-  Calculator, Building2, Plus, ArrowLeft, Trash2, Calendar, Search, LayoutGrid, List, User, Edit2, Eye, Filter
+  FileText, Edit3, CheckCircle2,
+  ChevronRight, ChevronDown, ChevronUp,
+  Building2, Plus, ArrowLeft, Trash2, Calendar, Search, LayoutGrid, User, Edit2, Eye, Filter
 } from 'lucide-react';
 import { AppContext } from '../context/AppContext';
 import { DataContext } from '../context/DataContext';
@@ -15,6 +15,7 @@ import {
   getRecurringDeductionFactor
 } from '../utils/payrollCalculator';
 import {
+  getNetTotal,
   getNetPayable,
   inferPeriodTypeFromDate,
   buildPayrollDraftTitle,
@@ -27,15 +28,17 @@ import {
 import EmployeeIncidences from '../components/EmployeeIncidences';
 import EmployeeDeductions from '../components/EmployeeDeductions';
 import EmployeeSummaryModal from '../components/EmployeeSummaryModal';
+import Pagination from '../components/Pagination';
+import usePagination from '../hooks/usePagination';
 import {
   Box, Flex, Text, Heading, Button, SimpleGrid, Avatar, IconButton,
   Modal, ModalOverlay, ModalContent, ModalHeader, ModalBody, ModalFooter, ModalCloseButton,
   FormControl, FormLabel, Input, Select, InputGroup, InputLeftElement, Textarea,
   Tabs, TabList, Tab,
   Table, Thead, Tbody, Tr, Th, Td, TableContainer,
-  Badge, Divider, useColorModeValue, Center, Tag, HStack, VStack, Checkbox, ButtonGroup, Card, CardHeader, CardBody, CardFooter, Stat, StatLabel, StatNumber, StatGroup, Skeleton, SkeletonText,
+  Badge, Divider, useColorModeValue, Center, HStack, VStack, ButtonGroup, Skeleton, SkeletonText,
   AlertDialog, AlertDialogOverlay, AlertDialogContent, AlertDialogHeader, AlertDialogBody, AlertDialogFooter, useDisclosure,
-  Drawer, DrawerBody, DrawerFooter, DrawerHeader, DrawerOverlay, DrawerContent, DrawerCloseButton, TabPanels, TabPanel, InputRightAddon,
+  Drawer, DrawerBody, DrawerFooter, DrawerHeader, DrawerOverlay, DrawerContent, DrawerCloseButton, TabPanels, TabPanel,
   Menu, MenuButton, MenuList, MenuItemOption, MenuOptionGroup, Tooltip, Collapse, useBreakpointValue
 } from '@chakra-ui/react';
 import { matchesDepartmentFilter, normalizeMultiFilter, resolveEmployeeDepartment } from '../utils/orgFilters';
@@ -64,7 +67,7 @@ const getDraftPrimaryCompanyRaw = (draft) => {
     try {
       const parsed = JSON.parse(draft.companies);
       if (Array.isArray(parsed) && parsed.length > 0) return parsed[0];
-    } catch (_) { /* ignore */ }
+    } catch { /* ignore */ }
   }
   return null;
 };
@@ -129,12 +132,23 @@ const igssBaseOf = (emp, baseSalary) => {
 
 export default function PayrollProcessing() {
   const [selectedDraftId, setSelectedDraftId] = useState(null);
+  const { loadActivePayroll } = useContext(DataContext);
+  const { showToast } = useContext(AppContext);
+
+  const handleSelectDraft = async (draftId) => {
+    try {
+      await loadActivePayroll(draftId);
+      setSelectedDraftId(draftId);
+    } catch (error) {
+      showToast(error.message || 'No se pudo cargar el detalle de la nómina.', 'error');
+    }
+  };
 
   if (selectedDraftId) {
     return <PayrollEditor draftId={selectedDraftId} onBack={() => setSelectedDraftId(null)} />;
   }
 
-  return <PayrollHub onSelectDraft={setSelectedDraftId} />;
+  return <PayrollHub onSelectDraft={handleSelectDraft} />;
 }
 
 function PayrollHub({ onSelectDraft }) {
@@ -144,7 +158,6 @@ function PayrollHub({ onSelectDraft }) {
     createActivePayroll, 
     updateDraftMetadata, 
     companies, 
-    dimension5s,
     operationLogs,
     isLoading 
   } = useContext(DataContext);
@@ -232,7 +245,7 @@ function PayrollHub({ onSelectDraft }) {
           );
           comp = found ? (found.nombre_comercial || found.nit) : String(raw);
         }
-      } catch(e) {}
+      } catch { /* conservar valores iniciales */ }
     }
     setSelectedCompany(comp);
     setShowModal(true);
@@ -405,7 +418,7 @@ function PayrollHub({ onSelectDraft }) {
 
             <Box mb={6}>
               <Text fontSize="sm" color="gray.500" mb={2}>
-                Empleados: <Text as="span" fontWeight={700} color="brand.500">{Array.isArray(draft.employees) ? draft.employees.length : (typeof draft.employees === 'string' ? JSON.parse(draft.employees).length : 0)}</Text>
+                Empleados: <Text as="span" fontWeight={700} color="brand.500">{draft.employeesCount ?? (Array.isArray(draft.employees) ? draft.employees.length : 0)}</Text>
               </Text>
               {draft.periodType === '2da' && (() => {
                 let comps = draft.companies;
@@ -413,8 +426,10 @@ function PayrollHub({ onSelectDraft }) {
                   try { comps = JSON.parse(comps); } catch { comps = []; }
                 }
                 const companyId = Array.isArray(comps) ? comps[0] : comps;
-                const pending = countBlockingOperationalBonuses(operationLogs, companyId, draft.createdAt);
-                const approved = countApprovedOperationalBonuses(operationLogs, companyId, draft.createdAt);
+                const pending = draft.operationalCounts?.pending
+                  ?? countBlockingOperationalBonuses(operationLogs, companyId, draft.createdAt);
+                const approved = draft.operationalCounts?.approved
+                  ?? countApprovedOperationalBonuses(operationLogs, companyId, draft.createdAt);
                 return (
                   <Text fontSize="sm" color={pending > 0 ? 'orange.500' : 'gray.500'} mb={2} fontWeight={pending > 0 ? 600 : 400}>
                     Bonos: {pending} pendientes / {approved} aprobados
@@ -427,7 +442,7 @@ function PayrollHub({ onSelectDraft }) {
                   let companiesArr = [];
                   if (Array.isArray(draft.companies)) companiesArr = draft.companies;
                   else if (typeof draft.companies === 'string') {
-                    try { companiesArr = JSON.parse(draft.companies); } catch(e) {}
+                    try { companiesArr = JSON.parse(draft.companies); } catch { companiesArr = []; }
                   }
                   if (!companiesArr || companiesArr.length === 0) {
                     return <Badge colorScheme="orange" variant="subtle" size="sm">Sin empresa</Badge>;
@@ -899,6 +914,7 @@ function PayrollEditor({ draftId, onBack }) {
   }, [data, draft?.periodType]);
 
   const borderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
+  const observationsBg = useColorModeValue('white', 'gray.800');
 
   if (!draft) return null;
 
@@ -925,13 +941,13 @@ function PayrollEditor({ draftId, onBack }) {
         <Flex gap={2} w={{ base: '100%', md: 'auto' }} flexShrink={0}>
           {!isAuditor && (
             <Button 
-              bg={draft.isApproved ? "green.500" : "red.500"}
+              bg={draft.isApproved ? "green.500" : "brand.500"}
               color="white"
               leftIcon={<CheckCircle2 size={16} />} 
               onClick={onAlertOpen}
               isDisabled={draft.periodType === '2da' && draft.missingAnticipoWarning}
               w={{ base: '100%', md: 'auto' }}
-              _hover={{ bg: draft.isApproved ? 'green.600' : 'red.600', animation: 'none', transform: 'none' }}
+              _hover={{ bg: draft.isApproved ? 'green.600' : 'brand.600', animation: 'none', transform: 'none' }}
             >
               {draft.isApproved ? 'Cerrar Definitivamente' : 'Enviar a Auditoría'}
             </Button>
@@ -965,7 +981,7 @@ function PayrollEditor({ draftId, onBack }) {
         borderRadius="xl"
         border="1px solid"
         borderColor={borderColor}
-        bg={useColorModeValue('white', 'gray.800')}
+        bg={observationsBg}
       >
         <Box p={{ base: 2, md: 3 }} borderRadius="lg" borderWidth="1px" borderColor={borderColor}>
           <SummaryStat label="Costo Bruto Total" value={formatQ(totals.grossTotal)} />
@@ -1050,7 +1066,7 @@ function PayrollEditor({ draftId, onBack }) {
         )}
         {tab === 'distribution' && <DistributionTab data={data} periodType={draft?.periodType || '1ra'} />}
         {tab === 'observations' && (
-          <Box p={6} bg={useColorModeValue('white', 'gray.800')} borderRadius="xl" borderWidth="1px" borderColor={borderColor}>
+          <Box p={6} bg={observationsBg} borderRadius="xl" borderWidth="1px" borderColor={borderColor}>
             <Heading size="sm" mb={4}>Observaciones del periodo</Heading>
             <DraftNotesEditor draft={draft} updateDraftMetadata={updateDraftMetadata} isReadOnly={isReadOnly} />
             <Text fontSize="sm" color="gray.500" mt={4} mb={6}>
@@ -1094,42 +1110,101 @@ function PayrollEditor({ draftId, onBack }) {
         />
       </Box>
 
-      <AlertDialog isOpen={isAlertOpen} leastDestructiveRef={cancelRef} onClose={onAlertClose}>
-        <AlertDialogOverlay>
-          <AlertDialogContent borderRadius="xl">
-            <AlertDialogHeader fontSize="lg" fontWeight="800" color={draft.isApproved ? "green.500" : "red.500"}>
-              {draft.isApproved ? 'Cerrar Nómina Definitivamente' : 'Enviar a Auditoría'}
+      <AlertDialog isOpen={isAlertOpen} leastDestructiveRef={cancelRef} onClose={onAlertClose} isCentered>
+        <AlertDialogOverlay backdropFilter="blur(6px)">
+          <AlertDialogContent
+            maxW="540px"
+            mx={4}
+            overflow="hidden"
+            borderRadius="2xl"
+            borderWidth="1px"
+            borderColor={draft.isApproved ? 'green.200' : 'brand.200'}
+            _dark={{ borderColor: draft.isApproved ? 'green.700' : 'brand.700' }}
+          >
+            <AlertDialogHeader p={{ base: 5, md: 6 }} pb={3}>
+              <HStack spacing={3} align="start">
+                <Flex
+                  w="44px"
+                  h="44px"
+                  flexShrink={0}
+                  align="center"
+                  justify="center"
+                  borderRadius="xl"
+                  bg={draft.isApproved ? 'green.50' : 'brand.50'}
+                  color={draft.isApproved ? 'green.500' : 'brand.500'}
+                  _dark={{ bg: draft.isApproved ? 'green.900' : 'brand.900' }}
+                >
+                  {draft.isApproved ? <FileText size={22} /> : <CheckCircle2 size={22} />}
+                </Flex>
+                <Box>
+                  <Text fontSize="xs" fontWeight={800} letterSpacing="widest" textTransform="uppercase" color={draft.isApproved ? 'green.500' : 'brand.500'} mb={1}>
+                    Confirmación requerida
+                  </Text>
+                  <Heading size="md" fontWeight={800}>
+                    {draft.isApproved ? 'Cerrar nómina definitivamente' : 'Enviar a Auditoría'}
+                  </Heading>
+                </Box>
+              </HStack>
             </AlertDialogHeader>
 
-            <AlertDialogBody color="gray.600">
-              {draft.isApproved ? (
-                <>
-                  <Text mb={3}>
-                    ¿Cerrar definitivamente esta nómina? Ya tiene el visto bueno de auditoría.
-                    No se podrá editar sin reactivación (solo 2ª quincena / fin de mes).
-                  </Text>
-                  <Text fontSize="sm" fontWeight="600">
-                    Empleados: {data.length} · Periodo: {draft.periodType === '2da' ? '2da Quincena' : '1ra Quincena'} · Neto estimado: {formatQ(totals.netTotal)}
-                  </Text>
-                </>
-              ) : (
-                <>
-                  <Text mb={3}>
-                    ¿Enviar esta nómina a Auditoría? Saldrá de borradores y pasará al Historial en revisión.
-                  </Text>
-                  <Text fontSize="sm" fontWeight="600">
-                    Empleados: {data.length} · Periodo: {draft.periodType === '2da' ? '2da Quincena' : '1ra Quincena'} · Neto estimado: {formatQ(totals.netTotal)}
-                  </Text>
-                </>
+            <AlertDialogBody px={{ base: 5, md: 6 }} pb={5} color="gray.600" _dark={{ color: 'gray.300' }}>
+              <Text lineHeight="tall" mb={4}>
+                {draft.isApproved
+                  ? 'Esta nómina ya fue aprobada por Auditoría. Al cerrarla, no podrá modificarse sin solicitar su reactivación.'
+                  : 'La nómina dejará de estar en borradores y quedará disponible para revisión de Auditoría en el historial.'}
+              </Text>
+
+              <Box
+                p={4}
+                borderRadius="xl"
+                bg={draft.isApproved ? 'green.50' : 'brand.50'}
+                borderWidth="1px"
+                borderColor={draft.isApproved ? 'green.100' : 'brand.100'}
+                _dark={{
+                  bg: draft.isApproved ? 'rgba(72, 187, 120, 0.12)' : 'rgba(2, 132, 199, 0.14)',
+                  borderColor: draft.isApproved ? 'green.800' : 'brand.800'
+                }}
+              >
+                <Text fontSize="xs" fontWeight={800} textTransform="uppercase" letterSpacing="wide" color={draft.isApproved ? 'green.600' : 'brand.600'} _dark={{ color: draft.isApproved ? 'green.300' : 'brand.300' }} mb={3}>
+                  Resumen de la nómina
+                </Text>
+                <SimpleGrid columns={{ base: 1, sm: 3 }} spacing={3}>
+                  <Box>
+                    <Text fontSize="xs" color="gray.500" _dark={{ color: 'gray.400' }}>Empleados</Text>
+                    <Text fontWeight={800} fontSize="lg">{data.length}</Text>
+                  </Box>
+                  <Box>
+                    <Text fontSize="xs" color="gray.500" _dark={{ color: 'gray.400' }}>Período</Text>
+                    <Text fontWeight={800} fontSize="sm" mt={1}>{draft.periodType === '2da' ? '2ª Quincena' : '1ª Quincena'}</Text>
+                  </Box>
+                  <Box>
+                    <Text fontSize="xs" color="gray.500" _dark={{ color: 'gray.400' }}>Neto estimado</Text>
+                    <Text fontWeight={800} fontFamily="mono" fontSize="sm" mt={1}>{formatQ(totals.netTotal)}</Text>
+                  </Box>
+                </SimpleGrid>
+              </Box>
+
+              {!draft.isApproved && (
+                <Text fontSize="xs" color="gray.500" _dark={{ color: 'gray.400' }} mt={3}>
+                  Podrás consultar el avance desde Historial mientras Auditoría realiza la revisión.
+                </Text>
               )}
             </AlertDialogBody>
 
-            <AlertDialogFooter>
-              <Button ref={cancelRef} onClick={onAlertClose} variant="ghost">
+            <AlertDialogFooter
+              px={{ base: 5, md: 6 }}
+              py={4}
+              borderTopWidth="1px"
+              borderColor="gray.100"
+              _dark={{ borderColor: 'whiteAlpha.200' }}
+              gap={3}
+              flexDirection={{ base: 'column-reverse', sm: 'row' }}
+            >
+              <Button ref={cancelRef} onClick={onAlertClose} variant="ghost" w={{ base: '100%', sm: 'auto' }}>
                 Cancelar
               </Button>
-              <Button colorScheme={draft.isApproved ? "green" : "red"} onClick={confirmClose} ml={3} borderRadius="md">
-                {draft.isApproved ? 'Sí, Cerrar Nómina' : 'Sí, Enviar a Auditoría'}
+              <Button colorScheme={draft.isApproved ? 'green' : 'brand'} onClick={confirmClose} w={{ base: '100%', sm: 'auto' }}>
+                {draft.isApproved ? 'Cerrar nómina' : 'Enviar a Auditoría'}
               </Button>
             </AlertDialogFooter>
           </AlertDialogContent>
@@ -1205,10 +1280,9 @@ function calculateGroupTotals(groupData, periodType) {
     const totalEgresos = e.calculated?.ded != null
       ? Number(e.calculated.ded)
       : (igss + isr + cafe + cell + uniform + shoes + equipo + product + bancos + prestamo_empresa + otros + judiciales + seguro + parqueo + boleto_de_ornato + otros_egresos);
-    const liquido = e.calculated?.net != null ? Number(e.calculated.net) : (salarioTotal - totalEgresos);
+    const liquido = getNetTotal(e);
     const q1 = periodType === '2da' ? anticipo : liquido;
-    const q2 = periodType === '2da' ? (liquido - anticipo) : 0;
-    const liquidoPagar = periodType === '2da' ? q2 : liquido;
+    const q2 = periodType === '2da' ? getNetPayable(e, periodType) : 0;
 
     totSalarioOrd += baseSalary;
     totBonInc += bonusLey;
@@ -1242,7 +1316,7 @@ function calculateGroupTotals(groupData, periodType) {
     totBoleta += boleto_de_ornato;
     totOtrosEgresos += otros_egresos;
     totTotalEgresos += totalEgresos;
-    totLiquido += liquidoPagar;
+    totLiquido += liquido;
     totQuincena1 += q1;
     totQuincena2 += q2;
   });
@@ -1266,7 +1340,7 @@ function ListadoPagosTab({
   filterCompany, setFilterCompany,
   filterStatus, setFilterStatus,
   searchQuery, setSearchQuery,
-  handleClose, handleSaveIncidence, handleDeleteIncidence,
+  handleSaveIncidence, handleDeleteIncidence,
   handleSaveDeduction, handleDeleteDeduction, handleOpenSummary,
   isReadOnly, draftDateStr, companies: companiesProp
 }) {
@@ -1355,16 +1429,59 @@ function ListadoPagosTab({
     onDrawerOpen();
   };
 
-  const companyList = companiesProp || companies || [];
+  const companyList = useMemo(
+    () => companiesProp || companies || [],
+    [companiesProp, companies]
+  );
+  const pagination = usePagination(data, 25);
+  const employeeByDpi = useMemo(
+    () => new Map((employees || []).map((employee) => [String(employee.dpi), employee])),
+    [employees]
+  );
+  const companyNameById = useMemo(
+    () => new Map(companyList.map((company) => [
+      String(company.id),
+      company.nombre_comercial || company.nit || `Empresa ${company.id}`
+    ])),
+    [companyList]
+  );
+  const divisionNameById = useMemo(
+    () => new Map((divisions || []).map((division) => [
+      String(division.id),
+      division.nombre || division.nombre_dimension
+    ])),
+    [divisions]
+  );
+  const areaNameById = useMemo(
+    () => new Map((areas || []).map((area) => [
+      String(area.id),
+      area.nombre || area.nombre_dimension
+    ])),
+    [areas]
+  );
+  const subdivisionNameById = useMemo(
+    () => new Map((subdivisions || []).map((subdivision) => [
+      String(subdivision.id),
+      subdivision.nombre || subdivision.nombre_dimension
+    ])),
+    [subdivisions]
+  );
+  const dimension5NameById = useMemo(
+    () => new Map((dimension5s || []).flatMap((dimension) => [
+      [String(dimension.id), dimension.nombre || dimension.nombre_dimension],
+      [String(dimension.nombre || dimension.nombre_dimension), dimension.nombre || dimension.nombre_dimension]
+    ])),
+    [dimension5s]
+  );
 
-  const groupedData = useMemo(() => {
+  const fullGroupedData = useMemo(() => {
     if (filterDept.length === 0 && filterArea.length === 0 && filterDiv.length === 0 && filterSubdiv.length === 0 && filterDim5.length === 0 && filterCompany.length === 0) {
       return [{ title: '', data }];
     }
 
     const groups = {};
     data.forEach(e => {
-      const liveEmp = employees?.find(emp => String(emp.dpi) === String(e.dpi)) || e;
+      const liveEmp = employeeByDpi.get(String(e.dpi)) || e;
       const mergedEmp = { ...e, ...liveEmp, departmentId: liveEmp.departmentId ?? e.departmentId, departamento_laboral: liveEmp.departamento_laboral || e.departamento_laboral };
       const { name: deptName } = resolveEmployeeDepartment(mergedEmp, departments);
       const area = liveEmp.areaId || e.areaId;
@@ -1375,26 +1492,26 @@ function ListadoPagosTab({
 
       const keyParts = [];
       if (filterCompany.length > 0) {
-        const companyName = companyList.find(c => String(c.id) === String(company))?.nombre_comercial || 'Sin Empresa';
+        const companyName = companyNameById.get(String(company)) || 'Sin Empresa';
         keyParts.push(`Empresa: ${companyName}`);
       }
       if (filterDept.length > 0) {
         keyParts.push(`Depto: ${deptName}`);
       }
       if (filterDiv.length > 0) {
-        const divName = divisions?.find(d => String(d.id) === String(div))?.nombre || 'Sin División';
+        const divName = divisionNameById.get(String(div)) || 'Sin División';
         keyParts.push(`División: ${divName}`);
       }
       if (filterArea.length > 0) {
-        const areaName = areas?.find(a => String(a.id) === String(area))?.nombre || 'Sin Área';
+        const areaName = areaNameById.get(String(area)) || 'Sin Área';
         keyParts.push(`Área: ${areaName}`);
       }
       if (filterSubdiv.length > 0) {
-        const subdivName = subdivisions?.find(s => String(s.id) === String(subdiv))?.nombre || 'Sin Subdivisión';
+        const subdivName = subdivisionNameById.get(String(subdiv)) || 'Sin Subdivisión';
         keyParts.push(`Subdivisión: ${subdivName}`);
       }
       if (filterDim5.length > 0) {
-        const d5Name = dimension5s?.find(d => String(d.id) === String(dim5) || d.nombre === dim5)?.nombre || dim5 || 'Sin Dim 5';
+        const d5Name = dimension5NameById.get(String(dim5)) || dim5 || 'Sin Dim 5';
         keyParts.push(`Dim 5: ${d5Name}`);
       }
       
@@ -1408,7 +1525,33 @@ function ListadoPagosTab({
       title: key,
       data: groups[key]
     }));
-  }, [data, filterDept, filterArea, filterDiv, filterSubdiv, filterDim5, filterCompany, divisions, areas, departments, subdivisions, dimension5s, employees, companyList]);
+  }, [
+    data, filterDept, filterArea, filterDiv, filterSubdiv, filterDim5, filterCompany,
+    departments, employeeByDpi, companyNameById, divisionNameById, areaNameById,
+    subdivisionNameById, dimension5NameById
+  ]);
+
+  const pageEmployeeIds = useMemo(
+    () => new Set(pagination.paginatedData.map((employee) => String(employee.id))),
+    [pagination.paginatedData]
+  );
+  const rowNumberById = useMemo(
+    () => new Map(pagination.paginatedData.map((employee, index) => [
+      String(employee.id),
+      ((pagination.currentPage - 1) * pagination.limit) + index + 1
+    ])),
+    [pagination.paginatedData, pagination.currentPage, pagination.limit]
+  );
+  const groupedData = useMemo(() => fullGroupedData
+    .map((group) => ({
+      ...group,
+      data: group.data.filter((employee) => pageEmployeeIds.has(String(employee.id)))
+    }))
+    .filter((group) => group.data.length > 0), [fullGroupedData, pageEmployeeIds]);
+  const fullGroupByTitle = useMemo(
+    () => new Map(fullGroupedData.map((group) => [group.title, group.data])),
+    [fullGroupedData]
+  );
 
   const filterMenuBtnProps = {
     size: 'sm',
@@ -1588,13 +1731,14 @@ function ListadoPagosTab({
       {/* Spreadsheet Table or Summary View */}
       {groupedData.map((group, gIdx) => {
         const groupData = group.data;
-        const columnTotals = calculateGroupTotals(groupData, periodType);
+        const fullGroupData = fullGroupByTitle.get(group.title) || groupData;
+        const columnTotals = calculateGroupTotals(fullGroupData, periodType);
 
         return (
           <Box key={gIdx} mb={8}>
             {group.title && (
               <Heading size="sm" mb={3} color="brand.600" bg={liquidoBg} p={2} borderRadius="md" display="inline-flex" alignItems="center" gap={2}>
-                {group.title} <Badge colorScheme="brand" borderRadius="full">{groupData.length}</Badge>
+                {group.title} <Badge colorScheme="brand" borderRadius="full">{fullGroupData.length}</Badge>
               </Heading>
             )}
             {viewMode === 'detailed' ? (
@@ -1697,10 +1841,9 @@ function ListadoPagosTab({
                     const anticipo = Number(e.anticipo1ra) || 0;
 
                     const totalEgresos = e.calculated?.ded || 0;
-                    const liquido = e.calculated?.net || 0;
+                    const liquido = getNetTotal(e);
                     const q1 = periodType === '2da' ? anticipo : liquido;
-                    const q2 = periodType === '2da' ? liquido - anticipo : 0;
-                    const liquidoPagar = getNetPayable(e, periodType);
+                    const q2 = periodType === '2da' ? getNetPayable(e, periodType) : 0;
 
                     const isHighlighted = highlightedRows.has(e.id);
                     const rowBg = isHighlighted ? highlightColor : 'transparent';
@@ -1710,13 +1853,13 @@ function ListadoPagosTab({
                       <Tr key={e.id} _hover={{ bg: isHighlighted ? highlightColor : hoverBg }} bg={rowBg} onDoubleClick={() => toggleRowHighlight(e.id)} userSelect="none">
                         {/* Sticky Cells */}
                         <Td position="sticky" left={0} zIndex={5} bg={stickyBg} borderRight="1px solid" borderColor={borderColor} fontWeight="bold" fontSize="xs" cursor="pointer">
-                          {i + 1}
+                          {rowNumberById.get(String(e.id)) || i + 1}
                         </Td>
                         <Td position="sticky" left="60px" zIndex={5} bg={stickyBg} borderRight="1px solid" borderColor={borderColor} fontWeight="600" color="brand.500" fontSize="xs" isTruncated maxW="200px" title={[e.primer_nombre, e.segundo_nombre, e.otro_nombre, e.primer_apellido, e.segundo_apellido, e.apellido_casada].filter(Boolean).join(' ')} cursor="pointer" boxShadow={stickyExtended ? undefined : '4px 0 8px -4px rgba(0,0,0,0.15)'}>
                           {[e.primer_nombre, e.segundo_nombre, e.otro_nombre, e.primer_apellido, e.segundo_apellido, e.apellido_casada].filter(Boolean).join(' ')}
                         </Td>
-                        <Td position={stickyExtended ? 'sticky' : 'static'} left={stickyExtended ? '260px' : undefined} zIndex={stickyExtended ? 5 : undefined} bg={stickyBg} borderRight="1px solid" borderColor={borderColor} fontSize="xs" isTruncated maxW="120px" title={companies?.find(c => c.id == e.empresa_principal)?.nombre_comercial || e.company || 'Sin Empresa'} whiteSpace="nowrap">
-                          {companies?.find(c => c.id == e.empresa_principal)?.nombre_comercial || e.company || 'Sin Empresa'}
+                        <Td position={stickyExtended ? 'sticky' : 'static'} left={stickyExtended ? '260px' : undefined} zIndex={stickyExtended ? 5 : undefined} bg={stickyBg} borderRight="1px solid" borderColor={borderColor} fontSize="xs" isTruncated maxW="120px" title={companyNameById.get(String(e.empresa_principal)) || e.company || 'Sin Empresa'} whiteSpace="nowrap">
+                          {companyNameById.get(String(e.empresa_principal)) || e.company || 'Sin Empresa'}
                         </Td>
                         <Td position={stickyExtended ? 'sticky' : 'static'} left={stickyExtended ? '380px' : undefined} zIndex={stickyExtended ? 5 : undefined} bg={stickyBg} borderRight="1px solid" borderColor={borderColor} boxShadow={stickyExtended ? '4px 0 8px -4px rgba(0,0,0,0.15)' : undefined} fontSize="xs" isTruncated maxW="120px" whiteSpace="nowrap">
                           {e.puesto || 'Sin Puesto'}
@@ -1771,7 +1914,7 @@ function ListadoPagosTab({
                         <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="red.500">{formatQ(totalEgresos)}</Td>
                         
                         <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500" bg={liquidoBg}>
-                          {formatQ(liquidoPagar)}
+                          {formatQ(liquido)}
                         </Td>
                         {periodType === '2da' && (
                           <>
@@ -1817,7 +1960,7 @@ function ListadoPagosTab({
                     <Th position={stickyExtended ? 'sticky' : 'static'} left={stickyExtended ? '260px' : undefined} zIndex={stickyExtended ? 20 : undefined} bg={theadBg} borderRight="1px solid" borderColor={borderColor}></Th>
                     <Th position={stickyExtended ? 'sticky' : 'static'} left={stickyExtended ? '380px' : undefined} zIndex={stickyExtended ? 20 : undefined} bg={theadBg} borderRight="1px solid" borderColor={borderColor} boxShadow={stickyExtended ? '4px 0 8px -4px rgba(0,0,0,0.15)' : undefined}></Th>
                     
-                    <Th whiteSpace="nowrap">{groupData.length} Emps</Th>
+                    <Th whiteSpace="nowrap">{fullGroupData.length} Emps</Th>
                     <Th fontFamily="mono" fontSize="xs" whiteSpace="nowrap">{formatQ(columnTotals.totSalarioOrd)}</Th>
                     <Th fontFamily="mono" fontSize="xs" whiteSpace="nowrap">{formatQ(columnTotals.totBonInc)}</Th>
                     <Th fontFamily="mono" fontSize="xs" whiteSpace="nowrap">{formatQ(columnTotals.totBonDec)}</Th>
@@ -1900,12 +2043,11 @@ function ListadoPagosTab({
                     const totalExtras = bonos + (e.calculated?.extrasTotal || 0);
                     const devengado = e.calculated?.gross || 0;
                     const totalEgresos = e.calculated?.ded || 0;
-                    const liquido = e.calculated?.net || 0;
+                    const liquido = getNetTotal(e);
 
                     const anticipo = Number(e.anticipo1ra) || 0;
                     const q1 = periodType === '2da' ? anticipo : liquido;
-                    const q2 = periodType === '2da' ? liquido - anticipo : 0;
-                    const liquidoPagar = getNetPayable(e, periodType);
+                    const q2 = periodType === '2da' ? getNetPayable(e, periodType) : 0;
 
                     const isHighlighted = highlightedRows.has(e.id);
                     const rowBg = isHighlighted ? highlightColor : 'transparent';
@@ -1914,13 +2056,13 @@ function ListadoPagosTab({
                     return (
                       <Tr key={e.id} _hover={{ bg: isHighlighted ? highlightColor : hoverBg }} bg={rowBg} onDoubleClick={() => toggleRowHighlight(e.id)} userSelect="none">
                         <Td position="sticky" left={0} zIndex={5} bg={stickyBg} borderRight="1px solid" borderColor={borderColor} fontWeight="bold" fontSize="xs" cursor="pointer" whiteSpace="nowrap">
-                          {i + 1}
+                          {rowNumberById.get(String(e.id)) || i + 1}
                         </Td>
                         <Td position="sticky" left="60px" zIndex={5} bg={stickyBg} borderRight="1px solid" borderColor={borderColor} fontWeight="600" color="brand.500" fontSize="xs" isTruncated maxW="200px" title={[e.primer_nombre, e.segundo_nombre, e.otro_nombre, e.primer_apellido, e.segundo_apellido, e.apellido_casada].filter(Boolean).join(' ')} cursor="pointer" boxShadow={stickyExtended ? undefined : '4px 0 8px -4px rgba(0,0,0,0.15)'}>
                           {[e.primer_nombre, e.segundo_nombre, e.otro_nombre, e.primer_apellido, e.segundo_apellido, e.apellido_casada].filter(Boolean).join(' ')}
                         </Td>
-                        <Td position={stickyExtended ? 'sticky' : 'static'} left={stickyExtended ? '260px' : undefined} zIndex={stickyExtended ? 5 : undefined} bg={stickyBg} borderRight="1px solid" borderColor={borderColor} fontSize="xs" isTruncated maxW="120px" title={companies?.find(c => c.id == e.empresa_principal)?.nombre_comercial || e.company || 'Sin Empresa'} whiteSpace="nowrap">
-                          {companies?.find(c => c.id == e.empresa_principal)?.nombre_comercial || e.company || 'Sin Empresa'}
+                        <Td position={stickyExtended ? 'sticky' : 'static'} left={stickyExtended ? '260px' : undefined} zIndex={stickyExtended ? 5 : undefined} bg={stickyBg} borderRight="1px solid" borderColor={borderColor} fontSize="xs" isTruncated maxW="120px" title={companyNameById.get(String(e.empresa_principal)) || e.company || 'Sin Empresa'} whiteSpace="nowrap">
+                          {companyNameById.get(String(e.empresa_principal)) || e.company || 'Sin Empresa'}
                         </Td>
                         <Td position={stickyExtended ? 'sticky' : 'static'} left={stickyExtended ? '380px' : undefined} zIndex={stickyExtended ? 5 : undefined} bg={stickyBg} borderRight="1px solid" borderColor={borderColor} boxShadow={stickyExtended ? '4px 0 8px -4px rgba(0,0,0,0.15)' : undefined} fontSize="xs" isTruncated maxW="120px" whiteSpace="nowrap">
                           {e.puesto || 'Sin Puesto'}
@@ -1931,7 +2073,7 @@ function ListadoPagosTab({
                         <Td fontFamily="mono" fontSize="xs" whiteSpace="nowrap">{formatQ(bonusLey + bonusDec)}</Td>
                         <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="gold.500" whiteSpace="nowrap">{formatQ(totalExtras)}</Td>
                         <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="red.500" whiteSpace="nowrap">{formatQ(totalEgresos)}</Td>
-                        <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500" bg={liquidoBg} whiteSpace="nowrap">{formatQ(liquidoPagar)}</Td>
+                        <Td fontFamily="mono" fontSize="xs" fontWeight="bold" color="brand.500" bg={liquidoBg} whiteSpace="nowrap">{formatQ(liquido)}</Td>
                         
                         {periodType === '2da' && (
                           <>
@@ -1975,7 +2117,7 @@ function ListadoPagosTab({
                     <Th position={stickyExtended ? 'sticky' : 'static'} left={stickyExtended ? '260px' : undefined} zIndex={stickyExtended ? 20 : undefined} bg={theadBg} borderRight="1px solid" borderColor={borderColor}></Th>
                     <Th position={stickyExtended ? 'sticky' : 'static'} left={stickyExtended ? '380px' : undefined} zIndex={stickyExtended ? 20 : undefined} bg={theadBg} borderRight="1px solid" borderColor={borderColor} boxShadow={stickyExtended ? '4px 0 8px -4px rgba(0,0,0,0.15)' : undefined}></Th>
                     
-                    <Th whiteSpace="nowrap">{groupData.length} Emps</Th>
+                    <Th whiteSpace="nowrap">{fullGroupData.length} Emps</Th>
                     <Th fontFamily="mono" fontSize="xs" whiteSpace="nowrap">{formatQ(columnTotals.totSalarioOrd)}</Th>
                     <Th fontFamily="mono" fontSize="xs" whiteSpace="nowrap">{formatQ(columnTotals.totBonInc + columnTotals.totBonDec)}</Th>
                     <Th fontFamily="mono" fontSize="xs" fontWeight="bold" color="gold.500" whiteSpace="nowrap">{formatQ(columnTotals.totBonos + columnTotals.totValSimple + columnTotals.totValDouble + columnTotals.totOtrosIngresos)}</Th>
@@ -1996,6 +2138,8 @@ function ListadoPagosTab({
           </Box>
         );
       })}
+
+      <Pagination {...pagination} limitOptions={[25, 50]} />
 
       {/* Action buttons and indicators in footer */}
 
@@ -2200,7 +2344,7 @@ function DistributionTab({ data, periodType = '1ra' }) {
   return (
     <Box>
       <SimpleGrid columns={{ base: 1, sm: 2, md: 3 }} spacing={4} mb={6}>
-        {companyTotals.map((c, i) => (
+        {companyTotals.map((c) => (
           <Box key={c.id} p={6} bg={cardBg} borderRadius="xl" border="1px solid" borderColor={borderColor}>
             <Flex align="center" gap={3} mb={3}>
               <Box w="12px" h="12px" borderRadius="full" bg={c.color || 'brand.500'} boxShadow={`0 0 10px ${c.color || 'var(--chakra-colors-brand-500)'}`} />
@@ -2312,7 +2456,7 @@ function DistributionTab({ data, periodType = '1ra' }) {
   );
 }
 
-function EditableCell({ id, field, section, value, onChange, editing, setEditing, width, isMoney, isDanger, onNavigate, isReadOnly }) {
+const EditableCell = React.memo(function EditableCell({ id, field, section, value, onChange, editing, setEditing, width, isMoney, isDanger, onNavigate, isReadOnly }) {
   const isEditing = !isReadOnly && editing?.id === id && editing?.field === field;
   const hoverBg = useColorModeValue('gray.50', 'whiteAlpha.50');
 
@@ -2378,7 +2522,7 @@ function EditableCell({ id, field, section, value, onChange, editing, setEditing
       </Text>
     </Td>
   );
-}
+});
 
 function SummaryStat({ label, value, color, large }) {
   return (

@@ -1,3 +1,5 @@
+process.env.SKIP_DB_CONNECT_TEST = '1';
+
 const {
   getEmployeePrincipalCompanyId,
   assertSolicitanteDepartmentAccess,
@@ -9,6 +11,7 @@ const {
 } = require('../services/operationLogPolicy.service');
 const { operationShouldApply } = require('../services/payrollDraftInputs.service');
 const { deriveBatchStatus } = require('../services/operationWorkflow.service');
+const { resolveEffectiveMonthlyCaptureState } = require('../services/operationBonusBatch.service');
 
 const assert = (condition, message) => {
   if (!condition) throw new Error(`FAIL: ${message}`);
@@ -160,5 +163,21 @@ assert(
   operationShouldApply({ type: 'BONO', status: 'APPROVED_MANAGER' }),
   'un bono aprobado se sincroniza con el borrador de nomina'
 );
+assert(
+  resolveEffectiveMonthlyCaptureState('OPEN', true) === 'FROZEN',
+  'una nomina en auditoria congela la captura mensual aunque el lote siga marcado como abierto'
+);
+assert(
+  resolveEffectiveMonthlyCaptureState('FROZEN', false) === 'OPEN',
+  'la captura se reabre cuando ya no existe una auditoria activa'
+);
+assert(
+  resolveEffectiveMonthlyCaptureState('CLOSED', false) === 'CLOSED',
+  'una captura cerrada de segunda quincena permanece cerrada'
+);
 
 console.log('Todas las pruebas de política de operaciones pasaron.');
+require('../models').sequelize.close().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

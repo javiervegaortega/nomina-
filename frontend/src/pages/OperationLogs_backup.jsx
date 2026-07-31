@@ -12,6 +12,7 @@ import { Plus, Check, X, Trash2, Eye, Edit2, ChevronDown } from 'lucide-react';
 import { toast } from 'sonner';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
+import { apiFetch } from '../utils/api';
 
 export default function OperationLogs() {
   const { employees, departments, areas, divisions, subdivisions, dimension5s, companies, operationLogs, addOperationLog, updateOperationLogStatus, deleteOperationLog, updateOperationLog, isLoading } = useContext(DataContext);
@@ -70,7 +71,7 @@ export default function OperationLogs() {
       if (user?.role === 'SOLICITANTE') {
         try {
           const token = localStorage.getItem('nomina-token');
-          await fetch('http://localhost:3000/api/operation-logs/notify', {
+          await apiFetch('/api/operation-logs/notify', {
             method: 'POST',
             headers: { 
               'Content-Type': 'application/json',
@@ -290,7 +291,7 @@ export default function OperationLogs() {
         if (user?.role === 'SOLICITANTE') {
           try {
             const token = localStorage.getItem('nomina-token');
-            await fetch('http://localhost:3000/api/operation-logs/notify', {
+            await apiFetch('/api/operation-logs/notify', {
               method: 'POST',
               headers: { 
                 'Content-Type': 'application/json',

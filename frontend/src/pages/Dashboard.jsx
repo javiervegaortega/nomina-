@@ -1,10 +1,10 @@
-import React, { useContext, useMemo, useState } from 'react';
+import { useContext, useEffect, useMemo, useState } from 'react';
 import {
   Box, Flex, SimpleGrid, Heading, Text, Button, Card, CardBody,
   HStack, VStack, Center, useColorModeValue, Badge,
   Modal, ModalOverlay, ModalContent, ModalHeader, ModalBody, ModalFooter,
   ModalCloseButton, FormControl, FormLabel, Select, Radio, RadioGroup, Stack,
-  Divider, Skeleton, SkeletonText, SkeletonCircle,
+  Divider, Skeleton, SkeletonCircle,
 } from '@chakra-ui/react';
 import {
   DollarSign, Users, TrendingUp, ArrowUpRight, ArrowDownRight,
@@ -12,23 +12,45 @@ import {
   Briefcase, PieChart, FileSpreadsheet, FileText,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
 import { formatQ } from '../data/mockData';
 import {
   PERIOD_MODES,
-  buildDashboardMetrics,
-  computeHistoryTotals,
-  getAvailableMonths,
-  getPayrollDate,
   exportDashboardExcel,
   exportDashboardPdf,
 } from '../utils/dashboardReports';
+import { apiJson } from '../utils/api';
 
 const DEFAULT_PERIOD = { mode: PERIOD_MODES.LATEST, month: '', payrollId: '' };
+const EMPTY_METRICS = {
+  periodLabel: 'Cargando período',
+  hasPayrollData: false,
+  payrollCount: 0,
+  totalEmployees: 0,
+  activeCount: 0,
+  inactiveCount: 0,
+  totalGrossPayroll: 0,
+  totalDeductions: 0,
+  totalNetPay: 0,
+  avgSalary: 0,
+  patronalCost: 0,
+  companyCount: 0,
+  companyDistribution: [],
+  deptList: [],
+  filteredRecords: [],
+  availableMonths: [],
+  payrollOptions: [],
+  recentActivity: [],
+};
+
+const periodQuery = (period) => {
+  const params = new URLSearchParams({ mode: period.mode || PERIOD_MODES.LATEST });
+  if (period.month) params.set('month', period.month);
+  if (period.payrollId) params.set('payrollId', period.payrollId);
+  return params.toString();
+};
 
 export default function Dashboard() {
-  const { employees, companies, payrollHistory, departments, activePayrolls, isLoading } = useContext(DataContext);
   const { user } = useContext(AuthContext);
 
   const [period, setPeriod] = useState(DEFAULT_PERIOD);
@@ -36,37 +58,37 @@ export default function Dashboard() {
   const [showPeriodModal, setShowPeriodModal] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
   const [exporting, setExporting] = useState(null);
-
-  const EMPLOYEES = employees || [];
-  const COMPANIES = companies || [];
+  const [summaryState, setSummaryState] = useState({ query: '', data: EMPTY_METRICS });
+  const [renderTime] = useState(() => Date.now());
   
   const hasFinancialAccess = ['ADMIN', 'GERENTE GENERAL', 'NOMINA', 'AUDITOR'].includes(user?.role);
+  const currentQuery = periodQuery(period);
+  const isLoading = summaryState.query !== currentQuery;
+  const metrics = isLoading ? EMPTY_METRICS : summaryState.data;
 
-  const metrics = useMemo(() => buildDashboardMetrics({
-    period,
-    payrollHistory,
-    employees: EMPLOYEES,
-    companies: COMPANIES,
-    departments,
-  }), [period, payrollHistory, EMPLOYEES, COMPANIES, departments]);
+  useEffect(() => {
+    const controller = new AbortController();
+    apiJson(`/api/dashboard/summary?${currentQuery}`, { signal: controller.signal })
+      .then((payload) => setSummaryState({
+        query: currentQuery,
+        data: { ...EMPTY_METRICS, ...payload }
+      }))
+      .catch((error) => {
+        if (error.name !== 'AbortError') {
+          toast.error('No se pudo cargar el resumen del dashboard');
+        }
+      })
+    return () => controller.abort();
+  }, [currentQuery]);
 
-  const availableMonths = useMemo(() => getAvailableMonths(payrollHistory), [payrollHistory]);
-
-  const payrollOptions = useMemo(() => {
-    return [...(payrollHistory || [])]
-      .filter(record => !record.status || record.status === 'cerrada')
-      .sort((a, b) => getPayrollDate(b) - getPayrollDate(a))
-      .map(r => ({
-        id: r.id,
-        label: `${r.title || 'Nómina'} — ${getPayrollDate(r).toLocaleDateString('es-GT')}`,
-      }));
-  }, [payrollHistory]);
+  const availableMonths = metrics.availableMonths || [];
+  const payrollOptions = metrics.payrollOptions || [];
 
   const historyTrend = useMemo(() => {
     const records = metrics.filteredRecords || [];
     if (records.length < 2) return null;
-    const current = computeHistoryTotals(records[0]);
-    const previous = computeHistoryTotals(records[1]);
+    const current = records[0].totals || {};
+    const previous = records[1].totals || {};
     const grossPct = previous.grossTotal > 0 ? ((current.grossTotal - previous.grossTotal) / previous.grossTotal) * 100 : null;
     const netPct = previous.netTotal > 0 ? ((current.netTotal - previous.netTotal) / previous.netTotal) * 100 : null;
     const dedPct = previous.dedTotal > 0 ? ((current.dedTotal - previous.dedTotal) / previous.dedTotal) * 100 : null;
@@ -91,94 +113,36 @@ export default function Dashboard() {
   );
   const maxDeptCost = metrics.deptList.length ? metrics.deptList[0][1].cost : 1;
 
-  const getEmployeeName = (e) => {
-    const first = e.primer_nombre || e.nombres || '';
-    const last = e.primer_apellido || e.apellidos || '';
-    return `${first} ${last}`.trim() || e.name || 'Empleado';
-  };
-
-  const formatRelative = (value) => {
-    if (!value) return 'Fecha no disponible';
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return 'Fecha no disponible';
-    const diffMs = Date.now() - date.getTime();
-    const diffMin = Math.floor(diffMs / 60000);
-    if (diffMin < 60) return `Hace ${diffMin} min`;
-    const diffH = Math.floor(diffMin / 60);
-    if (diffH < 24) return `Hace ${diffH} h`;
-    const diffD = Math.floor(diffH / 24);
-    return `Hace ${diffD} dias`;
-  };
-
   const activityItems = useMemo(() => {
-    const items = [];
-
-    const historySorted = [...(payrollHistory || [])].sort((a, b) => {
-      return getPayrollDate(b) - getPayrollDate(a);
-    }).slice(0, 2);
-
-    historySorted.forEach(h => {
-      const title = h.title || (h.periodType === '2da' ? '2da Quincena' : '1ra Quincena') || 'Nómina';
-      items.push({
-        icon: h.status === 'auditoria'
-          ? <Clock size={16} />
-          : <CheckCircle size={16} />,
-        color: h.status === 'auditoria' ? '#F59E0B' : '#10B981',
-        text: h.status === 'auditoria'
-          ? `Nómina "${title}" en auditoría`
-          : `Nómina "${title}" cerrada`,
-        time: formatRelative(h.closedAt || h.createdAt),
-        sortDate: getPayrollDate(h).getTime(),
-      });
-    });
-
-    (activePayrolls || []).slice(0, 2).forEach(p => {
-      items.push({
-        icon: <Clock size={16} />,
-        color: '#F59E0B',
-        text: `Borrador activo: ${p.title || 'Nómina en proceso'}`,
-        time: formatRelative(p.createdAt),
-        sortDate: new Date(p.createdAt || 0).getTime(),
-      });
-    });
-
-    [...EMPLOYEES]
-      .filter(e => e.fecha_inicio)
-      .sort((a, b) => new Date(b.fecha_inicio).getTime() - new Date(a.fecha_inicio).getTime())
-      .slice(0, 2)
-      .forEach(e => {
-        items.push({
-          icon: <Users size={16} />,
-          color: '#3B82F6',
-          text: `Alta de ${getEmployeeName(e)}`,
-          time: formatRelative(e.fecha_inicio),
-          sortDate: new Date(e.fecha_inicio).getTime(),
-        });
-      });
-
-    [...EMPLOYEES]
-      .filter(e => e.fecha_baja)
-      .sort((a, b) => new Date(b.fecha_baja).getTime() - new Date(a.fecha_baja).getTime())
-      .slice(0, 1)
-      .forEach(e => {
-        items.push({
-          icon: <AlertTriangle size={16} />,
-          color: '#EF4444',
-          text: `Baja de ${getEmployeeName(e)}`,
-          time: formatRelative(e.fecha_baja),
-          sortDate: new Date(e.fecha_baja).getTime(),
-        });
-      });
-
+    const formatRelative = (value) => {
+      if (!value) return 'Fecha no disponible';
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return 'Fecha no disponible';
+      const diffMs = renderTime - date.getTime();
+      const diffMin = Math.floor(diffMs / 60000);
+      if (diffMin < 60) return `Hace ${diffMin} min`;
+      const diffH = Math.floor(diffMin / 60);
+      if (diffH < 24) return `Hace ${diffH} h`;
+      const diffD = Math.floor(diffH / 24);
+      return `Hace ${diffD} dias`;
+    };
+    const iconByType = {
+      audit: { icon: <Clock size={16} />, color: '#F59E0B' },
+      closed: { icon: <CheckCircle size={16} />, color: '#10B981' },
+      draft: { icon: <Clock size={16} />, color: '#F59E0B' },
+      'employee-added': { icon: <Users size={16} />, color: '#3B82F6' },
+      'employee-removed': { icon: <AlertTriangle size={16} />, color: '#EF4444' },
+    };
+    const items = (metrics.recentActivity || []).map((item) => ({
+      ...(iconByType[item.type] || iconByType.draft),
+      text: item.text,
+      time: formatRelative(item.date),
+    }));
     if (!items.length) {
       return [{ icon: <Clock size={16} />, color: '#94A3B8', text: 'Sin actividad reciente', time: '—' }];
     }
-
-    return items
-      .sort((a, b) => (b.sortDate || 0) - (a.sortDate || 0))
-      .slice(0, 4)
-      .map(({ icon, color, text, time }) => ({ icon, color, text, time }));
-  }, [payrollHistory, activePayrolls, EMPLOYEES]);
+    return items;
+  }, [metrics.recentActivity, renderTime]);
 
   const openPeriodModal = () => {
     const initial = { ...period };
@@ -201,10 +165,14 @@ export default function Dashboard() {
   const handleExportExcel = async () => {
     setExporting('excel');
     try {
-      await exportDashboardExcel(metrics, metrics.periodLabel);
+      const detail = await apiJson(`/api/dashboard/export-data?${periodQuery(period)}`);
+      await exportDashboardExcel(
+        { ...metrics, sourceEmployees: detail.sourceEmployees || [] },
+        metrics.periodLabel
+      );
       toast.success('Reporte Excel generado');
       setShowReportModal(false);
-    } catch (err) {
+    } catch {
       toast.error('Error al generar el Excel');
     } finally {
       setExporting(null);
@@ -217,7 +185,7 @@ export default function Dashboard() {
       await exportDashboardPdf(metrics, metrics.periodLabel);
       toast.success('Reporte PDF generado');
       setShowReportModal(false);
-    } catch (err) {
+    } catch {
       toast.error('Error al generar el PDF');
     } finally {
       setExporting(null);
@@ -306,9 +274,9 @@ export default function Dashboard() {
             <Badge colorScheme="brand" variant="subtle" fontSize="xs" px={2} py={1} borderRadius="md">
               {metrics.periodLabel}
             </Badge>
-            {activePayrolls && activePayrolls.length > 0 && (
+            {metrics.recentActivity?.some((item) => item.type === 'draft') && (
               <Badge colorScheme="orange" variant="subtle" fontSize="xs" px={2} py={1} borderRadius="md">
-                NÓMINA ACTIVA: {[...activePayrolls].sort((a,b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())[0].title || 'Nómina en proceso'}
+                {metrics.recentActivity.find((item) => item.type === 'draft')?.text || 'Nómina en proceso'}
               </Badge>
             )}
           </HStack>
@@ -344,7 +312,7 @@ export default function Dashboard() {
                   <Box color="brand.400"><Building2 size={18} /></Box>
                   <Heading size="sm" fontWeight={700}>Distribución por Empresa</Heading>
                 </HStack>
-                <Text fontSize="xs" color={subtitleColor}>{COMPANIES.length} empresas</Text>
+                <Text fontSize="xs" color={subtitleColor}>{metrics.companyCount} empresas</Text>
               </Flex>
               <VStack spacing={4} align="stretch">
                 {metrics.companyDistribution.length ? metrics.companyDistribution.map((c) => (
@@ -430,7 +398,7 @@ export default function Dashboard() {
                 hasFinancialAccess ? { label: 'Costo patronal estimado', value: formatQ(metrics.patronalCost) } : null,
                 { label: 'Nóminas en período', value: metrics.payrollCount || (metrics.hasPayrollData ? metrics.filteredRecords?.length : 0) },
                 { label: 'Empleados inactivos', value: metrics.inactiveCount },
-                { label: 'Empresas registradas', value: COMPANIES.length },
+                { label: 'Empresas registradas', value: metrics.companyCount },
               ].filter(Boolean).map((item, i) => (
                 <Flex key={i} justify="space-between" align="center" p={3} bg={summaryItemBg} borderRadius="lg" border="1px solid" borderColor={borderColor} transition="all 0.2s" _hover={{ borderColor: 'brand.500', boxShadow: 'sm' }}>
                   <Text fontSize="sm" color={subtitleColor}>{item.label}</Text>
@@ -462,7 +430,7 @@ export default function Dashboard() {
                   <Radio value={PERIOD_MODES.LATEST} colorScheme="brand">Última nómina cerrada</Radio>
                   <Radio value={PERIOD_MODES.MONTH} colorScheme="brand" isDisabled={!availableMonths.length}>Por mes calendario</Radio>
                   <Radio value={PERIOD_MODES.PAYROLL} colorScheme="brand" isDisabled={!payrollOptions.length}>Nómina específica</Radio>
-                  <Radio value={PERIOD_MODES.ALL} colorScheme="brand" isDisabled={!payrollHistory?.length}>Todo el historial</Radio>
+                  <Radio value={PERIOD_MODES.ALL} colorScheme="brand" isDisabled={!payrollOptions.length}>Todo el historial</Radio>
                   <Radio value={PERIOD_MODES.SNAPSHOT} colorScheme="brand">Datos actuales (empleados activos)</Radio>
                 </Stack>
               </RadioGroup>

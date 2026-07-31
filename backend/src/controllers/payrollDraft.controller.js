@@ -15,6 +15,7 @@ const {
 const { syncOperationLogTransitions } = require('../services/payrollDraftInputs.service');
 const { Op } = require('sequelize');
 const { getMonthBoundsFromDate } = require('../services/operationPayroll.service');
+const { getPagination, toPagedResponse, wantsPagination } = require('../utils/pagination');
 
 /** Exige exactamente una empresa concreta (bloquea ALL / vacías / multi-empresa). */
 const requireSingleCompany = (companies) => {
@@ -108,6 +109,103 @@ const assertEmployeesBelongToCompany = (employees, companyId) => {
 
 const getAll = async (req, res) => {
   try {
+    const summaryOnly = req.query.summary === '1' || req.query.summary === 'true';
+    if (summaryOnly) {
+      const paged = wantsPagination(req.query);
+      const pagination = paged ? getPagination(req.query) : null;
+      const query = {
+        order: [['createdAt', 'DESC'], ['id', 'ASC']],
+        ...(pagination ? { limit: pagination.limit, offset: pagination.offset } : {})
+      };
+      const result = paged
+        ? await PayrollDraft.findAndCountAll(query)
+        : { rows: await PayrollDraft.findAll(query), count: null };
+      const draftValues = result.rows.map((draft) => draft.toJSON());
+      const companyIds = [...new Set(draftValues.flatMap((draft) => {
+        let values = draft.companies;
+        if (typeof values === 'string') {
+          try { values = JSON.parse(values); } catch { values = []; }
+        }
+        return (Array.isArray(values) ? values : [])
+          .map(Number)
+          .filter((id) => Number.isInteger(id) && id > 0);
+      }))];
+      const toYearMonth = (value) => {
+        const date = value instanceof Date ? value : new Date(value);
+        if (Number.isNaN(date.getTime())) return '';
+        return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+      };
+      const months = draftValues
+        .map((draft) => toYearMonth(draft.createdAt))
+        .filter((month) => /^\d{4}-\d{2}$/.test(month))
+        .sort();
+      let operationalCounts = new Map();
+
+      if (companyIds.length > 0 && months.length > 0) {
+        const [lastYear, lastMonth] = months[months.length - 1].split('-').map(Number);
+        const lastDay = new Date(lastYear, lastMonth, 0).getDate();
+        const logs = await OperationLog.findAll({
+          where: {
+            companyId: { [Op.in]: companyIds },
+            date: {
+              [Op.between]: [
+                `${months[0]}-01`,
+                `${months[months.length - 1]}-${String(lastDay).padStart(2, '0')}`
+              ]
+            },
+            type: { [Op.in]: ['BONO', 'HORA_EXTRA'] },
+            status: {
+              [Op.in]: [
+                'PENDING_MANAGER',
+                'RETURNED',
+                'APPROVED_MANAGER',
+                'PROCESSED_PAYROLL'
+              ]
+            }
+          },
+          attributes: ['companyId', 'date', 'type', 'status'],
+          raw: true
+        });
+        operationalCounts = logs.reduce((counts, log) => {
+          const key = `${log.companyId}:${String(log.date).slice(0, 7)}`;
+          const current = counts.get(key) || { pending: 0, approved: 0 };
+          if (['PENDING_MANAGER', 'RETURNED'].includes(log.status)) current.pending += 1;
+          if (
+            log.type === 'BONO'
+            && ['APPROVED_MANAGER', 'PROCESSED_PAYROLL'].includes(log.status)
+          ) current.approved += 1;
+          counts.set(key, current);
+          return counts;
+        }, new Map());
+      }
+
+      const rows = draftValues.map((value) => {
+        let companies = value.companies;
+        if (typeof companies === 'string') {
+          try { companies = JSON.parse(companies); } catch { companies = []; }
+        }
+        const companyId = Array.isArray(companies) ? companies[0] : null;
+        const month = toYearMonth(value.createdAt);
+        return {
+          id: value.id,
+          title: value.title,
+          companies: value.companies,
+          periodType: value.periodType,
+          notes: value.notes,
+          employeesCount: Number(value.employeesCount) || 0,
+          isApproved: !!value.isApproved,
+          correctionNote: value.correctionNote || null,
+          revision: Number(value.revision) || 0,
+          operationalCounts: operationalCounts.get(`${companyId}:${month}`)
+            || { pending: 0, approved: 0 },
+          createdAt: value.createdAt
+        };
+      });
+      res.set('Cache-Control', 'no-store');
+      return res.json(paged
+        ? toPagedResponse(rows, result.count, pagination.page, pagination.pageSize)
+        : rows);
+    }
     const drafts = await PayrollDraft.findAll({
       include: [{ model: PayrollDraftEmployee, as: 'draftEmployees' }]
     });
@@ -156,6 +254,181 @@ const getAll = async (req, res) => {
     res.json(formattedDrafts);
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+};
+
+const getById = async (req, res) => {
+  try {
+    const draft = await PayrollDraft.findByPk(req.params.id, {
+      include: [{ model: PayrollDraftEmployee, as: 'draftEmployees' }]
+    });
+    if (!draft) return res.status(404).json({ error: 'Borrador no encontrado' });
+    const value = draft.toJSON();
+    let employees = (value.draftEmployees || []).map((row) => {
+      try {
+        return typeof row.data === 'string' ? JSON.parse(row.data) : row.data;
+      } catch {
+        return row.data;
+      }
+    });
+    if (!value.isApproved) {
+      employees = calculatePayrollBatch(employees, value.periodType);
+    } else {
+      employees = employees.map((employee) => (
+        employee?.calculated
+          ? employee
+          : calculatePayrollBatch([employee], value.periodType)[0]
+      ));
+    }
+    res.set('Cache-Control', 'no-store');
+    return res.json({
+      id: value.id,
+      title: value.title,
+      companies: value.companies,
+      periodType: value.periodType,
+      notes: value.notes,
+      employeesCount: Number(value.employeesCount) || employees.length,
+      isApproved: !!value.isApproved,
+      correctionNote: value.correctionNote || null,
+      revision: Number(value.revision) || 0,
+      employees,
+      createdAt: value.createdAt
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+const validateExpectedRevision = (rawRevision, currentRevision) => {
+  const expected = Number(rawRevision);
+  if (
+    (typeof rawRevision !== 'number' && typeof rawRevision !== 'string')
+    || String(rawRevision).trim() === ''
+    || !Number.isInteger(expected)
+    || expected < 0
+  ) {
+    const error = new Error('Debe enviar la revisión actual del borrador.');
+    error.status = 400;
+    error.currentRevision = currentRevision;
+    throw error;
+  }
+  if (expected !== currentRevision) {
+    const error = new Error(
+      'El borrador fue modificado por otro usuario. Recargue la nómina antes de guardar nuevamente.'
+    );
+    error.status = 409;
+    error.currentRevision = currentRevision;
+    throw error;
+  }
+};
+
+const patchEmployee = async (req, res) => {
+  const transaction = await sequelize.transaction();
+  try {
+    const draftId = String(req.params.id);
+    const employeeId = Number(req.params.employeeId);
+    const draft = await PayrollDraft.findByPk(draftId, {
+      transaction,
+      lock: transaction.LOCK.UPDATE
+    });
+    if (!draft) {
+      const error = new Error('Borrador no encontrado');
+      error.status = 404;
+      throw error;
+    }
+    const currentRevision = Number(draft.revision) || 0;
+    validateExpectedRevision(req.body?.revision, currentRevision);
+    if (draft.isApproved) {
+      const error = new Error('Una nómina aprobada no puede editarse.');
+      error.status = 403;
+      throw error;
+    }
+    const incoming = req.body?.employee;
+    if (!incoming || Number(incoming.id) !== employeeId) {
+      const error = new Error('El empleado enviado no coincide con la ruta.');
+      error.status = 400;
+      throw error;
+    }
+    const row = await PayrollDraftEmployee.findOne({
+      where: { draftId, employeeId },
+      transaction,
+      lock: transaction.LOCK.UPDATE
+    });
+    if (!row) {
+      const error = new Error('Empleado no encontrado en el borrador.');
+      error.status = 404;
+      throw error;
+    }
+
+    const companyId = await resolveCompanyId(
+      requireSingleCompany(draft.companies)[0],
+      transaction
+    );
+    assertEmployeesBelongToCompany([incoming], companyId);
+    const scheduledBonuses = await Bonus.findAll({ transaction });
+    const withBonuses = applyScheduledBonusesToEmployees(
+      [incoming],
+      scheduledBonuses,
+      draft.createdAt,
+      draft.periodType
+    );
+    const calculated = calculatePayrollBatch(withBonuses, draft.periodType)[0];
+    row.set('data', calculated);
+    await row.save({ transaction, fields: ['data'] });
+    draft.set('revision', currentRevision + 1);
+    await draft.save({ transaction, fields: ['revision'] });
+    await transaction.commit();
+    return res.json({ revision: Number(draft.revision), employee: calculated });
+  } catch (err) {
+    await transaction.rollback();
+    return res.status(err.status || 400).json({
+      error: err.message,
+      ...(err.currentRevision !== undefined
+        ? { currentRevision: err.currentRevision }
+        : {})
+    });
+  }
+};
+
+const patchMetadata = async (req, res) => {
+  const transaction = await sequelize.transaction();
+  try {
+    const draft = await PayrollDraft.findByPk(req.params.id, {
+      transaction,
+      lock: transaction.LOCK.UPDATE
+    });
+    if (!draft) {
+      const error = new Error('Borrador no encontrado');
+      error.status = 404;
+      throw error;
+    }
+    const currentRevision = Number(draft.revision) || 0;
+    validateExpectedRevision(req.body?.revision, currentRevision);
+    if (draft.isApproved) {
+      const error = new Error('Una nómina aprobada no puede editarse.');
+      error.status = 403;
+      throw error;
+    }
+    await draft.update({
+      ...(req.body.title !== undefined ? { title: req.body.title } : {}),
+      ...(req.body.notes !== undefined ? { notes: req.body.notes } : {}),
+      revision: currentRevision + 1
+    }, { transaction });
+    await transaction.commit();
+    return res.json({
+      id: draft.id,
+      title: draft.title,
+      notes: draft.notes,
+      revision: Number(draft.revision)
+    });
+  } catch (err) {
+    await transaction.rollback();
+    return res.status(err.status || 400).json({
+      error: err.message,
+      ...(err.currentRevision !== undefined
+        ? { currentRevision: err.currentRevision }
+        : {})
+    });
   }
 };
 
@@ -397,7 +670,10 @@ const remove = async (req, res) => {
 
 module.exports = {
   getAll,
+  getById,
   create,
   update,
+  patchEmployee,
+  patchMetadata,
   remove
 };

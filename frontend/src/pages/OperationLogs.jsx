@@ -9,12 +9,13 @@ import {
   Tabs, TabList, Tab, Skeleton, Flex,
   Menu, MenuButton, MenuList, MenuOptionGroup, MenuItemOption
 } from '@chakra-ui/react';
-import { Plus, Check, X, Trash2, Eye, Edit2, ChevronDown, ArrowLeft, Send, Mail } from 'lucide-react';
+import { Plus, Check, X, Trash2, Eye, Edit2, ChevronDown, ArrowLeft, Send, Mail, FileText } from 'lucide-react';
 import { toast } from 'sonner';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
 import usePagination from '../hooks/usePagination';
 import Pagination from '../components/Pagination';
+import { apiFetch } from '../utils/api';
 import {
   formatQuincenaLabel,
   findMatchingActiveDraft,
@@ -103,7 +104,7 @@ export default function OperationLogs() {
   const fetchBatch = async () => {
     try {
       const token = localStorage.getItem('nomina-token');
-      const res = await fetch(`http://localhost:3000/api/operation-batches/${batchId}`, {
+      const res = await apiFetch(`/api/operation-batches/${batchId}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
@@ -846,7 +847,7 @@ export default function OperationLogs() {
     try {
       await flushPendingDraftSaves();
       const token = localStorage.getItem('nomina-token');
-      const res = await fetch(`http://localhost:3000/api/operation-batches/${batchId}/status`, {
+      const res = await apiFetch(`/api/operation-batches/${batchId}/status`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -874,7 +875,7 @@ export default function OperationLogs() {
     try {
       await flushPendingDraftSaves();
       const token = localStorage.getItem('nomina-token');
-      const res = await fetch(`http://localhost:3000/api/operation-batches/${batchId}/status`, {
+      const res = await apiFetch(`/api/operation-batches/${batchId}/status`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -902,7 +903,7 @@ export default function OperationLogs() {
     try {
       await flushPendingDraftSaves();
       const token = localStorage.getItem('nomina-token');
-      const res = await fetch(`http://localhost:3000/api/operation-batches/${batchId}/status`, {
+      const res = await apiFetch(`/api/operation-batches/${batchId}/status`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -926,7 +927,7 @@ export default function OperationLogs() {
     setEmailLoading(true);
     try {
       const token = localStorage.getItem('nomina-token');
-      const res = await fetch(`http://localhost:3000/api/operation-batches/${batchId}/email-preview`, {
+      const res = await apiFetch(`/api/operation-batches/${batchId}/email-preview`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
@@ -946,7 +947,7 @@ export default function OperationLogs() {
     setEmailLoading(true);
     try {
       const token = localStorage.getItem('nomina-token');
-      const res = await fetch(`http://localhost:3000/api/operation-batches/${batchId}/notify`, {
+      const res = await apiFetch(`/api/operation-batches/${batchId}/notify`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -974,35 +975,53 @@ export default function OperationLogs() {
     && !isBonusOperationalDateAllowed(editFormData.date);
   const saveBlockedByPayroll = !isBonos2daBatch
     && formData.date && selectedEmployeeCompanyId && !hasMatchingActivePayroll(formData.date, selectedEmployeeCompanyId);
-  const saveBlocked = saveBlockedByPayroll || bonusDateBlocked;
+  const monthlyCaptureBlocked = isBonos2daBatch && !isOpenMonthlyCapture;
+  const saveBlocked = saveBlockedByPayroll || monthlyCaptureBlocked || bonusDateBlocked;
+  const captureStateLabel = batch.captureState === 'OPEN'
+    ? 'Captura abierta'
+    : batch.captureState === 'FROZEN'
+      ? 'En revisión de Auditoría'
+      : 'Captura cerrada';
+  const captureStateColor = batch.captureState === 'OPEN'
+    ? 'green'
+    : batch.captureState === 'FROZEN'
+      ? 'yellow'
+      : 'gray';
 
 
   return (
     <Box p={{ base: 3, md: 6, lg: 8 }}>
+      <Box bg={bg} borderWidth="1px" borderColor={cardBorderColor} borderRadius="2xl" shadow="sm" p={{ base: 4, md: 6 }} mb={5}>
       <Flex
         justify="space-between"
         align={{ base: 'stretch', md: 'center' }}
         direction={{ base: 'column', md: 'row' }}
-        mb={6}
+        mb={0}
         flexWrap="wrap"
         gap={4}
       >
         <Flex align="center" gap={4}>
-          <IconButton aria-label="Back" icon={<ArrowLeft size={24} />} onClick={() => navigate('/operations')} variant="ghost" />
+          <IconButton aria-label="Volver al reporte operativo" icon={<ArrowLeft size={22} />} onClick={() => navigate('/operations')} variant="ghost" />
           <Box>
-            <Flex align="center" gap={3}>
-              <Heading size="lg" fontWeight={800} color={textColor}>
+            <Text fontSize="xs" fontWeight={800} letterSpacing="widest" textTransform="uppercase" color="brand.500" mb={1}>
+              Lote de operaciones
+            </Text>
+            <Heading fontSize={{ base: 'xl', md: '2xl' }} lineHeight="short" fontWeight={800} color={textColor}>
                 {batch.title}
-              </Heading>
+            </Heading>
+            <HStack mt={3} spacing={2} flexWrap="wrap">
               {getStatusBadge(batch.status)}
               {isBonos2daBatch && (
-                <Badge colorScheme={batch.captureState === 'OPEN' ? 'green' : batch.captureState === 'FROZEN' ? 'yellow' : 'gray'}>
-                  {batch.captureState === 'OPEN' ? 'Captura abierta · pago en 2ª' : batch.captureState === 'FROZEN' ? 'En Auditoría' : 'Captura cerrada'}
+                <Badge colorScheme={captureStateColor} borderRadius="full" px={2.5}>
+                  {captureStateLabel}
                 </Badge>
               )}
-            </Flex>
-            <Text color={mutedTextColor} fontSize="md">
-              {operationLogs.length} operaciones en este lote
+              <Badge colorScheme="blue" variant="subtle" borderRadius="full" px={2.5}>
+                {operationLogs.length} operaciones registradas
+              </Badge>
+            </HStack>
+            <Text color={mutedTextColor} fontSize="sm" mt={2}>
+              Consulta y administra los bonos y horas extra de este lote.
             </Text>
             {batch.status === 'RETURNED' && batch.justification && (
               <Text color="red.500" fontSize="sm" mt={1}>
@@ -1073,12 +1092,6 @@ export default function OperationLogs() {
               Agrega al menos un registro para poder enviar el lote
             </Text>
           )}
-          {isBonos2daBatch && batch.captureState === 'CLOSED' && (
-            <Text fontSize="sm" color="green.400" alignSelf="center">
-              Captura cerrada: Auditoría ya aprobó esta nómina
-            </Text>
-          )}
-
           {canManagerReviewBatch && batch.status === 'PENDING_MANAGER' && (
             <>
               <Button colorScheme="red" variant="outline" leftIcon={<X size={16} />} onClick={handleRejectBatch} borderRadius="lg" transition="all 0.3s" _hover={{ shadow: 'lg' }}>Devolver a Solicitante</Button>
@@ -1098,6 +1111,20 @@ export default function OperationLogs() {
 
         </Flex>
       </Flex>
+      </Box>
+
+      {isBonos2daBatch && !isOpenMonthlyCapture && (
+        <Box mb={5} p={{ base: 3, md: 4 }} bg={batch.captureState === 'FROZEN' ? justifyBg : sectionBg} borderWidth="1px" borderColor={batch.captureState === 'FROZEN' ? justifyBorder : cardBorderColor} borderRadius="xl">
+          <Text fontWeight={800} color={batch.captureState === 'FROZEN' ? justifyText : mutedTextColor} mb={1}>
+            {batch.captureState === 'FROZEN' ? 'Captura pausada mientras Auditoría revisa la nómina' : 'La captura de este período ya está cerrada'}
+          </Text>
+          <Text fontSize="sm" color={batch.captureState === 'FROZEN' ? justifyText : mutedTextColor} opacity={0.9}>
+            {batch.captureState === 'FROZEN'
+              ? 'No se pueden agregar ni modificar operaciones hasta que finalice la revisión.'
+              : 'Las operaciones de este lote ya fueron aplicadas y no admiten cambios.'}
+          </Text>
+        </Box>
+      )}
 
       {isNominaRole && (
         <Tabs index={tabIndex} onChange={setTabIndex} colorScheme="brand" mb={4}>
@@ -1262,31 +1289,43 @@ export default function OperationLogs() {
 
       {(!isNominaRole || tabIndex === 1) && (
       <>
-      <HStack mb={4} spacing={4} bg={bg} p={4} borderRadius="lg" shadow="sm">
-        <FormControl w="200px">
-          <FormLabel fontSize="xs" color={mutedTextColor}>Mes</FormLabel>
-          <Input type="month" value={filterMonth} onChange={(e) => setFilterMonth(e.target.value)} size="sm" />
-        </FormControl>
-        <FormControl w="150px">
-          <FormLabel fontSize="xs" color={mutedTextColor}>Tipo</FormLabel>
-          <Select size="sm" value={filterType} onChange={(e) => setFilterType(e.target.value)}>
-            <option value="ALL">Todos</option>
-            <option value="HORA_EXTRA">Horas Extras</option>
-            <option value="BONO">Bonos</option>
-          </Select>
-        </FormControl>
-        <FormControl w="180px">
-          <FormLabel fontSize="xs" color={mutedTextColor}>Estado</FormLabel>
-          <Select size="sm" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
-            <option value="ALL">Todos</option>
-            <option value="PENDING_MANAGER">Pdte. Gerente</option>
-            <option value="APPROVED_MANAGER">Aprobado por Gerencia</option>
-            <option value="RETURNED">En corrección</option>
-            <option value="PROCESSED_PAYROLL">En Nómina</option>
-          </Select>
-        </FormControl>
-
-      </HStack>
+      <Box mb={4} bg={bg} borderWidth="1px" borderColor={cardBorderColor} borderRadius="xl" shadow="sm" p={{ base: 4, md: 5 }}>
+        <Flex justify="space-between" align={{ base: 'start', md: 'center' }} direction={{ base: 'column', md: 'row' }} gap={4}>
+          <Box>
+            <Heading size="sm" fontWeight={800}>Operaciones del lote</Heading>
+            <Text fontSize="sm" color={mutedTextColor} mt={1}>
+              Filtra el detalle por mes, tipo de movimiento o estado de revisión.
+            </Text>
+          </Box>
+          <Text fontSize="sm" fontWeight={700} color="brand.500">
+            {filteredLogs.length} resultado{filteredLogs.length === 1 ? '' : 's'}
+          </Text>
+        </Flex>
+        <Flex mt={4} gap={3} flexWrap="wrap" align="end">
+          <FormControl w={{ base: '100%', sm: '210px' }}>
+            <FormLabel fontSize="xs" color={mutedTextColor}>Mes</FormLabel>
+            <Input type="month" value={filterMonth} onChange={(e) => setFilterMonth(e.target.value)} size="sm" />
+          </FormControl>
+          <FormControl w={{ base: 'calc(50% - 6px)', sm: '170px' }}>
+            <FormLabel fontSize="xs" color={mutedTextColor}>Tipo</FormLabel>
+            <Select size="sm" value={filterType} onChange={(e) => setFilterType(e.target.value)}>
+              <option value="ALL">Todos los tipos</option>
+              <option value="HORA_EXTRA">Horas extras</option>
+              <option value="BONO">Bonos</option>
+            </Select>
+          </FormControl>
+          <FormControl w={{ base: 'calc(50% - 6px)', sm: '210px' }}>
+            <FormLabel fontSize="xs" color={mutedTextColor}>Estado</FormLabel>
+            <Select size="sm" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
+              <option value="ALL">Todos los estados</option>
+              <option value="PENDING_MANAGER">Pendiente de gerente</option>
+              <option value="APPROVED_MANAGER">Aprobado por gerencia</option>
+              <option value="RETURNED">En corrección</option>
+              <option value="PROCESSED_PAYROLL">En nómina</option>
+            </Select>
+          </FormControl>
+        </Flex>
+      </Box>
 
       {selectedRowIds.length > 0 && canReviewBatch && (
         <HStack mb={4} p={3} bg={bulkBg} borderRadius="md" shadow="sm" justify="space-between">
@@ -1309,7 +1348,26 @@ export default function OperationLogs() {
         </HStack>
       )}
 
-      <Box bg={bg} borderRadius="lg" overflow="hidden" overflowX="auto" shadow="sm">
+      <Box bg={bg} borderWidth="1px" borderColor={cardBorderColor} borderRadius="xl" overflow="hidden" shadow="sm">
+        {filteredLogs.length === 0 ? (
+          <VStack py={{ base: 12, md: 16 }} px={5} spacing={3} textAlign="center">
+            <Flex w="52px" h="52px" align="center" justify="center" borderRadius="2xl" bg={sectionBg} color="brand.500">
+              <FileText size={24} />
+            </Flex>
+            <Heading size="sm" fontWeight={800}>No hay operaciones para mostrar</Heading>
+            <Text fontSize="sm" color={mutedTextColor} maxW="440px">
+              {isBonos2daBatch && !isOpenMonthlyCapture
+                ? 'La captura está bloqueada porque la nómina se encuentra en revisión de Auditoría.'
+                : 'No hay bonos ni horas extra que coincidan con los filtros seleccionados.'}
+            </Text>
+            {canAddRecords && (
+              <Button size="sm" colorScheme="brand" leftIcon={<Plus size={15} />} onClick={onOpen}>
+                Registrar operación
+              </Button>
+            )}
+          </VStack>
+        ) : (
+          <>
         <Table variant="simple" size="sm">
           <Thead bg={theadBg}>
             <Tr>
@@ -1433,12 +1491,8 @@ export default function OperationLogs() {
                 </Td>
               </Tr>
             ))}
-            {filteredLogs.length === 0 && (
-              <Tr><Td colSpan={7} textAlign="center" color="gray.500" py={4}>No hay registros para este periodo</Td></Tr>
-            )}
           </Tbody>
         </Table>
-        {filteredLogs.length > 0 && (
           <Box px={2} py={3}>
             <Pagination
               currentPage={currentPage}
@@ -1450,6 +1504,7 @@ export default function OperationLogs() {
               changeLimit={changeLimit}
             />
           </Box>
+          </>
         )}
       </Box>
       </>

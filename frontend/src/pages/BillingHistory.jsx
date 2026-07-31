@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useContext, useMemo } from 'react';
+import { useState, useEffect, useContext, useMemo, useCallback } from 'react';
 import {
   Box, Flex, Text, Button, Table, Thead, Tbody, Tr, Th, Td,
   Badge, HStack, IconButton, Tooltip, useColorModeValue, VStack,
@@ -11,8 +11,9 @@ import {
 import { AppContext } from '../context/AppContext';
 import { AuthContext } from '../context/AuthContext';
 import { exportBillingExcel, buildExportFromRun, formatCurrency } from '../utils/billingExport';
+import { apiFetch } from '../utils/api';
 
-const API = 'http://localhost:3000/api/billing';
+const API = '/api/billing';
 
 const statusBadge = (status, size = 'sm') => {
   if (status === 'confirmed') return <Badge colorScheme="green" fontSize={size}>Confirmada</Badge>;
@@ -40,7 +41,10 @@ const parsePayrollMeta = (title) => {
 };
 
 const lineTotal = (run) =>
-  (run.lines || []).reduce((s, l) => s + Number(l.totalAmount || 0), 0);
+  Number(run.totalAmount ?? (run.lines || []).reduce((s, l) => s + Number(l.totalAmount || 0), 0));
+
+const lineCount = (run) =>
+  Number(run.linesCount ?? (run.lines || []).length);
 
 function StatPill({ label, value, accent }) {
   const bg = useColorModeValue('gray.50', 'whiteAlpha.50');
@@ -70,7 +74,7 @@ function RunRow({ run, highlightRunId, onViewPayroll, onExport, muted = false })
     >
       <Td fontWeight="semibold">v{run.version}</Td>
       <Td>{statusBadge(run.status)}</Td>
-      <Td isNumeric>{(run.lines || []).length}</Td>
+      <Td isNumeric>{lineCount(run)}</Td>
       <Td isNumeric fontWeight="semibold" fontFamily="mono">{formatCurrency(lineTotal(run))}</Td>
       <Td fontSize="sm" color="gray.500">{formatDate(run.createdAt)}</Td>
       <Td textAlign="right">
@@ -149,7 +153,7 @@ function PayrollGroupCard({ group, highlightRunId, onViewPayroll, onExport, hide
             <SimpleGrid columns={2} spacing={3} minW={{ base: '100%', sm: '220px' }}>
               <Box bg={statsBg} p={3} borderRadius="lg" borderWidth="1px" borderColor={borderColor}>
                 <Text fontSize="xxs" color="gray.500" textTransform="uppercase" fontWeight={700}>Facturas</Text>
-                <Text fontWeight="bold">{(latestActive.lines || []).length}</Text>
+                <Text fontWeight="bold">{lineCount(latestActive)}</Text>
               </Box>
               <Box bg={statsBg} p={3} borderRadius="lg" borderWidth="1px" borderColor={borderColor}>
                 <Text fontSize="xxs" color="gray.500" textTransform="uppercase" fontWeight={700}>Total vigente</Text>
@@ -260,26 +264,30 @@ export function BillingHistoryPanel({ refreshKey = 0, highlightRunId, onViewPayr
   const borderColor = useColorModeValue('gray.200', 'whiteAlpha.100');
   const toolbarBg = useColorModeValue('gray.50', 'whiteAlpha.50');
 
-  const fetchRuns = async () => {
+  const fetchRuns = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${API}/runs`, {
+      const res = await apiFetch(`${API}/runs?summary=1&page=1&pageSize=100`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (!res.ok) throw new Error('Error al cargar historial');
-      setRuns(await res.json());
+      const payload = await res.json();
+      setRuns(Array.isArray(payload) ? payload : payload.items || []);
     } catch {
       showToast('Error al cargar historial de facturación', 'error');
     } finally {
       setLoading(false);
     }
-  };
+  }, [showToast, token]);
 
-  useEffect(() => { fetchRuns(); }, [refreshKey]);
+  useEffect(() => {
+    const timer = setTimeout(fetchRuns, 0);
+    return () => clearTimeout(timer);
+  }, [fetchRuns, refreshKey]);
 
   const handleExport = async (runId) => {
     try {
-      const res = await fetch(`${API}/runs/${runId}`, {
+      const res = await apiFetch(`${API}/runs/${runId}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const run = await res.json();

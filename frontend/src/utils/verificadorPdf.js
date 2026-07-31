@@ -1,4 +1,3 @@
-import { jsPDF } from 'jspdf';
 import { getNetPayable } from './payrollPeriod.js';
 
 const PAGE = {
@@ -364,8 +363,12 @@ const drawSignaturesAndNote = (doc, paymentDate) => {
  * Genera el Verificador de Pago con la misma distribución del formato
  * institucional usado en Excel.
  */
-export function buildVerificadorPdf({ data = [], group = {}, companies = [] } = {}) {
-  const doc = new jsPDF({
+export function buildVerificadorPdf(
+  { data = [], group = {}, companies = [] } = {},
+  JsPdf
+) {
+  if (!JsPdf) throw new Error('jsPDF no fue cargado');
+  const doc = new JsPdf({
     orientation: 'landscape',
     unit: 'pt',
     format: 'legal',

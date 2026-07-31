@@ -1,5 +1,4 @@
-import ExcelJS from 'exceljs';
-import { getNetPayable } from './payrollPeriod';
+import { getNetPayable, getNetTotal } from './payrollPeriod';
 
 const COLORS = {
   titleBg: '0E2F44',
@@ -71,7 +70,8 @@ const buildRowValues = (e, idx, periodType) => {
     + (Number(e.extras?.vacacionesVal) || 0)
     + (Number(e.extras?.ventasEconomicas) || 0)
     + (Number(e.extras?.comisiones) || 0);
-  const liquido = getNetPayable(e, periodType);
+  const liquido = getNetTotal(e);
+  const pagoQuincena = getNetPayable(e, periodType);
   const anticipo = Number(e.anticipo1ra) || 0;
   const is2da = periodType === '2da';
 
@@ -111,7 +111,7 @@ const buildRowValues = (e, idx, periodType) => {
     totalEgresos: Number(calc.ded) || 0,
     liquido,
     q1: is2da ? anticipo : liquido,
-    q2: is2da ? liquido : 0,
+    q2: is2da ? pagoQuincena : 0,
     detalleBonos: getBonusDetail(e),
     banco: e.banco || 'N/A',
     cuenta: e.no_cuenta || e.numero_cuenta || 'N/A'
@@ -191,26 +191,12 @@ const applyMoney = (cell, accent) => {
   cell.font = { ...(cell.font || {}), color: { argb: color }, name: 'Calibri', size: 10 };
 };
 
-const downloadWorkbook = async (wb, filename) => {
-  const buffer = await wb.xlsx.writeBuffer();
-  const blob = new Blob([buffer], {
-    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-  });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-};
-
 /**
- * Exporta la Nómina General con encabezado, resumen y desglose completo.
+ * Construye la Nómina General con encabezado, resumen y desglose completo.
  * @param {{ employees: any[], group: any, totals: { grossTotal: number, dedTotal: number, patronalTotal: number, netTotal: number } }} params
  */
-export async function exportNominaGeneralExcel({ employees, group, totals }) {
+export function buildNominaGeneralWorkbook({ employees, group, totals }, ExcelJS) {
+  if (!ExcelJS) throw new Error('ExcelJS no fue cargado');
   const periodType = group?.periodType || '1ra';
   const is2da = periodType === '2da';
   const cols = COLUMNS(is2da);
@@ -403,6 +389,17 @@ export async function exportNominaGeneralExcel({ employees, group, totals }) {
     to: { row: headerRowNumber + rows.length, column: colCount }
   };
 
-  const safeTitle = String(group?.title || 'Nomina').replace(/[^\w\-]+/g, '_').slice(0, 50);
-  await downloadWorkbook(wb, `Nomina_General_${safeTitle}.xlsx`);
+  return wb;
+}
+
+export async function exportNominaGeneralExcel(params) {
+  const { generateAndDownloadExcel } = await import('./excelWorkerClient');
+  const safeTitle = String(params.group?.title || 'Nomina')
+    .replace(/[^\w-]+/g, '_')
+    .slice(0, 50);
+  await generateAndDownloadExcel(
+    'nomina-general',
+    params,
+    `Nomina_General_${safeTitle}.xlsx`
+  );
 }

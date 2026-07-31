@@ -6,6 +6,7 @@ import {
 import { Search, Ban } from 'lucide-react';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
+import { apiFetch } from '../utils/api';
 
 const SUSPENSION_TYPES = ['Suspensión laboral', 'Suspensión IGSS'];
 
@@ -24,7 +25,7 @@ export default function Suspensions() {
 
   useEffect(() => {
     const token = localStorage.getItem('nomina-token');
-    fetch('http://localhost:3000/api/incidences', {
+    apiFetch('/api/incidences', {
       headers: token ? { Authorization: `Bearer ${token}` } : {}
     })
       .then(r => (r.ok ? r.json() : []))

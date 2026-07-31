@@ -5,7 +5,6 @@ import {
 } from '@chakra-ui/react';
 import { Download, Cake, CalendarDays, Gift, Image as ImageIcon } from 'lucide-react';
 
-const getXLSX = () => import('xlsx');
 const getHtml2Canvas = () => import('html2canvas').then(m => m.default);
 
 const MESES = [
@@ -76,7 +75,6 @@ const CumpleanerosModal = ({ isOpen, onClose, employees = [], areas = [] }) => {
     if (birthdays.length === 0) return;
     setIsExporting(true);
     try {
-      const XLSX = await getXLSX();
       const exportData = birthdays.map(b => ({
         'Nombre': b.nombreCompleto,
         'Area': b.area,
@@ -85,19 +83,17 @@ const CumpleanerosModal = ({ isOpen, onClose, employees = [], areas = [] }) => {
         'Notas': (b.dayOfWeek === 0 || b.dayOfWeek === 6) ? `(Movido a ${b.dayOfWeek === 6 ? 'Viernes' : 'Lunes'})` : ''
       }));
 
-      const ws = XLSX.utils.json_to_sheet(exportData);
-      ws['!cols'] = [
-        { wch: 40 }, // Nombre
-        { wch: 30 }, // Area
-        { wch: 20 }, // Día cumple
-        { wch: 20 }, // Día descanso
-        { wch: 20 }, // Notas
-      ];
-
-      const wb = XLSX.utils.book_new();
       const monthName = MESES.find(m => m.val === selectedMonth)?.label;
-      XLSX.utils.book_append_sheet(wb, ws, 'Cumpleañeros');
-      XLSX.writeFile(wb, `Cumpleaneros_${monthName}_${selectedYear}.xlsx`);
+      const { generateAndDownloadExcel } = await import('../utils/excelWorkerClient');
+      await generateAndDownloadExcel(
+        'json-report',
+        {
+          rows: exportData,
+          sheetName: 'Cumpleaños',
+          columnWidths: [40, 30, 20, 20, 20]
+        },
+        `Cumpleaneros_${monthName}_${selectedYear}.xlsx`
+      );
     } catch (error) {
     } finally {
       setIsExporting(false);

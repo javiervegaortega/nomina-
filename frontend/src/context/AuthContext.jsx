@@ -1,33 +1,33 @@
-import React, { createContext, useState, useEffect, useMemo, useCallback } from 'react';
+/* eslint-disable react-refresh/only-export-components */
+import { createContext, useState, useMemo, useCallback } from 'react';
+import { apiFetch } from '../utils/api';
 
 export const AuthContext = createContext();
 
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null);
-  const [token, setToken] = useState(localStorage.getItem('nomina-token') || null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    if (token) {
-      // In a real app, you would verify the token with the backend here.
-      // For now, we decode it manually or assume it's valid based on localStorage
-      try {
-        const storedUser = JSON.parse(localStorage.getItem('nomina-user'));
-        if (storedUser) setUser(storedUser);
-      } catch (err) {
-        setToken(null);
-        setUser(null);
-        localStorage.removeItem('nomina-token');
-        localStorage.removeItem('nomina-user');
-      }
+  const [initialAuth] = useState(() => {
+    const storedToken = localStorage.getItem('nomina-token') || null;
+    if (!storedToken) return { token: null, user: null };
+    try {
+      return {
+        token: storedToken,
+        user: JSON.parse(localStorage.getItem('nomina-user')) || null
+      };
+    } catch {
+      localStorage.removeItem('nomina-token');
+      localStorage.removeItem('nomina-user');
+      return { token: null, user: null };
     }
-    setLoading(false);
-  }, [token]);
+  });
+  const [user, setUser] = useState(initialAuth.user);
+  const [token, setToken] = useState(initialAuth.token);
+  const loading = false;
 
   const login = useCallback(async (email, password) => {
     try {
-      const res = await fetch('http://localhost:3000/api/auth/login', {
+      const res = await apiFetch('/api/auth/login', {
         method: 'POST',
+        auth: false,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password })
       });

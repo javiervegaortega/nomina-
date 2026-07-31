@@ -2,6 +2,7 @@ import React, { useContext, useRef } from 'react';
 import { AppContext } from '../context/AppContext';
 import { AuthContext } from '../context/AuthContext';
 import { User, Shield, Bell, Database, Palette, Smartphone, Globe } from 'lucide-react';
+import { apiFetch } from '../utils/api';
 
 export default function Settings() {
   const { theme, toggleTheme, showToast } = useContext(AppContext);
@@ -83,7 +84,7 @@ export default function Settings() {
                   showToast('Iniciando sincronización con SAP...', 'success');
                   try {
                     const token = localStorage.getItem('nomina-token');
-                    const res = await fetch('http://localhost:3000/api/sap/sync-catalogs', {
+                    const res = await apiFetch('/api/sap/sync-catalogs', {
                       method: 'POST',
                       headers: { 'Authorization': `Bearer ${token}` }
                     });

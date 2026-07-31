@@ -1,14 +1,14 @@
 import React, { useState, useMemo, useContext, useRef, useEffect, useCallback } from 'react';
 import {
-  Search, Plus, Edit2, Trash2, X, Eye, ChevronDown,
-  UserPlus, Filter, Download, Check, FileText, UserMinus, Cake
+  Search, Edit2, Trash2, X, Eye, ChevronDown,
+  UserPlus, Filter, Download, FileText, UserMinus, Cake
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { AppContext } from '../context/AppContext';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
-import usePagination from '../hooks/usePagination';
 import Pagination from '../components/Pagination';
+import { apiJson } from '../utils/api';
 import ImportData from '../components/ImportData';
 import EmployeeFormModal from '../components/EmployeeFormModal';
 import EmployeeViewModal from '../components/EmployeeViewModal';
@@ -19,7 +19,7 @@ import ConstanciaDocument from '../components/ConstanciaDocument';
 import CancelacionDocument from '../components/CancelacionDocument';
 import DisciplinariaDocument from '../components/DisciplinariaDocument';
 import CumpleanerosModal from '../components/CumpleanerosModal';
-import { formatQ, calculateMonthlyISR } from '../data/mockData';
+import { formatQ } from '../data/mockData';
 import {
   Box, Flex, Heading, Text, Button, Input, Select,
   Table, Thead, Tbody, Tr, Th, Td, TableContainer,
@@ -29,17 +29,28 @@ import {
   ModalFooter, ModalCloseButton, FormControl, FormLabel,
   Textarea, Collapse,
   Menu, MenuButton, MenuList, MenuItem,
-  Skeleton, SkeletonText, SkeletonCircle
+  Skeleton, SkeletonCircle
 } from '@chakra-ui/react';
 
 const getHtml2Canvas = () => import('html2canvas').then(m => m.default);
 const getJsPDF = () => import('jspdf').then(m => m.default);
-const getXLSX = () => import('xlsx');
 
 
 export default function Employees() {
   const { confirmAction } = useContext(AppContext);
-  const { employees, addEmployee, updateEmployee, deleteEmployee, companies, departments, areas, divisions, subdivisions, dimension5s, isLoading } = useContext(DataContext);
+  const {
+    employees: contextEmployees,
+    addEmployee,
+    updateEmployee,
+    deleteEmployee,
+    companies,
+    departments,
+    areas,
+    divisions,
+    subdivisions,
+    dimension5s,
+    isLoading
+  } = useContext(DataContext);
   const { user } = useContext(AuthContext);
   const isReadOnly = user?.role === 'AUDITOR';
   
@@ -52,6 +63,16 @@ export default function Employees() {
   const [showImport, setShowImport] = useState(false);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [employeePage, setEmployeePage] = useState(1);
+  const [employeePageSize, setEmployeePageSize] = useState(25);
+  const [listRefresh, setListRefresh] = useState(0);
+  const [employeeListState, setEmployeeListState] = useState({
+    query: '',
+    items: [],
+    pagination: { page: 1, pageSize: 25, total: 0, totalPages: 1 }
+  });
+  const [fullEmployees, setFullEmployees] = useState(null);
+  const employees = fullEmployees || contextEmployees || [];
 
   // Debounce search input by 300ms
   useEffect(() => {
@@ -59,8 +80,6 @@ export default function Employees() {
     return () => clearTimeout(timer);
   }, [search]);
 
-  // Strip accents/tildes for search comparison
-  const normalize = useCallback((str) => str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase(), []);
   const [filterCompany, setFilterCompany] = useState('ALL');
   const [filterDept, setFilterDept] = useState('ALL');
   const [filterArea, setFilterArea] = useState('ALL');
@@ -122,84 +141,151 @@ export default function Employees() {
 
   const getDist = useCallback((emp) => {
     if (typeof emp.dist === 'string') {
-      try { return JSON.parse(emp.dist); } catch(e) { return {}; }
+      try { return JSON.parse(emp.dist); } catch { return {}; }
     }
     return emp.dist || {};
   }, []);
 
-  const filteredEmployees = useMemo(() => {
-    const searchNorm = normalize(debouncedSearch);
-    return employees.filter(e => {
-      if (filterCompany !== 'ALL') {
-        const empCompanyId = String(e.empresa_principal || e.companyId || '');
-        if (empCompanyId !== filterCompany) return false;
-      }
-      if (filterDept !== 'ALL' && getEmployeeDepartment(e) !== filterDept) return false;
-      if (filterArea !== 'ALL' && String(e.areaId) !== filterArea) return false;
-      if (filterDiv !== 'ALL' && String(e.divisionId) !== filterDiv) return false;
-      if (filterSubdiv !== 'ALL' && String(e.subdivisionId) !== filterSubdiv) return false;
-      if (filterStatus !== 'ALL') {
-        const empStatus = (e.estado || '').toUpperCase();
-        const selStatus = filterStatus.toUpperCase();
-        if (empStatus !== selStatus) return false;
-      }
-      if (!searchNorm) return true;
-      const fullName = normalize(getFullName(e));
-      return fullName.includes(searchNorm) ||
-             normalize(e.puesto || '').includes(searchNorm) ||
-             (e.dpi || '').includes(debouncedSearch) ||
-             (e.no_igss || '').includes(debouncedSearch) ||
-             (e.nit || '').includes(debouncedSearch);
+  const employeeListQuery = useMemo(() => {
+    const params = new URLSearchParams({
+      view: 'list',
+      page: String(employeePage),
+      pageSize: String(employeePageSize)
     });
-  }, [employees, debouncedSearch, filterCompany, filterDept, filterArea, filterDiv, filterSubdiv, filterStatus, normalize]);
+    if (debouncedSearch.trim()) params.set('q', debouncedSearch.trim());
+    if (filterCompany !== 'ALL') params.set('companyId', filterCompany);
+    if (filterDept !== 'ALL') params.set('departmentId', filterDept);
+    if (filterArea !== 'ALL') params.set('areaId', filterArea);
+    if (filterDiv !== 'ALL') params.set('divisionId', filterDiv);
+    if (filterSubdiv !== 'ALL') params.set('subdivisionId', filterSubdiv);
+    if (filterStatus !== 'ALL') params.set('status', filterStatus);
+    return params.toString();
+  }, [
+    employeePage, employeePageSize, debouncedSearch, filterCompany, filterDept,
+    filterArea, filterDiv, filterSubdiv, filterStatus
+  ]);
 
-  const pagination = usePagination(filteredEmployees, 10);
+  useEffect(() => {
+    const controller = new AbortController();
+    apiJson(`/api/employees?${employeeListQuery}`, { signal: controller.signal })
+      .then((payload) => {
+        const pagination = payload.pagination || {
+          page: 1, pageSize: employeePageSize, total: 0, totalPages: 1
+        };
+        setEmployeeListState({
+          query: employeeListQuery,
+          items: payload.items || [],
+          pagination
+        });
+        if (employeePage > pagination.totalPages) {
+          setEmployeePage(pagination.totalPages);
+        }
+      })
+      .catch((error) => {
+        if (error.name === 'AbortError') return;
+        toast.error('No se pudo cargar el directorio');
+        // Un error de red no debe dejar el skeleton activo indefinidamente.
+        setEmployeeListState({
+          query: employeeListQuery,
+          items: [],
+          pagination: {
+            page: employeePage,
+            pageSize: employeePageSize,
+            total: 0,
+            totalPages: 1
+          }
+        });
+      });
+    return () => controller.abort();
+  }, [employeeListQuery, employeePage, employeePageSize, listRefresh]);
 
-  const openAdd = useCallback(() => {
+  const listLoading = employeeListState.query !== employeeListQuery;
+  const listedEmployees = listLoading ? [] : employeeListState.items;
+  const pagination = {
+    currentPage: employeeListState.pagination.page,
+    totalPages: employeeListState.pagination.totalPages,
+    totalItems: employeeListState.pagination.total,
+    limit: employeeListState.pagination.pageSize,
+    goToNextPage: () => setEmployeePage((page) => Math.min(
+      page + 1,
+      employeeListState.pagination.totalPages
+    )),
+    goToPreviousPage: () => setEmployeePage((page) => Math.max(page - 1, 1)),
+    changeLimit: (limit) => {
+      setEmployeePageSize(limit);
+      setEmployeePage(1);
+    }
+  };
+
+  const loadFullEmployees = useCallback(async () => {
+    if (fullEmployees) return fullEmployees;
+    const rows = await apiJson('/api/employees');
+    setFullEmployees(Array.isArray(rows) ? rows : []);
+    return Array.isArray(rows) ? rows : [];
+  }, [fullEmployees]);
+
+  const loadEmployeeDetail = useCallback(
+    (id) => apiJson(`/api/employees/${id}`),
+    []
+  );
+
+  const openAdd = useCallback(async () => {
+    await loadFullEmployees();
     setModalMode('add');
     setCurrentEmp(null);
     setShowModal(true);
-  }, []);
+  }, [loadFullEmployees]);
 
-  const openEdit = useCallback((emp) => {
+  const openEdit = useCallback(async (emp) => {
+    const [, detail] = await Promise.all([
+      loadFullEmployees(),
+      loadEmployeeDetail(emp.id)
+    ]);
     setModalMode('edit');
-    setCurrentEmp(emp);
+    setCurrentEmp(detail);
     setShowModal(true);
-  }, []);
+  }, [loadEmployeeDetail, loadFullEmployees]);
 
-  const openView = useCallback((emp) => {
+  const openView = useCallback(async (emp) => {
+    const detail = await loadEmployeeDetail(emp.id);
     setModalMode('view');
-    setCurrentEmp(emp);
+    setCurrentEmp(detail);
     setShowModal(true);
-  }, []);
+  }, [loadEmployeeDetail]);
 
-  const handleSave = (formData) => {
+  const handleSave = async (formData) => {
     if (modalMode === 'add') {
-      addEmployee(formData);
+      await addEmployee(formData);
       toast.success('Empleado Creado', {
         description: 'Se ha agregado exitosamente.',
       });
     } else if (modalMode === 'edit' && currentEmp) {
-      updateEmployee(currentEmp.id, formData);
+      await updateEmployee(currentEmp.id, formData);
       toast.success('Empleado Actualizado', {
         description: 'Los cambios se han guardado.',
       });
     }
+    setFullEmployees(null);
+    setListRefresh((value) => value + 1);
     setShowModal(false);
   };
 
   const handleDelete = useCallback((id) => {
-    confirmAction("¿Está seguro de eliminar este empleado completamente de la base de datos? (Para historial, use 'Dar de Baja')", () => {
-      deleteEmployee(id);
+    confirmAction("¿Está seguro de eliminar este empleado completamente de la base de datos? (Para historial, use 'Dar de Baja')", async () => {
+      await deleteEmployee(id);
+      setFullEmployees(null);
+      setListRefresh((value) => value + 1);
     });
   }, [deleteEmployee, confirmAction]);
 
-  const handleOffboard = () => {
-    updateEmployee(offboardState.empId, { 
+  const handleOffboard = async () => {
+    await updateEmployee(offboardState.empId, {
       estado: 'De Baja', 
       motivo_baja: offboardState.reason,
       fecha_baja: offboardState.date
     });
+    setFullEmployees(null);
+    setListRefresh((value) => value + 1);
     setOffboardState({ show: false, empId: null, reason: '', date: '' });
   };
 
@@ -271,7 +357,7 @@ export default function Employees() {
 
       toast.success('PDF del finiquito generado', { id: toastId });
       setFiniquitoState({ show: false, emp: null, calculation: null });
-    } catch (err) {
+    } catch {
       toast.error('Error al generar el PDF del finiquito', { id: toastId });
     }
   };
@@ -321,7 +407,7 @@ export default function Employees() {
 
       toast.success('PDF generado exitosamente', { id: toastId });
       setAbandonoState({ show: false, emp: null, fechaFalta: new Date().toISOString().split('T')[0], representante: '' });
-    } catch (err) {
+    } catch {
       toast.error('Error al generar el PDF de abandono', { id: toastId });
     }
   };
@@ -357,7 +443,7 @@ export default function Employees() {
       pdf.save(`Apertura_Cuenta_${fullName.replace(/[^a-z0-9]/gi, '_')}.pdf`);
       toast.success('PDF generado exitosamente', { id: toastId });
       setAperturaState({ show: false, emp: null, nombreBanco: '', representante: '' });
-    } catch (err) {
+    } catch {
       toast.error('Error al generar PDF', { id: toastId });
     }
   };
@@ -393,7 +479,7 @@ export default function Employees() {
       pdf.save(`Constancia_Laboral_${fullName.replace(/[^a-z0-9]/gi, '_')}.pdf`);
       toast.success('PDF generado exitosamente', { id: toastId });
       setConstanciaState({ show: false, emp: null, desde: new Date().toISOString().split('T')[0], al: new Date().toISOString().split('T')[0], hastaLaFecha: true, representante: '', puesto: '' });
-    } catch (err) {
+    } catch {
       toast.error('Error al generar PDF', { id: toastId });
     }
   };
@@ -429,7 +515,7 @@ export default function Employees() {
       pdf.save(`Cancelacion_Contrato_${fullName.replace(/[^a-z0-9]/gi, '_')}.pdf`);
       toast.success('PDF generado exitosamente', { id: toastId });
       setCancelacionState({ show: false, emp: null, fechaCancelacion: new Date().toISOString().split('T')[0], representante: '' });
-    } catch (err) {
+    } catch {
       toast.error('Error al generar PDF', { id: toastId });
     }
   };
@@ -652,7 +738,7 @@ export default function Employees() {
       pdf.save(`Accion_Disciplinaria_${fullName.replace(/[^a-z0-9]/gi, '_')}.pdf`);
       toast.success('PDF generado exitosamente', { id: toastId });
       setDisciplinariaState({ show: false, emp: null });
-    } catch (err) {
+    } catch {
       toast.error('Error al generar PDF', { id: toastId });
     }
   };
@@ -684,24 +770,25 @@ export default function Employees() {
     };
   };
 
-  const handleOpenReport = (type) => {
+  const handleOpenReport = async (type) => {
+    const allEmployees = await loadFullEmployees();
     let filtered;
     let fileName;
     let sheetName;
     let title;
 
     if (type === 'activos') {
-      filtered = employees.filter(e => (e.estado || '').toUpperCase() === 'ACTIVO');
+      filtered = allEmployees.filter(e => (e.estado || '').toUpperCase() === 'ACTIVO');
       fileName = 'Reporte_Empleados_Activos';
       sheetName = 'Empleados Activos';
       title = 'Reporte de Empleados Activos';
     } else if (type === 'baja') {
-      filtered = employees.filter(e => (e.estado || '').toUpperCase() === 'DE BAJA');
+      filtered = allEmployees.filter(e => (e.estado || '').toUpperCase() === 'DE BAJA');
       fileName = 'Reporte_Empleados_De_Baja';
       sheetName = 'Empleados De Baja';
       title = 'Reporte de Empleados De Baja';
     } else {
-      filtered = [...employees];
+      filtered = [...allEmployees];
       fileName = 'Reporte_Completo_Empleados';
       sheetName = 'Todos los Empleados';
       title = 'Reporte Completo de Empleados';
@@ -727,43 +814,26 @@ export default function Employees() {
     if (!data || data.length === 0) return;
 
     toast.success(`Exportando ${data.length} registros a Excel...`);
-    const XLSX = await getXLSX();
     const rows = data.map((e, idx) => buildEmployeeRow(e, idx));
-    const ws = XLSX.utils.json_to_sheet(rows);
-
-    // Column widths
-    ws['!cols'] = [
-      { wch: 6 },  // No.
-      { wch: 36 }, // Nombre
-      { wch: 16 }, // DPI
-      { wch: 14 }, // NIT
-      { wch: 14 }, // IGSS
-      { wch: 20 }, // Empresa
-      { wch: 22 }, // Puesto
-      { wch: 18 }, // Departamento
-      { wch: 12 }, // Estado
-      { wch: 14 }, // Fecha Inicio
-      { wch: 14 }, // Fecha Baja
-      { wch: 22 }, // Motivo Baja
-      { wch: 16 }, // Salario
-      { wch: 14 }, // Bono Incentivo
-      { wch: 16 }, // Bono Dec
-      { wch: 16 }, // Tipo Pago
-      { wch: 16 }, // Banco
-      { wch: 18 }, // No. Cuenta
-      { wch: 14 }, // Teléfono
-      { wch: 30 }, // Dirección
-    ];
-
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+    const { generateAndDownloadExcel } = await import('../utils/excelWorkerClient');
     const today = new Date().toISOString().split('T')[0];
-    XLSX.writeFile(wb, `${fileName}_${today}.xlsx`);
+    await generateAndDownloadExcel(
+      'json-report',
+      {
+        rows,
+        sheetName,
+        columnWidths: [
+          6, 36, 16, 14, 14, 20, 22, 18, 12, 14,
+          14, 22, 16, 14, 16, 16, 16, 18, 14, 30
+        ]
+      },
+      `${fileName}_${today}.xlsx`
+    );
     
     setReportModalState({ ...reportModalState, show: false });
   };
 
-  if (isLoading) {
+  if (isLoading || listLoading) {
     return (
       <Box p={{ base: 3, md: 6, lg: 8 }}>
         {/* Header skeleton */}
@@ -867,7 +937,7 @@ export default function Employees() {
             Directorio de Empleados
           </Heading>
           <Text color={textSecondary} fontSize="md">
-            Gestión de personal y distribución de costos · {employees.length} registros
+            Gestión de personal y distribución de costos · {employeeListState.pagination.total} registros
           </Text>
         </Box>
         <HStack spacing={3} flexWrap="wrap">
@@ -894,7 +964,10 @@ export default function Employees() {
             variant="outline"
             colorScheme="purple"
             leftIcon={<Cake size={16} />}
-            onClick={() => setShowCumpleaneros(true)}
+            onClick={async () => {
+              await loadFullEmployees();
+              setShowCumpleaneros(true);
+            }}
             borderRadius="lg"
             transition="all 0.3s"
             _hover={{ shadow: 'md', bg: 'purple.50' }}
@@ -991,7 +1064,7 @@ export default function Employees() {
                 size="sm"
               >
                 <option value="ALL">Todos</option>
-                {departments.map((d, i) => <option key={d.id || i} value={d.nombre_dimension}>{d.nombre_dimension}</option>)}
+                {departments.map((d, i) => <option key={d.id || i} value={String(d.id)}>{d.nombre_dimension}</option>)}
               </Select>
             </FormControl>
             <FormControl minW={{ base: '100%', sm: '180px' }} maxW={{ base: '100%', sm: '240px' }}>
@@ -1070,7 +1143,7 @@ export default function Employees() {
               </Tr>
             </Thead>
             <Tbody>
-              {filteredEmployees.length === 0 ? (
+              {listedEmployees.length === 0 ? (
                 <Tr>
                   <Td colSpan={7} textAlign="center" py={16}>
                     <Text color={textSecondary} fontSize="md">
@@ -1079,7 +1152,7 @@ export default function Employees() {
                   </Td>
                 </Tr>
               ) : (
-                pagination.paginatedData.map((emp) => (
+                listedEmployees.map((emp) => (
                   <EmployeeRow
                     key={emp.id}
                     emp={emp}
@@ -1109,7 +1182,7 @@ export default function Employees() {
             </Tbody>
           </Table>
         </TableContainer>
-        <Pagination {...pagination} />
+        <Pagination {...pagination} limitOptions={[25, 50]} />
       </Box>
 
       {/* EMPLOYEE FORM MODAL (add/edit) */}

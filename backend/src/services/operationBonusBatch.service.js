@@ -1,6 +1,7 @@
 const { Op } = require('sequelize');
-const { OperationBatch, OperationLog, Company } = require('../models');
+const { OperationBatch, OperationLog, Company, PayrollHistory } = require('../models');
 const { getMonthBoundsFromDate } = require('./operationPayroll.service');
+const { parsePayrollSummary } = require('./payrollSummary.service');
 
 const MONTH_NAMES_ES = [
   'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
@@ -20,6 +21,56 @@ const buildBonos2daTitle = (companyName, draftDate) => {
   const monthName = bounds ? (MONTH_NAMES_ES[bounds.month - 1] || '') : '';
   const year = bounds?.year || '';
   return `Operaciones mensuales — ${companyName || 'Empresa'} — ${monthName} ${year} (pago en 2ª quincena)`;
+};
+
+const payrollSummaryMatchesCompany = (payroll, companyId) => {
+  const summary = parsePayrollSummary(payroll?.summary) || {};
+  return (summary.companies || []).some((value) => String(value) === String(companyId));
+};
+
+const findAuditedPayrollForCompanyMonth = async ({ companyId, date, transaction }) => {
+  const bounds = getMonthBoundsFromDate(date);
+  if (!companyId || !bounds) return null;
+
+  const start = new Date(bounds.year, bounds.month - 1, 1, 0, 0, 0, 0);
+  const end = new Date(bounds.year, bounds.month, 0, 23, 59, 59, 999);
+  const auditedPayrolls = await PayrollHistory.findAll({
+    where: {
+      status: 'auditoria',
+      createdAt: { [Op.between]: [start, end] }
+    },
+    attributes: ['id', 'title', 'periodType', 'status', 'createdAt', 'summary'],
+    order: [['createdAt', 'DESC']],
+    transaction
+  });
+
+  return auditedPayrolls.find((payroll) => payrollSummaryMatchesCompany(payroll, companyId)) || null;
+};
+
+const resolveEffectiveMonthlyCaptureState = (storedState, hasAuditedPayroll) => {
+  if (storedState === 'CLOSED') return 'CLOSED';
+  if (hasAuditedPayroll) return 'FROZEN';
+  // FROZEN representa exclusivamente una auditoría activa. Si esa auditoría
+  // ya terminó, una marca antigua no debe bloquear el siguiente periodo.
+  return 'OPEN';
+};
+
+const getEffectiveMonthlyCaptureState = async ({ batch, companyId, date, transaction }) => {
+  if (!batch || batch.purpose !== 'BONOS_2DA') {
+    return { captureState: batch?.captureState || null, auditedPayroll: null };
+  }
+  const auditedPayroll = await findAuditedPayrollForCompanyMonth({
+    companyId: companyId || batch.companyId,
+    date: date || `${batch.periodMonth}-01`,
+    transaction
+  });
+  return {
+    captureState: resolveEffectiveMonthlyCaptureState(
+      batch.captureState,
+      Boolean(auditedPayroll)
+    ),
+    auditedPayroll
+  };
 };
 
 /**
@@ -72,8 +123,13 @@ const assertMonthlyOperationCaptureOpen = async ({ batch, companyId, date }) => 
     err.statusCode = 403;
     throw err;
   }
-  if (batch.captureState !== 'OPEN') {
-    const stateMessage = batch.captureState === 'FROZEN'
+  const { captureState } = await getEffectiveMonthlyCaptureState({
+    batch,
+    companyId,
+    date
+  });
+  if (captureState !== 'OPEN') {
+    const stateMessage = captureState === 'FROZEN'
       ? 'La captura está congelada mientras la nómina está en Auditoría.'
       : 'La captura mensual ya fue cerrada por Auditoría.';
     const err = new Error(stateMessage);
@@ -138,6 +194,9 @@ module.exports = {
   getPeriodMonth,
   buildBonos2daTitle,
   ensureBonos2daBatchForDraft,
+  findAuditedPayrollForCompanyMonth,
+  resolveEffectiveMonthlyCaptureState,
+  getEffectiveMonthlyCaptureState,
   assertMonthlyOperationCaptureOpen,
   setMonthlyOperationCaptureState,
   clearBatchDraftLink,
