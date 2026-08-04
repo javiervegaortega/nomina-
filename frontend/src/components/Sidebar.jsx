@@ -137,7 +137,7 @@ export default function Sidebar() {
           cursor={!mobile && isCollapsed ? "pointer" : "default"}
           onClick={() => !mobile && isCollapsed && setIsCollapsed(false)}
         >
-          <Image src="/favicon.png" boxSize="40px" objectFit="contain" />
+          <Image src={`${import.meta.env.BASE_URL}favicon.png`} boxSize="40px" objectFit="contain" />
         </Flex>
 
         {(mobile || !isCollapsed) && (

@@ -258,7 +258,7 @@ const CumpleanerosModal = ({ isOpen, onClose, employees = [], areas = [] }) => {
         width="1024px"
         minHeight="768px"
         ref={printRef}
-        bgImage="url('/birthday_bg.png')"
+        bgImage={`url('${import.meta.env.BASE_URL}birthday_bg.png')`}
         bgSize="100% 100%"
         bgPosition="center"
         bgRepeat="no-repeat"

@@ -2,6 +2,13 @@ const inflightGets = new Map();
 
 const normalizeApiPath = (path) => {
   const value = String(path || '');
+  const baseUrl = import.meta.env.VITE_API_URL;
+  
+  if (baseUrl) {
+    const cleanPath = value.replace(/^\/?api\/?/, '').replace(/^\/+/, '');
+    return cleanPath ? `${baseUrl.replace(/\/+$/, '')}/${cleanPath}` : baseUrl.replace(/\/+$/, '');
+  }
+
   if (value.startsWith('/api/')) return value;
   if (value === '/api') return value;
   return `/api/${value.replace(/^\/+/, '')}`;

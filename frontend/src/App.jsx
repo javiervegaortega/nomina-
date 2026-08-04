@@ -134,7 +134,7 @@ function AppContent() {
   return (
     <AppContext.Provider value={appValue}>
       <AuthProvider>
-        <BrowserRouter>
+        <BrowserRouter basename="/nomina/dist/">
           <DataProvider>
             <Routes>
               {/* Auth Routes */}

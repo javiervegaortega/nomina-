@@ -45,7 +45,7 @@ export default function AuthSidePanel() {
 
       <Box position="relative" zIndex={1} maxW="md">
         <Flex align="center" gap={5} mb={10}>
-          <Image src="/favicon.png" boxSize="128px" objectFit="contain" borderRadius="2xl" shadow="lg" />
+          <Image src={`${import.meta.env.BASE_URL}favicon.png`} boxSize="128px" objectFit="contain" borderRadius="2xl" shadow="lg" />
           <Text fontSize="4xl" fontWeight={800} letterSpacing="-0.03em" color="white">
             Nómina
           </Text>
